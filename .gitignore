@@ -1,0 +1,9 @@
+applications/
+data/
+.env
+__pycache__/
+*.pyc
+.venv/
+*.aux
+*.log
+*.out

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Job Autopilot Capture",
+  "version": "0.1.0",
+  "description": "Right-click any job posting to push it onto the local autopilot queue.",
+  "permissions": [
+    "contextMenus",
+    "scripting",
+    "activeTab",
+    "notifications"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8787/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "icon128.png"
+  }
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Job Autopilot</title>
+<style>
+  body { font: 14px -apple-system, system-ui, sans-serif; margin: 2rem auto; max-width: 900px; }
+  h1 { font-size: 1.25rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid #ddd; }
+  .status { font-family: ui-monospace, monospace; font-size: .8rem; }
+  .empty { color: #777; }
+</style>
+<h1>Job Autopilot</h1>
+<p class="empty" id="msg">Loading…</p>
+<table id="tbl" hidden>
+  <thead><tr><th>Job</th><th>Company</th><th>Source</th><th>Status</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script>
+fetch("/jobs").then(r => r.json()).then(jobs => {
+  const msg = document.getElementById("msg");
+  if (!jobs.length) { msg.textContent = "Queue empty. Right-click a posting and choose “Add this job to autopilot”."; return; }
+  msg.hidden = true;
+  const tbl = document.getElementById("tbl");
+  tbl.hidden = false;
+  tbl.querySelector("tbody").innerHTML = jobs.map(j => `
+    <tr>
+      <td><a href="${j.url}" target="_blank" rel="noreferrer">${j.title || j.url}</a></td>
+      <td>${j.company || "—"}</td>
+      <td>${j.source || "—"}</td>
+      <td class="status">${j.status}</td>
+    </tr>`).join("");
+});
+</script>
