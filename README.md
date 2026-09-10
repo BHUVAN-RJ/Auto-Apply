@@ -89,10 +89,17 @@ nothing.
 
 ## Status
 
-Early. Phase 1 of 6 is done: the capture extension and the queue server work
-end to end. Tailoring, compilation, the review UI, and the browser fill loop
-are not built yet. See [PLAN.md](PLAN.md) for the full design and phase
+Early. Phases 1 and 2 of 6 are done: a posting can be captured, scraped,
+tailored, compiled, and archived, and it stops at checkpoint 1. The review UI
+currently lists the queue but does not yet render the diff, and the browser
+fill loop is not built. See [PLAN.md](PLAN.md) for the full design and phase
 breakdown.
+
+```sh
+python pipeline.py            # process every queued job
+python pipeline.py <job_id>   # process one
+pytest                        # 33 tests; the compile tests need TeX installed
+```
 
 ## Setup
 
@@ -112,7 +119,14 @@ Load unpacked → select `capture/`.
 ```
 
 Open <http://127.0.0.1:8787> for the queue. Right-click any job posting in
-Chrome and choose "Add this job to autopilot" to queue it.
+Chrome and choose "Add this job to autopilot" to queue it, then run
+`python pipeline.py` to tailor and compile everything queued.
+
+Put your master resume at `base/resume.tex`, along with any `.cls` or `.sty`
+it needs. `base/resume.example.tex` shows the shape and is what the test suite
+compiles. Optionally add `base/profile.md` with background that is not on the
+resume; the tailor reads it as extra context but is instructed never to invent
+anything it cannot support.
 
 ## Stack
 

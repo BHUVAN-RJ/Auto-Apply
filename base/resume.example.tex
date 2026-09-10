@@ -1,0 +1,25 @@
+% A minimal stand-in resume used by the test suite so the compile and diff
+% paths are exercisable without a real one. Put your own at base/resume.tex.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage{enumitem}
+\pagestyle{empty}
+
+\newcommand{\role}[3]{\textbf{#1} \hfill #2 \\ \textit{#3}}
+
+\begin{document}
+
+{\huge Jane Example} \\
+jane@example.com \textbullet{} +1 555 0100 \textbullet{} Berlin
+
+\section*{Experience}
+\role{Backend Engineer}{2023--2026}{Example Corp}
+\begin{itemize}[nosep]
+  \item Built and operated REST services handling 2M requests per day.
+  \item Cut p99 latency by 40\% by reworking the caching layer.
+\end{itemize}
+
+\section*{Skills}
+Python, PostgreSQL, Docker, AWS.
+
+\end{document}
