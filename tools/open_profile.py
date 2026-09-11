@@ -71,13 +71,23 @@ def main(argv: list[str]) -> int:
     print("Sign in to Jobright and install its extension, then close the window.")
     print("Everything you do here persists for every later fill.\n")
 
-    subprocess.run([
-        browser,
-        f"--user-data-dir={directory}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "https://jobright.ai",
-    ])
+    # Chrome writes GPU, mailbox, and updater chatter to stderr regardless of
+    # whether anything is wrong. It drowns the terminal, so it goes to a log.
+    log_path = directory.parent / "browser.log"
+    with open(log_path, "a") as log:
+        subprocess.run(
+            [
+                browser,
+                f"--user-data-dir={directory}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-features=Translate",
+                "https://jobright.ai",
+            ],
+            stdout=log,
+            stderr=log,
+        )
+    print(f"\nBrowser closed. Its output went to {log_path}")
     return 0
 
 

@@ -98,7 +98,7 @@ design and what is deliberately deferred.
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 143 tests
+pytest                        # 148 tests
 ```
 
 ## Setup
@@ -161,12 +161,14 @@ You can reject at any stage, including after approving or filling.
 
 ## Checkpoint 2
 
-Approving at checkpoint 1 starts the fill straight away: approval is the
-consent, so making you then run a command adds a step without adding a
-decision. It runs detached, so a browser crash cannot take the server down, and
-the log lands in `data/apply_<job>.log`. `python apply.py` does the same by hand
-for every approved job, and the review page has a "Fill the form now" button for
-a retry. Set `AUTOPILOT_NO_AUTOFILL=1` to keep approval and filling separate.
+Approving marks the job; filling is started explicitly, with the review page's
+"Fill the form now" button or `python apply.py`. Keeping them separate means a
+fill can be repeated as often as needed, and a run whose browser died never
+wedges the job — the button says "Restart the fill" and starts a fresh one.
+Set `AUTOPILOT_AUTOFILL=1` if you would rather approval launched it for you.
+
+The fill runs detached, so a browser crash cannot take the server down, and its
+log lands in `data/apply_<job>.log`.
 
 Either way it opens a browser, fills the form, and halts.
 

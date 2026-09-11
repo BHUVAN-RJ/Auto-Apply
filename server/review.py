@@ -142,15 +142,27 @@ def approve(job_id: str, decision: Decision) -> dict:
     return {"id": job_id, "status": Status.APPROVED.value, "filling": bool(pid)}
 
 
+# Every state a fill may be started from. FILLING is included deliberately: a
+# run whose browser died leaves the job sitting there, and the reviewer needs
+# to be able to start another without first repairing the state by hand.
+REFILLABLE = (Status.APPROVED, Status.FILLING, Status.FILLED, Status.FAILED)
+
+
 @router.post("/{job_id}/fill")
 def fill_now(job_id: str, decision: Decision) -> dict:
-    """Start or restart the fill by hand, for a retry or when autofill is off."""
-    job, _ = _job_and_dir(job_id)
-    if job.status not in (Status.APPROVED, Status.FAILED, Status.FILLED):
-        raise HTTPException(409, f"job is {job.status.value}; approve it first")
+    """Start or restart the fill. Repeatable as often as needed."""
+    job, app_dir = _job_and_dir(job_id)
+    if job.status not in REFILLABLE:
+        raise HTTPException(
+            409, f"job is {job.status.value}; approve it before filling"
+        )
     pid = runner.launch("apply.py", job_id)
     if not pid:
         raise HTTPException(500, "could not start apply.py")
+    # Back to APPROVED so apply.py, which only touches approved jobs, will
+    # pick it up, and so a stuck FILLING cannot wedge the job permanently.
+    store.set_status(app_dir, Status.APPROVED, f"fill restarted (pid {pid})")
+    queue.update(job_id, status=Status.APPROVED)
     return {"id": job_id, "filling": True, "pid": pid}
 
 

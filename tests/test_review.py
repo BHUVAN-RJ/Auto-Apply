@@ -225,21 +225,30 @@ def test_the_job_list_carries_the_rejection_reason(client):
     assert row["reject_note"] == "onsite NYC"
 
 
-def test_approving_starts_the_fill(client, monkeypatch):
-    """Approval is the consent; making the human then run a command adds nothing."""
+def test_approving_does_not_launch_the_browser_by_default(client, monkeypatch):
+    """Filling is started explicitly, so a run can be repeated at will."""
+    job_id, _ = reviewable_job()
+    monkeypatch.setattr(runner, "AUTOFILL_ENABLED", False)
+    monkeypatch.setattr(runner.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("approval must not launch a browser"))
+
+    response = client.post(f"/review/{job_id}/approve", json={})
+
+    assert response.json()["filling"] is False
+    assert queue.get(job_id).status == Status.APPROVED
+
+
+def test_approving_starts_the_fill_when_autofill_is_switched_on(client, monkeypatch):
     job_id, _ = reviewable_job()
     started = {}
+
     def fake_start(job_id):
         started["id"] = job_id
         return 99
 
     monkeypatch.setattr(runner, "start_fill", fake_start)
-
-    response = client.post(f"/review/{job_id}/approve", json={})
-
-    assert response.json()["filling"] is True
+    assert client.post(f"/review/{job_id}/approve", json={}).json()["filling"] is True
     assert started["id"] == job_id
-    assert queue.get(job_id).status == Status.APPROVED
 
 
 def test_approving_still_works_when_autofill_is_off(client, monkeypatch):
@@ -264,3 +273,16 @@ def test_fill_now_requires_an_approved_job(client, monkeypatch):
 
     queue.update(job_id, status=Status.APPROVED)
     assert client.post(f"/review/{job_id}/fill", json={}).json()["pid"] == 77
+
+
+@pytest.mark.parametrize("status", [Status.APPROVED, Status.FILLING, Status.FILLED,
+                                    Status.FAILED])
+def test_a_fill_can_always_be_restarted(client, monkeypatch, status):
+    """A run whose browser died must not wedge the job."""
+    monkeypatch.setattr(runner, "launch", lambda script, jid: 77)
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=status)
+
+    assert client.post(f"/review/{job_id}/fill", json={}).status_code == 200
+    assert queue.get(job_id).status == Status.APPROVED, (
+        "a restart must leave the job in a state apply.py will pick up")

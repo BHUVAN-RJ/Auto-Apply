@@ -18,8 +18,11 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Set AUTOPILOT_NO_AUTOFILL=1 to keep approval and form filling separate.
-AUTOFILL_DISABLED = os.environ.get("AUTOPILOT_NO_AUTOFILL", "") not in ("", "0", "false")
+# Approval marks the job; it does not launch the browser. Filling is started
+# explicitly, from the review page's button or apply.py, so that a run can be
+# repeated as often as needed and a half-finished one is never ambiguous.
+# Set AUTOPILOT_AUTOFILL=1 to have approval start the fill immediately.
+AUTOFILL_ENABLED = os.environ.get("AUTOPILOT_AUTOFILL", "") not in ("", "0", "false")
 
 
 def python_executable() -> str:
@@ -53,8 +56,8 @@ def launch(script: str, job_id: str, log_dir: Optional[Path] = None) -> Optional
 
 
 def start_fill(job_id: str, log_dir: Optional[Path] = None) -> Optional[int]:
-    """Begin filling an approved application, unless autofill is switched off."""
-    if AUTOFILL_DISABLED:
+    """Begin filling an approved application, if autofill is switched on."""
+    if not AUTOFILL_ENABLED:
         return None
     return launch("apply.py", job_id, log_dir)
 

@@ -32,8 +32,19 @@ def test_launch_returns_none_for_a_missing_script(tmp_path):
     assert runner.launch("nope.py", "c4f3", log_dir=tmp_path) is None
 
 
-def test_start_fill_respects_the_off_switch(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, "AUTOFILL_DISABLED", True)
+def test_start_fill_does_nothing_unless_autofill_is_switched_on(tmp_path, monkeypatch):
+    """The default is manual, so approval cannot launch a browser by surprise."""
+    monkeypatch.setattr(runner, "AUTOFILL_ENABLED", False)
     monkeypatch.setattr(runner.subprocess, "Popen",
-                        lambda *a, **k: pytest.fail("must not launch when disabled"))
+                        lambda *a, **k: pytest.fail("must not launch when off"))
     assert runner.start_fill("c4f3", log_dir=tmp_path) is None
+
+
+def test_start_fill_launches_when_switched_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "AUTOFILL_ENABLED", True)
+
+    class FakePopen:
+        def __init__(self, *a, **k):
+            self.pid = 5
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    assert runner.start_fill("c4f3", log_dir=tmp_path) == 5

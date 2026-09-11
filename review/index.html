@@ -258,13 +258,15 @@ async function show(id) {
     ${filled ? `
       <div class="actions">
         <button class="act primary" id="submitted">I submitted it</button>
+        <button class="act" id="fillNow">Fill it again</button>
         <button class="act danger" id="reject">Reject…</button>
       </div>` : ""}
     ${!reviewable && !filled ? `
       <div class="actions">
         <span class="state ${TONE[data.status] || ""}">${LABEL[data.status] || data.status}</span>
-        ${["approved", "failed"].includes(data.status)
-          ? `<button class="act" id="fillNow">Fill the form now</button>` : ""}
+        ${["approved", "filling", "failed"].includes(data.status)
+          ? `<button class="act primary" id="fillNow">${
+              data.status === "filling" ? "Restart the fill" : "Fill the form now"}</button>` : ""}
         ${data.status !== "skipped" && data.status !== "submitted"
           ? `<button class="act danger" id="reject">Reject…</button>` : ""}
       </div>` : ""}
@@ -349,12 +351,13 @@ function banners(data) {
       Check the screenshot, submit it in the browser yourself, then mark it here.</div>`;
   }
   if (data.status === "approved") {
-    html += `<div class="banner go"><strong>Approved.</strong> Chrome should be opening to
-      fill the form. It will stop before submitting.</div>`;
+    html += `<div class="banner go"><strong>Approved.</strong> Press “Fill the form now”
+      when you are ready, or run <code>python apply.py ${data.id}</code>.</div>`;
   }
   if (data.status === "filling") {
-    html += `<div class="banner warn"><strong>Filling the form now.</strong>
-      Leave the Chrome window alone until it stops.</div>`;
+    html += `<div class="banner warn"><strong>Filling the form.</strong>
+      Leave the browser window alone. If nothing is happening, the run died —
+      press “Restart the fill”.</div>`;
   }
   return html;
 }
