@@ -9,6 +9,7 @@ second pass to settle.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -25,11 +26,31 @@ class CompileError(RuntimeError):
     """Raised when lualatex exits non-zero. Carries the log for diagnosis."""
 
     def __init__(self, message: str, log: str = "") -> None:
+        missing = missing_packages(log)
+        if missing:
+            names = " ".join(sorted(missing))
+            message = (
+                f"{message}: missing TeX package(s) {names}. "
+                f"BasicTeX is minimal; install them with: sudo tlmgr install {names}"
+            )
         super().__init__(message)
         self.log = log
+        self.missing_packages = missing
 
     def tail(self, lines: int = 40) -> str:
         return "\n".join(self.log.splitlines()[-lines:])
+
+
+def missing_packages(log: str) -> list[str]:
+    """Package names behind "File `foo.sty\' not found" errors in a TeX log.
+
+    BasicTeX ships a minimal package set, so a resume template pulling in
+    anything beyond the basics fails this way. The .sty name is usually but
+    not always the tlmgr package name; it is right often enough to be the
+    useful thing to put in front of the user.
+    """
+    found = re.findall(r"File `([^']+)\.(?:sty|cls)' not found", log)
+    return sorted(set(found))
 
 
 def find_lualatex() -> Optional[str]:
@@ -106,14 +127,17 @@ def compile_pdf(
 
 
 def page_count(pdf_path: Path) -> Optional[int]:
-    """Page count without a PDF library, by counting /Type /Page objects.
+    """Page count, or None if the file cannot be parsed.
 
-    Returns None if the file cannot be parsed; callers treat that as unknown
-    rather than as a failure.
+    Counting `/Type /Page` markers in the raw bytes does not work here:
+    lualatex compresses its object streams, so the markers are not in the
+    file as plain text. pypdf reads the real page tree.
     """
     try:
-        data = Path(pdf_path).read_bytes()
-    except OSError:
+        from pypdf import PdfReader
+    except ImportError:
         return None
-    count = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
-    return count if count > 0 else None
+    try:
+        return len(PdfReader(str(pdf_path)).pages)
+    except Exception:  # noqa: BLE001 - a malformed PDF is "unknown", not fatal
+        return None

@@ -1,20 +1,22 @@
 % A minimal stand-in resume used by the test suite so the compile and diff
 % paths are exercisable without a real one. Put your own at base/resume.tex.
+% Deliberately uses only packages BasicTeX ships, so the suite passes on a
+% bare install.
 \documentclass[11pt,a4paper]{article}
 \usepackage[margin=2cm]{geometry}
-\usepackage{enumitem}
 \pagestyle{empty}
+\setlength{\parindent}{0pt}
 
 \newcommand{\role}[3]{\textbf{#1} \hfill #2 \\ \textit{#3}}
 
 \begin{document}
 
-{\huge Jane Example} \\
+{\huge Jane Example} \\[2pt]
 jane@example.com \textbullet{} +1 555 0100 \textbullet{} Berlin
 
 \section*{Experience}
 \role{Backend Engineer}{2023--2026}{Example Corp}
-\begin{itemize}[nosep]
+\begin{itemize}
   \item Built and operated REST services handling 2M requests per day.
   \item Cut p99 latency by 40\% by reworking the caching layer.
 \end{itemize}

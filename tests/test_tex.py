@@ -72,3 +72,14 @@ def test_page_count_returns_none_for_a_non_pdf(tmp_path):
     junk = tmp_path / "not.pdf"
     junk.write_text("not a pdf")
     assert texc.page_count(junk) is None
+
+
+def test_missing_package_error_names_the_tlmgr_command():
+    log = "! LaTeX Error: File `enumitem.sty' not found.\n"
+    err = texc.CompileError("lualatex failed", log)
+    assert err.missing_packages == ["enumitem"]
+    assert "sudo tlmgr install enumitem" in str(err)
+
+
+def test_missing_packages_is_empty_for_an_unrelated_failure():
+    assert texc.missing_packages("! Undefined control sequence.") == []

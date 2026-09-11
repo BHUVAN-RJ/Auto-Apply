@@ -98,7 +98,7 @@ breakdown.
 ```sh
 python pipeline.py            # process every queued job
 python pipeline.py <job_id>   # process one
-pytest                        # 33 tests; the compile tests need TeX installed
+pytest                        # 39 tests, all green on a bare BasicTeX install
 ```
 
 ## Setup
@@ -127,6 +127,19 @@ it needs. `base/resume.example.tex` shows the shape and is what the test suite
 compiles. Optionally add `base/profile.md` with background that is not on the
 resume; the tailor reads it as extra context but is instructed never to invent
 anything it cannot support.
+
+## Missing TeX packages
+
+BasicTeX ships a minimal package set, so a resume template that pulls in
+anything beyond the basics fails to compile. The error names the fix:
+
+```
+missing TeX package(s) enumitem. BasicTeX is minimal;
+install them with: sudo tlmgr install enumitem
+```
+
+Run that and compile again. `base/resume.example.tex` deliberately avoids
+every non-default package so the test suite passes on a bare install.
 
 ## Stack
 
