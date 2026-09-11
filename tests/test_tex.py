@@ -25,8 +25,8 @@ BROKEN = r"""\documentclass{article}
 """
 
 
-def test_missing_lualatex_gives_an_actionable_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(texc, "find_lualatex", lambda: None)
+def test_a_missing_engine_gives_an_actionable_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(texc, "find_engine", lambda name: None)
     src = tmp_path / "doc.tex"
     src.write_text(MINIMAL)
     with pytest.raises(texc.CompileError, match="basictex"):

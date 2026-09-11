@@ -74,7 +74,17 @@ class TailorResult:
 
 
 class TailorError(RuntimeError):
-    pass
+    """A tailoring pass that could not be accepted.
+
+    Carries every rejected candidate so the failure can be inspected after the
+    fact. Without this the only evidence of what went wrong is a one-line
+    reason, and a rejection that only happens on the third retry is otherwise
+    impossible to reproduce.
+    """
+
+    def __init__(self, message: str, attempts: Optional[list[dict]] = None) -> None:
+        super().__init__(message)
+        self.attempts = attempts or []
 
 
 class Mismatch(TailorError):
@@ -211,6 +221,40 @@ def _check_lengths(original: str, tailored: str) -> list[str]:
     return warnings
 
 
+def overrun_report(original: str, tailored: str) -> str:
+    """Name the bullets that grew, longest overrun first.
+
+    A generic "it is too long" leaves the model guessing at which of eleven
+    bullets to cut, and it usually guesses wrong. Handing it the arithmetic
+    turns the retry into an edit rather than another attempt.
+    """
+    before, after = bullet_lengths(original), bullet_lengths(tailored)
+    if len(before) != len(after):
+        return "The bullet count changed, which is itself the problem."
+
+    grew = [
+        (index, was, now)
+        for index, (was, now) in enumerate(zip(before, after), start=1)
+        if now > was
+    ]
+    total = sum(now - was for _, was, now in grew)
+    if not grew:
+        return (
+            "No bullet grew, so the overflow is elsewhere: check the summary and "
+            "the skills lines, which must also keep their original lengths."
+        )
+
+    grew.sort(key=lambda row: row[2] - row[1], reverse=True)
+    lines = "\n".join(
+        f"- bullet {index}: was {was} characters, you returned {now} (+{now - was})"
+        for index, was, now in grew[:6]
+    )
+    return (
+        f"These bullets grew, {total} characters in total:\n{lines}\n"
+        f"Cut at least {total} characters from them."
+    )
+
+
 def _validate(original: str, tailored: str) -> list[str]:
     """Structural checks, cheapest first. Returns non-fatal warnings."""
     if not tailored.strip():
@@ -258,7 +302,7 @@ def tailor(
     resume_tex: Optional[str] = None,
     page_check: Optional[Callable[[str], Optional[int]]] = None,
     target_pages: int = 1,
-    max_attempts: int = 3,
+    max_attempts: int = 4,
     extra_instruction: str = "",
 ) -> TailorResult:
     """Tailor the resume, retrying while it does not fit on `target_pages`.
@@ -285,6 +329,7 @@ def tailor(
     feedback = ""
 
     last_error: Optional[str] = None
+    rejected: list[dict] = []
     for attempt in range(1, max_attempts + 1):
         reply = llm.complete(system, message + feedback, model=model)
 
@@ -295,13 +340,34 @@ def tailor(
         tailored = _extract_block(reply, ("tex", "latex"))
         if tailored is None:
             last_error = "model reply contained no ```tex block"
+            rejected.append({"attempt": attempt, "reason": last_error, "tex": reply})
             feedback = f"\n\n## Your previous attempt failed\n\n{last_error}. Try again."
             continue
+
+        # A model squeezed by the length rules will sometimes return the file
+        # untouched, which is a non-answer rather than a tailoring pass.
+        if _normalise(tailored) == _normalise(original):
+            last_error = "returned the resume unchanged"
+            feedback = (
+                "\n\n## Your previous attempt was rejected\n\n"
+                "You returned the resume unchanged. Tailoring it is the task. "
+                "Find the places where the posting names something the candidate "
+                "has actually done and uses a different word for it, and adopt the "
+                "posting's word. Reorder the projects and the skills lines so the "
+                "most relevant come first. Keep every length the same by trading: "
+                "if a phrase gets longer, shorten another in the same bullet.\n\n"
+                "If after genuinely looking there is nothing truthful to change, "
+                "say so in the rationale and return the file unchanged again."
+            )
+            if attempt < max_attempts:
+                rejected.append({"attempt": attempt, "reason": last_error, "tex": tailored})
+                continue
 
         try:
             warnings = _validate(original, tailored)
         except TailorError as exc:
             last_error = str(exc)
+            rejected.append({"attempt": attempt, "reason": last_error, "tex": tailored})
             feedback = (
                 f"\n\n## Your previous attempt was rejected\n\n{last_error}\n\n"
                 "Return the whole file again, fixing only that."
@@ -312,11 +378,14 @@ def tailor(
             pages = page_check(tailored)
             if pages is not None and pages != target_pages:
                 last_error = f"compiled to {pages} pages, must be {target_pages}"
+                rejected.append({"attempt": attempt, "reason": last_error, "tex": tailored})
                 feedback = (
                     f"\n\n## Your previous attempt was rejected\n\n"
-                    f"It {last_error}. Shorten bullets back toward their original "
-                    "lengths — you almost certainly made one or more longer. Do not "
-                    "delete a bullet to fix this."
+                    f"It {last_error}.\n\n{overrun_report(original, tailored)}\n\n"
+                    "Return the whole file again with those bullets cut back to at "
+                    "or below their original lengths. Do not delete a bullet, do not "
+                    "remove a section, and do not touch the spacing knobs in the "
+                    "preamble."
                 )
                 continue
 
@@ -331,4 +400,6 @@ def tailor(
             warnings=warnings,
         )
 
-    raise TailorError(f"gave up after {max_attempts} attempts; last problem: {last_error}")
+    raise TailorError(
+        f"gave up after {max_attempts} attempts; last problem: {last_error}", rejected
+    )

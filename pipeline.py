@@ -156,6 +156,15 @@ def process_safely(job: Job) -> bool:
             store.set_status(app_dir, Status.FAILED, detail)
             if not (app_dir / "error.txt").exists():
                 store.write(app_dir, "error.txt", detail + "\n\n" + traceback.format_exc())
+            # Keep what the model actually produced. A rejection that only
+            # appears on a later retry cannot be diagnosed from its reason.
+            for record in getattr(exc, "attempts", []) or []:
+                name = f"rejected_attempt_{record['attempt']}.tex"
+                if not (app_dir / name).exists():
+                    store.write(
+                        app_dir, name,
+                        f"% rejected: {record['reason']}\n{record['tex']}",
+                    )
         return False
     print(f"  ready for review: {app_dir}")
     return True

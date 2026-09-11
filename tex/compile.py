@@ -21,6 +21,20 @@ TEXBIN = "/Library/TeX/texbin"
 PASSES = 2
 TIMEOUT = 120
 
+# Engines, in the order they are tried when a document does not say which it
+# needs. pdflatex first because the common resume templates are built for it:
+# they use \input{glyphtounicode} and \pdfgentounicode, which are pdfTeX
+# primitives that LuaTeX does not provide.
+ENGINES = ("pdflatex", "lualatex", "xelatex")
+
+# Packages that only work under an engine with native Unicode font handling.
+UNICODE_ENGINE_MARKERS = (
+    r"\usepackage{fontspec}",
+    r"\setmainfont",
+    r"\usepackage{polyglossia}",
+    r"\usepackage{unicode-math}",
+)
+
 
 class CompileError(RuntimeError):
     """Raised when lualatex exits non-zero. Carries the log for diagnosis."""
@@ -53,8 +67,37 @@ def missing_packages(log: str) -> list[str]:
     return sorted(set(found))
 
 
+def find_engine(name: str) -> Optional[str]:
+    return shutil.which(name) or shutil.which(name, path=TEXBIN)
+
+
 def find_lualatex() -> Optional[str]:
-    return shutil.which("lualatex") or shutil.which("lualatex", path=TEXBIN)
+    return find_engine("lualatex")
+
+
+def choose_engine(source: str) -> str:
+    """Pick the engine this document needs.
+
+    fontspec and friends require lualatex or xelatex. Everything else gets
+    pdflatex, which is what the widely-copied resume templates assume.
+    """
+    override = os.environ.get("AUTOPILOT_TEX_ENGINE")
+    if override:
+        return override
+    # Commented-out lines do not count. Resume templates carry a block of
+    # alternative font choices commented out at the top, and matching one of
+    # those would pick an engine the document cannot actually compile under.
+    active = strip_comments(source)
+    if any(marker in active for marker in UNICODE_ENGINE_MARKERS):
+        return "lualatex"
+    return "pdflatex"
+
+
+def strip_comments(source: str) -> str:
+    """Drop TeX comments, respecting the escaped percent sign."""
+    return "\n".join(
+        re.split(r"(?<!\\)%", line)[0] for line in source.splitlines()
+    )
 
 
 def compile_pdf(
@@ -67,13 +110,14 @@ def compile_pdf(
     `extra_inputs` are copied alongside the source: .cls, .sty, fonts, any
     image the template pulls in.
     """
-    lualatex = find_lualatex()
-    if lualatex is None:
+    tex_path = Path(tex_path).resolve()
+    engine_name = choose_engine(tex_path.read_text(errors="replace"))
+    engine = find_engine(engine_name)
+    if engine is None:
         raise CompileError(
-            "lualatex not found. Install it with: brew install --cask basictex"
+            f"{engine_name} not found. Install it with: brew install --cask basictex"
         )
 
-    tex_path = Path(tex_path).resolve()
     out_pdf = Path(out_pdf).resolve()
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +145,7 @@ def compile_pdf(
         for _ in range(PASSES):
             proc = subprocess.run(
                 [
-                    lualatex,
+                    engine,
                     "-interaction=nonstopmode",
                     "-halt-on-error",
                     "-file-line-error",
@@ -116,11 +160,11 @@ def compile_pdf(
             log_file = work / "document.log"
             log = log_file.read_text(errors="replace") if log_file.exists() else proc.stdout
             if proc.returncode != 0:
-                raise CompileError(f"lualatex failed on {tex_path.name}", log)
+                raise CompileError(f"{engine_name} failed on {tex_path.name}", log)
 
         produced = work / "document.pdf"
         if not produced.exists():
-            raise CompileError("lualatex reported success but produced no PDF", log)
+            raise CompileError(f"{engine_name} reported success but produced no PDF", log)
         shutil.copy(produced, out_pdf)
 
     return out_pdf

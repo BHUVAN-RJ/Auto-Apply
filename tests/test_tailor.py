@@ -186,7 +186,7 @@ def test_retries_until_the_page_count_fits(monkeypatch):
 def test_gives_up_after_max_attempts(monkeypatch):
     bad = ORIGINAL.replace("Early Career Innovator Award, 2025.", "Fake Award, 2025.")
     stub_model(monkeypatch, reply(bad))
-    with pytest.raises(tailor.TailorError, match="gave up after 3 attempts"):
+    with pytest.raises(tailor.TailorError, match="gave up after 4 attempts"):
         tailor.tailor(POSTING, resume_tex=ORIGINAL)
 
 
@@ -209,3 +209,54 @@ def test_no_tex_block_is_retried_then_fails(monkeypatch):
     stub_model(monkeypatch, "```verdict\nMATCH: fine\n```\n\nI could not do it.")
     with pytest.raises(tailor.TailorError, match="no ```tex block"):
         tailor.tailor(POSTING, resume_tex=ORIGINAL)
+
+
+def test_overrun_report_names_the_worst_offenders():
+    """A retry must be told which bullets to cut, not just that it is too long."""
+    grown = ORIGINAL.replace(
+        "Cut p95 latency 52 percent with a Redis caching layer",
+        "Cut p95 latency 52 percent with a Redis caching layer and async database access")
+    report = tailor.overrun_report(ORIGINAL, grown)
+    assert "bullet 2" in report
+    assert "Cut at least" in report
+    assert "bullet 1" not in report, "an unchanged bullet must not be named"
+
+
+def test_overrun_report_points_elsewhere_when_no_bullet_grew():
+    shrunk = ORIGINAL.replace("Built a scalable Python service handling 50K requests per day",
+                              "Built a Python service")
+    assert "summary" in tailor.overrun_report(ORIGINAL, shrunk)
+
+
+def test_page_retry_feedback_carries_the_numbers(monkeypatch):
+    grown = ORIGINAL.replace("Cut p95", "Cut, at considerably greater length, p95")
+    good = ORIGINAL.replace("scalable Python service", "scalable Python backend")
+    sent = stub_model(monkeypatch, reply(grown), reply(good))
+    pages = {"n": 0}
+
+    def page_check(tex):
+        pages["n"] += 1
+        return 2 if pages["n"] == 1 else 1
+
+    tailor.tailor(POSTING, resume_tex=ORIGINAL, page_check=page_check, target_pages=1)
+    assert "bullet 2" in sent[1] and "Cut at least" in sent[1]
+
+
+def test_an_unchanged_resume_is_retried(monkeypatch):
+    """Under length pressure the safest reply is no edit, which is a non-answer."""
+    changed = ORIGINAL.replace("scalable Python service", "scalable Python backend")
+    sent = stub_model(monkeypatch, reply(ORIGINAL), reply(changed))
+
+    result = tailor.tailor(POSTING, resume_tex=ORIGINAL)
+
+    assert result.attempts == 2
+    assert "unchanged" in sent[1]
+    assert "Python backend" in result.tex
+
+
+def test_an_unchanged_resume_is_accepted_on_the_final_attempt(monkeypatch):
+    """If it still says nothing needs changing after being pushed, take it."""
+    stub_model(monkeypatch, reply(ORIGINAL))
+    result = tailor.tailor(POSTING, resume_tex=ORIGINAL, max_attempts=2)
+    assert result.attempts == 2
+    assert result.tex.strip() == ORIGINAL.strip()

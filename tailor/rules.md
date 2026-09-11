@@ -58,6 +58,17 @@ read as the same document with a different emphasis.
 - Within `PROJECTS` and `EXPERIENCE` you may reorder entries so the most
   relevant comes first, keeping each entry's own content with it.
 
+## Doing nothing is not tailoring
+
+Returning the resume unchanged is a failure unless there is genuinely nothing
+truthful to adapt, which is rare. The posting almost always names something the
+candidate has done using different words, and adopting the posting's words is
+the core of the job. Reordering projects and skills so the most relevant come
+first costs no length at all and is almost always available.
+
+Trade length rather than adding it: if a phrase gets longer, shorten another
+phrase in the same bullet.
+
 ## Length is a hard constraint
 
 The resume must compile to exactly one page. The spacing is tuned so that it
