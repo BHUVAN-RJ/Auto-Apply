@@ -89,16 +89,15 @@ nothing.
 
 ## Status
 
-Phases 1 to 3 of 6 are done. A posting can be captured, scraped, tailored,
-compiled, and archived; checkpoint 1 is live at `localhost:8787` with a diff
-view, PDF preview, and approve / reject / re-tailor. The browser fill loop and
-checkpoint 2 are not built. See [PLAN.md](PLAN.md) for the full design and
-phase breakdown.
+The full path works end to end: capture, scrape, tailor, compile, archive,
+checkpoint 1, browser fill, checkpoint 2. What remains is hardening — retries,
+resume-after-crash, and a per-ATS recipe cache. See [PLAN.md](PLAN.md) for the
+design and what is deliberately deferred.
 
 ```sh
-python pipeline.py            # process every queued job
-python pipeline.py <job_id>   # process one
-pytest                        # 62 tests
+python pipeline.py            # tailor and compile every queued job
+python apply.py               # fill every approved form, then stop
+pytest                        # 120 tests
 ```
 
 ## Setup
@@ -142,6 +141,29 @@ Three ways out:
   tried and why it was not sent.
 - **Re-tailor with a note** — a second pass with your instruction appended to
   the prompt, landing in a new folder. The version you rejected is kept.
+
+## Checkpoint 2
+
+`python apply.py` opens your real Chrome, fills every approved application, and
+halts. It refuses any job that is not approved, so checkpoint 1 cannot be
+bypassed by running it directly.
+
+Three independent things stop it submitting, none of them a prompt rule:
+
+- **The click guard.** Every click is checked first against the element's text,
+  accessible name, id, name, and value. Anything reading as submit, apply,
+  send, finish, or confirm-and-send is refused. Attribute values are split on
+  underscores and hyphens, so `submit_application` is caught as readily as
+  "Submit application". Navigation controls — save and continue, next, search,
+  upload — pass through.
+- **A reduced vocabulary.** `evaluate` and `send_keys` are removed from the
+  agent entirely. Arbitrary JavaScript would make every other guard
+  decorative, and Enter submits a single-input form with no button click.
+- **A terminal state.** The run always ends in a screenshot and `status:
+  filled`. `SUBMITTED` is reachable only from the review page, only on a job
+  already `filled`, and only behind a confirmation.
+
+You then review the screenshot, submit in the browser yourself, and mark it.
 
 ## Tailoring rules
 

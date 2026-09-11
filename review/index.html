@@ -170,6 +170,16 @@ async function show(id) {
     ${data.diff ? `<h3>Diff against your master resume</h3>
       <div class="card diff">${renderDiff(data.diff)}</div>` : ""}
 
+    ${data.status === "filled" ? `
+      <div class="msg"><strong>Form filled, nothing submitted.</strong>
+        Check the screenshot below, submit in the browser yourself, then mark it here.</div>
+      <div class="actions"><button class="act primary" id="submitted">I submitted it</button></div>
+      ${data.fill_notes ? `<div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
+      ${data.artifacts.includes("fill_screenshot.png") ? `<h3>Filled form</h3>
+        <img src="/review/${id}/file/fill_screenshot.png" alt="Filled application form"
+             style="width:100%;border:1px solid var(--line);border-radius:8px">` : ""}
+    ` : ""}
+
     ${data.artifacts.includes("resume.pdf") ? `<h3>Tailored resume</h3>
       <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe>` : ""}
 
@@ -178,6 +188,10 @@ async function show(id) {
       <div class="actions"><button class="act" id="revise">Re-tailor with this note</button></div>
       <p class="empty" style="padding:0">Re-tailoring writes a new folder. This one is kept.</p>` : ""}
   `;
+
+  if (data.status === "filled") {
+    $("submitted").onclick = () => decide(id, "submitted");
+  }
 
   if (reviewable) {
     $("approve").onclick = () => decide(id, "approve");
@@ -197,6 +211,7 @@ function header(job, folder) {
 
 async function decide(id, action) {
   const note = action === "reject" ? prompt("Why? (optional)") ?? "" : "";
+  if (action === "submitted" && !confirm("Only confirm this after you submitted the form yourself.")) return;
   for (const button of document.querySelectorAll("button.act")) button.disabled = true;
   try {
     await api(`/review/${id}/${action}`, { method: "POST", body: JSON.stringify({ note }) });

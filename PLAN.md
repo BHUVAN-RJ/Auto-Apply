@@ -114,7 +114,9 @@ leak; a deny-list in code does not.
 | 4 | Browser fill loop, checkpoint 2 | 2-3 days |
 | 5 | Glue, `start` command, index, retries | 0.5 day |
 
-Roughly one week part-time.
+Phases 0 to 4 are built. Phase 5 is partly done: `pipeline.py` and `apply.py`
+are the entry points, and `index.csv` is written, but retries and
+resume-after-crash are not.
 
 ## Deferred — noted, not built
 

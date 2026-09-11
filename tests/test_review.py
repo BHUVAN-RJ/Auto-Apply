@@ -123,3 +123,31 @@ def test_revise_rejects_an_empty_instruction(client):
 
 def test_index_page_is_served(client):
     assert "Job Autopilot" in client.get("/").text
+
+
+def filled_job() -> tuple[str, object]:
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "fill_screenshot.png", b"\x89PNG fake")
+    store.write(app_dir, "fill_notes.md", "- filled every field")
+    store.set_status(app_dir, Status.FILLED)
+    queue.update(job_id, status=Status.FILLED)
+    return job_id, app_dir
+
+
+def test_a_human_can_mark_a_filled_job_submitted(client):
+    job_id, app_dir = filled_job()
+    assert client.post(f"/review/{job_id}/submitted", json={}).json()["status"] == "submitted"
+    assert queue.get(job_id).status == Status.SUBMITTED
+    assert store.read_status(app_dir) == "submitted"
+
+
+def test_submitted_cannot_be_reached_before_the_form_is_filled(client):
+    """The agent halts at FILLED; nothing may jump the second checkpoint."""
+    job_id, _ = reviewable_job()
+    assert client.post(f"/review/{job_id}/submitted", json={}).status_code == 409
+
+
+def test_the_fill_screenshot_is_served(client):
+    job_id, _ = filled_job()
+    response = client.get(f"/review/{job_id}/file/fill_screenshot.png")
+    assert response.status_code == 200 and response.content.startswith(b"\x89PNG")

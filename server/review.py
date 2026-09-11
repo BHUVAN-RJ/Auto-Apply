@@ -33,6 +33,7 @@ ARTIFACTS = {
     "resume.diff": "text/plain",
     "suggestions.md": "text/markdown",
     "mismatch.md": "text/markdown",
+    "fill_notes.md": "text/markdown",
     "error.txt": "text/plain",
     "resume.pdf": "application/pdf",
     "fill_screenshot.png": "image/png",
@@ -81,6 +82,7 @@ def detail(job_id: str) -> dict:
         "diff": read("resume.diff"),
         "suggestions": read("suggestions.md"),
         "mismatch": read("mismatch.md"),
+        "fill_notes": read("fill_notes.md"),
         "error": read("error.txt"),
         "history": _history(app_dir),
     }
@@ -127,6 +129,21 @@ def reject(job_id: str, decision: Decision) -> dict:
     store.set_status(app_dir, Status.SKIPPED, decision.note or "rejected at review")
     queue.update(job_id, status=Status.SKIPPED, error=decision.note)
     return {"id": job_id, "status": Status.SKIPPED.value}
+
+
+@router.post("/{job_id}/submitted")
+def mark_submitted(job_id: str, decision: Decision) -> dict:
+    """Checkpoint 2. Only a human reaches this, after submitting by hand.
+
+    The agent has no path to SUBMITTED: its terminal state is FILLED, and this
+    endpoint is reachable only from the review page.
+    """
+    job, app_dir = _job_and_dir(job_id)
+    if job.status != Status.FILLED:
+        raise HTTPException(409, f"job is {job.status.value}, not filled")
+    store.set_status(app_dir, Status.SUBMITTED, decision.note or "submitted by hand")
+    queue.update(job_id, status=Status.SUBMITTED)
+    return {"id": job_id, "status": Status.SUBMITTED.value}
 
 
 @router.post("/{job_id}/revise")
