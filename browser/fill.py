@@ -65,7 +65,7 @@ CDP_URL = "AUTOPILOT_CDP_URL"
 # {"index": 3713} is required. Every step then fails validation and the run
 # explores until it runs out of steps. Structured-output reliability matters
 # more here than price.
-DEFAULT_BROWSER_MODEL = "google/gemini-2.5-flash"
+DEFAULT_BROWSER_MODEL = "google/gemini-3.1-flash-lite"
 
 # Substrings marking a model as able to accept images. Checked rather than
 # assumed, because picking a text-only model here is a silent, total failure.
