@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from . import queue
 from .models import Job, Status
+from .review import router as review_router
 
 ROOT = Path(__file__).resolve().parent.parent
 REVIEW_DIR = ROOT / "review"
@@ -40,6 +41,9 @@ class CaptureRequest(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: Status
+
+
+app.include_router(review_router)
 
 
 @app.get("/health")

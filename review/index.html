@@ -2,32 +2,256 @@
 <meta charset="utf-8">
 <title>Job Autopilot</title>
 <style>
-  body { font: 14px -apple-system, system-ui, sans-serif; margin: 2rem auto; max-width: 900px; }
-  h1 { font-size: 1.25rem; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid #ddd; }
-  .status { font-family: ui-monospace, monospace; font-size: .8rem; }
-  .empty { color: #777; }
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --ink: #1a1a1a; --muted: #6b7280;
+    --line: #e5e7eb; --accent: #0e5484; --add: #1a7f37; --del: #b32424;
+    --addbg: #e6f6ea; --delbg: #fdecec; --warn: #92400e; --warnbg: #fef3c7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181a; --panel: #1f2023; --ink: #e8e8e8; --muted: #9aa0a6;
+      --line: #303236; --accent: #6bb3e0; --add: #4ec06f; --del: #ef6b6b;
+      --addbg: #13301c; --delbg: #331616; --warn: #fbbf24; --warnbg: #362b10;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: .75rem; padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 1rem; margin: 0; letter-spacing: .02em; }
+  header .count { color: var(--muted); font-size: .85rem; }
+  main { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 57px); }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+
+  nav { border-right: 1px solid var(--line); background: var(--panel); }
+  nav button {
+    display: block; width: 100%; text-align: left; padding: .7rem 1rem;
+    background: none; border: 0; border-bottom: 1px solid var(--line);
+    color: inherit; font: inherit; cursor: pointer;
+  }
+  nav button:hover { background: var(--bg); }
+  nav button[aria-current="true"] { background: var(--bg); box-shadow: inset 3px 0 var(--accent); }
+  nav .role { font-weight: 600; }
+  nav .co, nav .st { color: var(--muted); font-size: .8rem; }
+  .st { text-transform: uppercase; letter-spacing: .04em; font-size: .7rem; }
+
+  section.detail { padding: 1.25rem 1.5rem 4rem; max-width: 1100px; }
+  .head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; }
+  .head h2 { margin: 0; font-size: 1.15rem; }
+  .head a { color: var(--accent); }
+  .actions { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; }
+  button.act {
+    padding: .5rem .9rem; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: inherit; font: inherit; cursor: pointer;
+  }
+  button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.act:disabled { opacity: .45; cursor: not-allowed; }
+
+  h3 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--muted); margin: 1.5rem 0 .5rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .diff { overflow-x: auto; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .diff div { padding: 0 .75rem; white-space: pre; }
+  .diff .a { background: var(--addbg); color: var(--add); }
+  .diff .d { background: var(--delbg); color: var(--del); }
+  .diff .h { color: var(--muted); }
+  .prose { padding: .25rem 1rem; }
+  .prose li { margin: .25rem 0; }
+  .warn { background: var(--warnbg); color: var(--warn); padding: .6rem 1rem;
+          border-radius: 8px; margin: .75rem 0; }
+  iframe { width: 100%; height: 78vh; border: 1px solid var(--line); border-radius: 8px;
+           background: #fff; }
+  textarea { width: 100%; min-height: 5rem; padding: .6rem; border-radius: 6px;
+             border: 1px solid var(--line); background: var(--panel); color: inherit;
+             font: inherit; resize: vertical; }
+  .empty { color: var(--muted); padding: 2rem 1.5rem; }
+  .msg { padding: .6rem 1rem; border-radius: 6px; background: var(--panel);
+         border: 1px solid var(--line); margin: .75rem 0; }
 </style>
-<h1>Job Autopilot</h1>
-<p class="empty" id="msg">Loading…</p>
-<table id="tbl" hidden>
-  <thead><tr><th>Job</th><th>Company</th><th>Source</th><th>Status</th></tr></thead>
-  <tbody></tbody>
-</table>
+
+<header>
+  <h1>Job Autopilot</h1>
+  <span class="count" id="count"></span>
+</header>
+
+<main>
+  <nav id="list"></nav>
+  <section class="detail" id="detail"><p class="empty">Loading…</p></section>
+</main>
+
 <script>
-fetch("/jobs").then(r => r.json()).then(jobs => {
-  const msg = document.getElementById("msg");
-  if (!jobs.length) { msg.textContent = "Queue empty. Right-click a posting and choose “Add this job to autopilot”."; return; }
-  msg.hidden = true;
-  const tbl = document.getElementById("tbl");
-  tbl.hidden = false;
-  tbl.querySelector("tbody").innerHTML = jobs.map(j => `
-    <tr>
-      <td><a href="${j.url}" target="_blank" rel="noreferrer">${j.title || j.url}</a></td>
-      <td>${j.company || "—"}</td>
-      <td>${j.source || "—"}</td>
-      <td class="status">${j.status}</td>
-    </tr>`).join("");
-});
+const $ = (id) => document.getElementById(id);
+let jobs = [];
+let current = null;
+
+const LABEL = {
+  queued: "queued", tailoring: "tailoring…", awaiting_review: "needs review",
+  approved: "approved", filling: "filling…", filled: "filled, check it",
+  submitted: "submitted", skipped: "skipped", failed: "failed",
+};
+
+async function api(path, options) {
+  const res = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.status);
+  return res.json();
+}
+
+async function loadList() {
+  jobs = await api("/jobs");
+  const waiting = jobs.filter((j) => j.status === "awaiting_review").length;
+  $("count").textContent = jobs.length
+    ? `${jobs.length} job${jobs.length === 1 ? "" : "s"}, ${waiting} awaiting review`
+    : "";
+
+  $("list").innerHTML = jobs.map((j) => `
+    <button data-id="${j.id}" aria-current="${j.id === current}">
+      <div class="role">${escape(j.title || j.url)}</div>
+      <div class="co">${escape(j.company || j.source || "")}</div>
+      <div class="st">${LABEL[j.status] || j.status}</div>
+    </button>`).join("");
+
+  for (const button of $("list").querySelectorAll("button")) {
+    button.onclick = () => show(button.dataset.id);
+  }
+
+  if (!jobs.length) {
+    $("detail").innerHTML = `<p class="empty">Queue is empty. Right-click a posting in
+      Chrome and choose “Add this job to autopilot”, then run
+      <code>python pipeline.py</code>.</p>`;
+  } else if (!current) {
+    show((jobs.find((j) => j.status === "awaiting_review") || jobs[0]).id);
+  }
+}
+
+async function show(id) {
+  current = id;
+  for (const button of $("list").querySelectorAll("button")) {
+    button.setAttribute("aria-current", button.dataset.id === id);
+  }
+
+  const job = jobs.find((j) => j.id === id);
+  if (!job.app_dir) {
+    $("detail").innerHTML = `${header(job)}<p class="empty">Not processed yet. Run
+      <code>python pipeline.py ${id}</code>.</p>`;
+    return;
+  }
+
+  let data;
+  try {
+    data = await api(`/review/${id}`);
+  } catch (err) {
+    $("detail").innerHTML = `${header(job)}<div class="msg">${escape(String(err))}</div>`;
+    return;
+  }
+
+  const reviewable = data.status === "awaiting_review";
+  $("detail").innerHTML = `
+    ${header(job, data.folder)}
+    ${data.mismatch ? `<div class="warn">${escape(data.mismatch.replace(/^#.*\n/, "").trim())}</div>` : ""}
+    ${data.error ? `<div class="warn">${escape(data.error.split("\n")[0])}</div>` : ""}
+    ${reviewable ? `
+      <div class="actions">
+        <button class="act primary" id="approve">Approve</button>
+        <button class="act" id="reject">Reject</button>
+      </div>` : `<div class="msg">Status: <strong>${LABEL[data.status] || data.status}</strong></div>`}
+
+    ${data.suggestions ? `<h3>What changed, and why</h3>
+      <div class="card prose">${markdown(data.suggestions)}</div>` : ""}
+
+    ${data.diff ? `<h3>Diff against your master resume</h3>
+      <div class="card diff">${renderDiff(data.diff)}</div>` : ""}
+
+    ${data.artifacts.includes("resume.pdf") ? `<h3>Tailored resume</h3>
+      <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe>` : ""}
+
+    ${reviewable ? `<h3>Ask for a change instead</h3>
+      <textarea id="instruction" placeholder="e.g. lead the summary with distributed systems, and pull Project Hydra above the MCP server"></textarea>
+      <div class="actions"><button class="act" id="revise">Re-tailor with this note</button></div>
+      <p class="empty" style="padding:0">Re-tailoring writes a new folder. This one is kept.</p>` : ""}
+  `;
+
+  if (reviewable) {
+    $("approve").onclick = () => decide(id, "approve");
+    $("reject").onclick = () => decide(id, "reject");
+    $("revise").onclick = () => revise(id);
+  }
+}
+
+function header(job, folder) {
+  return `<div class="head">
+      <h2>${escape(job.title || "Untitled role")}</h2>
+      <span class="co">${escape(job.company || "")}</span>
+      <a href="${job.url}" target="_blank" rel="noreferrer">open posting ↗</a>
+      ${folder ? `<span class="co">${escape(folder)}</span>` : ""}
+    </div>`;
+}
+
+async function decide(id, action) {
+  const note = action === "reject" ? prompt("Why? (optional)") ?? "" : "";
+  for (const button of document.querySelectorAll("button.act")) button.disabled = true;
+  try {
+    await api(`/review/${id}/${action}`, { method: "POST", body: JSON.stringify({ note }) });
+    await loadList();
+    await show(id);
+  } catch (err) {
+    alert(err);
+    for (const button of document.querySelectorAll("button.act")) button.disabled = false;
+  }
+}
+
+async function revise(id) {
+  const instruction = $("instruction").value.trim();
+  if (!instruction) return $("instruction").focus();
+  const button = $("revise");
+  button.disabled = true;
+  button.textContent = "Re-tailoring… this takes a moment";
+  try {
+    const result = await api(`/review/${id}/revise`, {
+      method: "POST", body: JSON.stringify({ instruction }),
+    });
+    await loadList();
+    await show(id);
+    alert(`New version written to ${result.folder}`);
+  } catch (err) {
+    alert(err);
+    button.disabled = false;
+    button.textContent = "Re-tailor with this note";
+  }
+}
+
+function renderDiff(diff) {
+  return diff.split("\n").map((line) => {
+    const cls = line.startsWith("+") && !line.startsWith("+++") ? "a"
+      : line.startsWith("-") && !line.startsWith("---") ? "d"
+      : line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++") ? "h" : "";
+    return `<div class="${cls}">${escape(line) || "&nbsp;"}</div>`;
+  }).join("");
+}
+
+// Just enough markdown for the rationale block: headings, bullets, bold.
+function markdown(text) {
+  const html = escape(text)
+    .replace(/^#+\s*(.+)$/gm, "<h4>$1</h4>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>")
+    .replace(/(<li>[\s\S]*?<\/li>)(?![\s\S]*?<li>)/, "<ul>$1</ul>");
+  return html.replace(/\n{2,}/g, "<p>");
+}
+
+function escape(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+loadList();
+setInterval(() => { if (!document.hidden) loadList(); }, 5000);
 </script>

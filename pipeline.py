@@ -66,7 +66,16 @@ def make_page_check(base_tex: Path):
     return check
 
 
-def process(job: Job) -> Path:
+def retailor(job: Job, instruction: str) -> Path:
+    """Run the job again with a reviewer instruction added to the prompt.
+
+    Produces a new application folder rather than editing the existing one,
+    so the rejected version stays on disk next to the reason it was rejected.
+    """
+    return process(job, extra_instruction=instruction)
+
+
+def process(job: Job, extra_instruction: str = "") -> Path:
     """Fetch, tailor, compile, archive. Returns the application folder."""
     queue.update(job.id, status=Status.TAILORING)
     app_dir = store.create(job)
@@ -88,6 +97,7 @@ def process(job: Job) -> Path:
             posting,
             page_check=make_page_check(base_tex),
             target_pages=target,
+            extra_instruction=extra_instruction,
         )
     except tailor.Mismatch as exc:
         store.write(app_dir, "mismatch.md", f"# Not a match\n\n{exc}\n")

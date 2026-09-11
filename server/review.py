@@ -1,0 +1,149 @@
+"""Checkpoint 1: the review API.
+
+Serves each application's artifacts to the review page and records the human
+decision. Approval is the only path forward in the pipeline — the browser fill
+loop refuses to touch a job that is not APPROVED — so this module is the gate,
+not a formality.
+
+Revision is a second tailoring pass with the reviewer's instruction appended to
+the prompt. The result lands in a fresh application folder, because nothing in
+an existing one is ever overwritten.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel
+
+from archive import store
+from server import queue
+from server.models import Job, Status
+
+router = APIRouter(prefix="/review", tags=["review"])
+
+# Artifacts the review page may request. An allow-list rather than a path join,
+# so a crafted name cannot walk out of the application folder.
+ARTIFACTS = {
+    "posting.md": "text/markdown",
+    "resume.tex": "text/plain",
+    "resume.diff": "text/plain",
+    "suggestions.md": "text/markdown",
+    "mismatch.md": "text/markdown",
+    "error.txt": "text/plain",
+    "resume.pdf": "application/pdf",
+    "fill_screenshot.png": "image/png",
+}
+
+
+class Decision(BaseModel):
+    note: Optional[str] = None
+
+
+class Revision(BaseModel):
+    instruction: str
+
+
+def _job_and_dir(job_id: str) -> tuple[Job, Path]:
+    job = queue.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    if not job.app_dir:
+        raise HTTPException(409, "this job has not been through the pipeline yet")
+    app_dir = Path(job.app_dir)
+    if not app_dir.exists():
+        raise HTTPException(410, f"application folder {app_dir.name} is gone")
+    return job, app_dir
+
+
+@router.get("/{job_id}")
+def detail(job_id: str) -> dict:
+    """Everything the review page needs for one application."""
+    job, app_dir = _job_and_dir(job_id)
+    present = [name for name in ARTIFACTS if (app_dir / name).exists()]
+
+    def read(name: str) -> str:
+        path = app_dir / name
+        return path.read_text(errors="replace") if path.exists() else ""
+
+    return {
+        "id": job.id,
+        "url": job.url,
+        "title": job.title,
+        "company": job.company,
+        "source": job.source,
+        "status": job.status.value,
+        "folder": app_dir.name,
+        "artifacts": present,
+        "diff": read("resume.diff"),
+        "suggestions": read("suggestions.md"),
+        "mismatch": read("mismatch.md"),
+        "error": read("error.txt"),
+        "history": _history(app_dir),
+    }
+
+
+def _history(app_dir: Path) -> list[dict]:
+    import json
+
+    path = app_dir / "status.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text()).get("history", [])
+
+
+@router.get("/{job_id}/file/{name}")
+def artifact(job_id: str, name: str):
+    """Serve one artifact. Only names in ARTIFACTS are reachable."""
+    if name not in ARTIFACTS:
+        raise HTTPException(404, "unknown artifact")
+    _, app_dir = _job_and_dir(job_id)
+    path = app_dir / name
+    if not path.exists():
+        raise HTTPException(404, f"{name} not in this application")
+    if ARTIFACTS[name].startswith("text/"):
+        return PlainTextResponse(path.read_text(errors="replace"))
+    return FileResponse(path, media_type=ARTIFACTS[name])
+
+
+@router.post("/{job_id}/approve")
+def approve(job_id: str, decision: Decision) -> dict:
+    """Checkpoint 1 passed. Only an approved job may reach the fill loop."""
+    job, app_dir = _job_and_dir(job_id)
+    if job.status != Status.AWAITING_REVIEW:
+        raise HTTPException(409, f"job is {job.status.value}, not awaiting review")
+    store.set_status(app_dir, Status.APPROVED, decision.note)
+    queue.update(job_id, status=Status.APPROVED)
+    return {"id": job_id, "status": Status.APPROVED.value}
+
+
+@router.post("/{job_id}/reject")
+def reject(job_id: str, decision: Decision) -> dict:
+    """Drop the application. The folder stays for the record."""
+    _, app_dir = _job_and_dir(job_id)
+    store.set_status(app_dir, Status.SKIPPED, decision.note or "rejected at review")
+    queue.update(job_id, status=Status.SKIPPED, error=decision.note)
+    return {"id": job_id, "status": Status.SKIPPED.value}
+
+
+@router.post("/{job_id}/revise")
+def revise(job_id: str, revision: Revision) -> dict:
+    """Re-tailor with an extra instruction, into a new application folder.
+
+    Imported here rather than at module scope: pipeline imports the server
+    package, so importing it at the top would be circular.
+    """
+    from pipeline import retailor
+
+    job, _ = _job_and_dir(job_id)
+    if not revision.instruction.strip():
+        raise HTTPException(400, "instruction is empty")
+    app_dir = retailor(job, revision.instruction)
+    return {
+        "id": job_id,
+        "folder": app_dir.name,
+        "status": (queue.get(job_id) or job).status.value,
+    }

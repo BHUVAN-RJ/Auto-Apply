@@ -89,16 +89,16 @@ nothing.
 
 ## Status
 
-Early. Phases 1 and 2 of 6 are done: a posting can be captured, scraped,
-tailored, compiled, and archived, and it stops at checkpoint 1. The review UI
-currently lists the queue but does not yet render the diff, and the browser
-fill loop is not built. See [PLAN.md](PLAN.md) for the full design and phase
-breakdown.
+Phases 1 to 3 of 6 are done. A posting can be captured, scraped, tailored,
+compiled, and archived; checkpoint 1 is live at `localhost:8787` with a diff
+view, PDF preview, and approve / reject / re-tailor. The browser fill loop and
+checkpoint 2 are not built. See [PLAN.md](PLAN.md) for the full design and
+phase breakdown.
 
 ```sh
 python pipeline.py            # process every queued job
 python pipeline.py <job_id>   # process one
-pytest                        # 50 tests
+pytest                        # 62 tests
 ```
 
 ## Setup
@@ -127,6 +127,21 @@ it needs. `base/resume.example.tex` shows the shape and is what the test suite
 compiles. Optionally add `base/profile.md` with background that is not on the
 resume; the tailor reads it as extra context but is instructed never to invent
 anything it cannot support.
+
+## Checkpoint 1
+
+`localhost:8787` lists every job and opens on whatever is waiting for you. Each
+application shows the model's rationale, a coloured diff against your master
+resume, and the compiled PDF inline.
+
+Three ways out:
+
+- **Approve** — the only path onward. The fill loop refuses any job that is not
+  approved, so this gate cannot be skipped.
+- **Reject** — the job is dropped. The folder stays as a record of what was
+  tried and why it was not sent.
+- **Re-tailor with a note** — a second pass with your instruction appended to
+  the prompt, landing in a new folder. The version you rejected is kept.
 
 ## Tailoring rules
 

@@ -259,6 +259,7 @@ def tailor(
     page_check: Optional[Callable[[str], Optional[int]]] = None,
     target_pages: int = 1,
     max_attempts: int = 3,
+    extra_instruction: str = "",
 ) -> TailorResult:
     """Tailor the resume, retrying while it does not fit on `target_pages`.
 
@@ -271,6 +272,15 @@ def tailor(
     model = llm.tailor_model()
 
     message = _build_user_message(posting, original, profile)
+    if extra_instruction.strip():
+        # The reviewer's words carry more weight than the model's own earlier
+        # judgement, but not more than the rules: they are appended to the
+        # request, never to the system prompt.
+        message += (
+            "\n\n## The reviewer asked for a change\n\n"
+            f"{extra_instruction.strip()}\n\n"
+            "Apply this while still obeying every rule above."
+        )
     system = system_prompt()
     feedback = ""
 
