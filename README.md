@@ -179,5 +179,5 @@ every non-default package so the test suite passes on a bare install.
 
 Python 3.10+, FastAPI, [browser-use](https://github.com/browser-use/browser-use),
 OpenRouter, and a local TeX Live install. The model is configured in `.env` and
-defaults to `z-ai/glm-5.1`; anything OpenRouter serves works. No cloud services beyond the model
+defaults to `z-ai/glm-5.3`; anything OpenRouter serves works. No cloud services beyond the model
 API; the queue, the archive, and the review UI are all local.

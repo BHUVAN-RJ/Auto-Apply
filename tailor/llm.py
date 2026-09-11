@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "z-ai/glm-5.1"
+DEFAULT_MODEL = "z-ai/glm-5.3"
 TIMEOUT = 180.0
 
 
