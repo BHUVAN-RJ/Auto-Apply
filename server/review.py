@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from archive import store
-from server import queue
+from server import queue, runner
 from server.models import REJECT_LABELS, Job, RejectReason, Status
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -124,13 +124,34 @@ def artifact(job_id: str, name: str):
 
 @router.post("/{job_id}/approve")
 def approve(job_id: str, decision: Decision) -> dict:
-    """Checkpoint 1 passed. Only an approved job may reach the fill loop."""
+    """Checkpoint 1 passed, and the fill starts straight away.
+
+    Approval is the consent, so making the human then run a command adds a
+    step without adding a decision. The fill runs detached and still halts at
+    checkpoint 2; nothing about the never-submit guarantee changes.
+    """
     job, app_dir = _job_and_dir(job_id)
     if job.status != Status.AWAITING_REVIEW:
         raise HTTPException(409, f"job is {job.status.value}, not awaiting review")
     store.set_status(app_dir, Status.APPROVED, decision.note)
     queue.update(job_id, status=Status.APPROVED)
-    return {"id": job_id, "status": Status.APPROVED.value}
+
+    pid = runner.start_fill(job_id)
+    if pid:
+        store.set_status(app_dir, Status.APPROVED, f"filling started (pid {pid})")
+    return {"id": job_id, "status": Status.APPROVED.value, "filling": bool(pid)}
+
+
+@router.post("/{job_id}/fill")
+def fill_now(job_id: str, decision: Decision) -> dict:
+    """Start or restart the fill by hand, for a retry or when autofill is off."""
+    job, _ = _job_and_dir(job_id)
+    if job.status not in (Status.APPROVED, Status.FAILED, Status.FILLED):
+        raise HTTPException(409, f"job is {job.status.value}; approve it first")
+    pid = runner.launch("apply.py", job_id)
+    if not pid:
+        raise HTTPException(500, "could not start apply.py")
+    return {"id": job_id, "filling": True, "pid": pid}
 
 
 @router.post("/{job_id}/reject")

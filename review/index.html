@@ -263,6 +263,8 @@ async function show(id) {
     ${!reviewable && !filled ? `
       <div class="actions">
         <span class="state ${TONE[data.status] || ""}">${LABEL[data.status] || data.status}</span>
+        ${["approved", "failed"].includes(data.status)
+          ? `<button class="act" id="fillNow">Fill the form now</button>` : ""}
         ${data.status !== "skipped" && data.status !== "submitted"
           ? `<button class="act danger" id="reject">Reject…</button>` : ""}
       </div>` : ""}
@@ -310,6 +312,8 @@ async function show(id) {
   if ($("reject")) $("reject").onclick = () => openReject(id);
   if ($("submitted")) $("submitted").onclick = () => markSubmitted(id);
   if ($("revise")) $("revise").onclick = () => revise(id);
+  if ($("fillNow")) $("fillNow").onclick = () =>
+    act(id, () => api(`/review/${id}/fill`, { method: "POST", body: "{}" }));
 
   if ($("posting")) {
     fetch(`/review/${id}/file/posting.md`).then((r) => r.text())
@@ -345,14 +349,23 @@ function banners(data) {
       Check the screenshot, submit it in the browser yourself, then mark it here.</div>`;
   }
   if (data.status === "approved") {
-    html += `<div class="banner go">Approved. Run <code>python apply.py ${data.id}</code>
-      to fill the form.</div>`;
+    html += `<div class="banner go"><strong>Approved.</strong> Chrome should be opening to
+      fill the form. It will stop before submitting.</div>`;
+  }
+  if (data.status === "filling") {
+    html += `<div class="banner warn"><strong>Filling the form now.</strong>
+      Leave the Chrome window alone until it stops.</div>`;
   }
   return html;
 }
 
 async function approve(id) {
-  await act(id, () => api(`/review/${id}/approve`, { method: "POST", body: "{}" }));
+  await act(id, async () => {
+    const result = await api(`/review/${id}/approve`, { method: "POST", body: "{}" });
+    if (!result.filling) {
+      alert(`Approved. Autofill is switched off, so run: python apply.py ${id}`);
+    }
+  });
 }
 
 async function markSubmitted(id) {

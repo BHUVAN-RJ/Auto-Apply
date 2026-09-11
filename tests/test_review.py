@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from archive import store
-from server import queue
+from server import queue, runner
 from server.app import app
 from server.models import Job, Status
 
@@ -223,3 +223,44 @@ def test_the_job_list_carries_the_rejection_reason(client):
     row = next(j for j in client.get("/jobs").json() if j["id"] == job_id)
     assert row["reject_reason"] == "location"
     assert row["reject_note"] == "onsite NYC"
+
+
+def test_approving_starts_the_fill(client, monkeypatch):
+    """Approval is the consent; making the human then run a command adds nothing."""
+    job_id, _ = reviewable_job()
+    started = {}
+    def fake_start(job_id):
+        started["id"] = job_id
+        return 99
+
+    monkeypatch.setattr(runner, "start_fill", fake_start)
+
+    response = client.post(f"/review/{job_id}/approve", json={})
+
+    assert response.json()["filling"] is True
+    assert started["id"] == job_id
+    assert queue.get(job_id).status == Status.APPROVED
+
+
+def test_approving_still_works_when_autofill_is_off(client, monkeypatch):
+    job_id, _ = reviewable_job()
+    monkeypatch.setattr(runner, "start_fill", lambda jid: None)
+    response = client.post(f"/review/{job_id}/approve", json={})
+    assert response.json() == {"id": job_id, "status": "approved", "filling": False}
+
+
+def test_rejecting_never_starts_the_fill(client, monkeypatch):
+    job_id, _ = reviewable_job()
+    monkeypatch.setattr(runner, "start_fill",
+                        lambda jid: pytest.fail("a rejected job must not be filled"))
+    client.post(f"/review/{job_id}/reject", json={"reason": "poor_fit"})
+    assert queue.get(job_id).status == Status.SKIPPED
+
+
+def test_fill_now_requires_an_approved_job(client, monkeypatch):
+    monkeypatch.setattr(runner, "launch", lambda script, jid: 77)
+    job_id, _ = reviewable_job()
+    assert client.post(f"/review/{job_id}/fill", json={}).status_code == 409
+
+    queue.update(job_id, status=Status.APPROVED)
+    assert client.post(f"/review/{job_id}/fill", json={}).json()["pid"] == 77

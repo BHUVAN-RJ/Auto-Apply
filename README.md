@@ -97,7 +97,8 @@ design and what is deliberately deferred.
 ```sh
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
-pytest                        # 128 tests
+                              # (approving in the UI starts this for you)
+pytest                        # 140 tests
 ```
 
 ## Setup
@@ -160,8 +161,14 @@ You can reject at any stage, including after approving or filling.
 
 ## Checkpoint 2
 
-`python apply.py` opens your real Chrome, fills every approved application, and
-halts. It refuses any job that is not approved, so checkpoint 1 cannot be
+Approving at checkpoint 1 starts the fill straight away: approval is the
+consent, so making you then run a command adds a step without adding a
+decision. It runs detached, so a browser crash cannot take the server down, and
+the log lands in `data/apply_<job>.log`. `python apply.py` does the same by hand
+for every approved job, and the review page has a "Fill the form now" button for
+a retry. Set `AUTOPILOT_NO_AUTOFILL=1` to keep approval and filling separate.
+
+Either way it opens your real Chrome, fills the form, and halts. It refuses any job that is not approved, so checkpoint 1 cannot be
 bypassed by running it directly.
 
 Three independent things stop it submitting, none of them a prompt rule:
