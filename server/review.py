@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from archive import store
 from server import queue
-from server.models import Job, Status
+from server.models import REJECT_LABELS, Job, RejectReason, Status
 
 router = APIRouter(prefix="/review", tags=["review"])
 
@@ -33,6 +33,7 @@ ARTIFACTS = {
     "resume.diff": "text/plain",
     "suggestions.md": "text/markdown",
     "mismatch.md": "text/markdown",
+    "rejection.md": "text/markdown",
     "fill_notes.md": "text/markdown",
     "error.txt": "text/plain",
     "resume.pdf": "application/pdf",
@@ -41,6 +42,13 @@ ARTIFACTS = {
 
 
 class Decision(BaseModel):
+    note: Optional[str] = None
+
+
+class Rejection(BaseModel):
+    """A rejection always carries a reason. The note is for the specifics."""
+
+    reason: RejectReason
     note: Optional[str] = None
 
 
@@ -82,6 +90,9 @@ def detail(job_id: str) -> dict:
         "diff": read("resume.diff"),
         "suggestions": read("suggestions.md"),
         "mismatch": read("mismatch.md"),
+        "reject_reason": job.reject_reason.value if job.reject_reason else None,
+        "reject_label": REJECT_LABELS.get(job.reject_reason) if job.reject_reason else None,
+        "reject_note": job.reject_note,
         "fill_notes": read("fill_notes.md"),
         "error": read("error.txt"),
         "history": _history(app_dir),
@@ -123,12 +134,33 @@ def approve(job_id: str, decision: Decision) -> dict:
 
 
 @router.post("/{job_id}/reject")
-def reject(job_id: str, decision: Decision) -> dict:
-    """Drop the application. The folder stays for the record."""
+def reject(job_id: str, rejection: Rejection) -> dict:
+    """Drop the application, recording why.
+
+    A reason is required: a rejected job stays visible in the list, and a
+    rejection with no reason tells you nothing three weeks later. The folder
+    is kept intact as the record of what was tried.
+    """
     _, app_dir = _job_and_dir(job_id)
-    store.set_status(app_dir, Status.SKIPPED, decision.note or "rejected at review")
-    queue.update(job_id, status=Status.SKIPPED, error=decision.note)
-    return {"id": job_id, "status": Status.SKIPPED.value}
+    label = REJECT_LABELS[rejection.reason]
+    detail = f"{label}: {rejection.note}" if rejection.note else label
+
+    store.set_status(app_dir, Status.SKIPPED, detail)
+    store.write_or_append(app_dir, "rejection.md", f"# Rejected\n\n**{label}**\n\n"
+                          f"{rejection.note or '_no further detail_'}\n")
+    queue.update(
+        job_id,
+        status=Status.SKIPPED,
+        reject_reason=rejection.reason,
+        reject_note=rejection.note,
+    )
+    return {"id": job_id, "status": Status.SKIPPED.value, "reason": label}
+
+
+@router.get("/meta/reject-reasons")
+def reject_reasons() -> list[dict]:
+    """The reason list the review page offers."""
+    return [{"value": reason.value, "label": label} for reason, label in REJECT_LABELS.items()]
 
 
 @router.post("/{job_id}/submitted")

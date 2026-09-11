@@ -69,6 +69,21 @@ def write(app_dir: Path, name: str, content: str | bytes) -> Path:
     return target
 
 
+def write_or_append(app_dir: Path, name: str, content: str) -> Path:
+    """Append to an artifact that legitimately accumulates.
+
+    The immutability rule exists to protect the record of what was sent. A
+    reviewer changing their mind is part of that record, so their decisions
+    append rather than collide.
+    """
+    target = app_dir / name
+    with open(target, "a") as fh:
+        if target.stat().st_size:
+            fh.write("\n---\n\n")
+        fh.write(content)
+    return target
+
+
 def set_status(app_dir: Path, status: Status, note: Optional[str] = None) -> None:
     """Status is the one mutable file, since it is the folder's lifecycle.
 

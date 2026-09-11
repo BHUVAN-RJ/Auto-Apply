@@ -97,7 +97,7 @@ design and what is deliberately deferred.
 ```sh
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
-pytest                        # 120 tests
+pytest                        # 128 tests
 ```
 
 ## Setup
@@ -129,9 +129,12 @@ anything it cannot support.
 
 ## Checkpoint 1
 
-`localhost:8787` lists every job and opens on whatever is waiting for you. Each
-application shows the model's rationale, a coloured diff against your master
-resume, and the compiled PDF inline.
+`localhost:8787` groups the sidebar by what needs doing — needs your review,
+filled and awaiting your check, approved, queued, submitted, rejected, failed —
+and opens on whatever is waiting. Selecting a job shows its rationale, a
+coloured diff against your master resume, the compiled PDF inline, the filled
+form screenshot once there is one, the scraped posting, and the full status
+history.
 
 Three ways out:
 
@@ -141,6 +144,19 @@ Three ways out:
   tried and why it was not sent.
 - **Re-tailor with a note** — a second pass with your instruction appended to
   the prompt, landing in a new folder. The version you rejected is kept.
+
+## Every decision is yours
+
+The agent never closes a job. It can recommend: a poor-fit verdict flags the
+posting, explains why, and tailors nothing — but the job still waits at
+checkpoint 1 for you to reject it or push back with a re-tailor note. The only
+states the agent sets are working states and `filled`. Approving, rejecting,
+and marking submitted are reachable only from the review page.
+
+Rejecting requires a reason — one of seven, plus an optional note — because a
+rejection with no reason tells you nothing three weeks later. Rejected jobs
+stay in the list with the reason under them, and the folder is kept intact.
+You can reject at any stage, including after approving or filling.
 
 ## Checkpoint 2
 

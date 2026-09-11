@@ -91,12 +91,63 @@ def test_approve_cannot_be_reached_from_queued(client):
     assert client.post(f"/review/{job.id}/approve", json={}).status_code == 409
 
 
-def test_reject_skips_the_job_and_keeps_the_folder(client):
+def test_reject_records_the_reason_and_keeps_the_folder(client):
     job_id, app_dir = reviewable_job()
-    client.post(f"/review/{job_id}/reject", json={"note": "too senior"})
-    assert queue.get(job_id).status == Status.SKIPPED
-    assert store.read_status(app_dir) == "skipped"
+    response = client.post(f"/review/{job_id}/reject",
+                           json={"reason": "seniority", "note": "wants 8 years"})
+
+    assert response.status_code == 200
+    job = queue.get(job_id)
+    assert job.status == Status.SKIPPED
+    assert job.reject_reason.value == "seniority"
+    assert job.reject_note == "wants 8 years"
+    assert "Wrong seniority" in (app_dir / "rejection.md").read_text()
+    assert "wants 8 years" in (app_dir / "rejection.md").read_text()
     assert (app_dir / "resume.diff").exists(), "the record survives a rejection"
+
+
+def test_reject_requires_a_reason(client):
+    """A rejection with no reason tells you nothing weeks later."""
+    job_id, _ = reviewable_job()
+    assert client.post(f"/review/{job_id}/reject", json={}).status_code == 422
+    assert client.post(f"/review/{job_id}/reject", json={"note": "nope"}).status_code == 422
+    assert queue.get(job_id).status == Status.AWAITING_REVIEW
+
+
+def test_reject_refuses_an_unknown_reason(client):
+    job_id, _ = reviewable_job()
+    assert client.post(f"/review/{job_id}/reject",
+                       json={"reason": "vibes"}).status_code == 422
+
+
+def test_a_reason_without_a_note_is_enough(client):
+    job_id, app_dir = reviewable_job()
+    client.post(f"/review/{job_id}/reject", json={"reason": "changed_my_mind"})
+    assert queue.get(job_id).reject_reason.value == "changed_my_mind"
+    assert "no further detail" in (app_dir / "rejection.md").read_text()
+
+
+def test_the_rejection_reason_comes_back_on_the_detail(client):
+    job_id, _ = reviewable_job()
+    client.post(f"/review/{job_id}/reject", json={"reason": "location", "note": "onsite NYC"})
+    data = client.get(f"/review/{job_id}").json()
+    assert data["reject_label"] == "Location or work authorisation"
+    assert data["reject_note"] == "onsite NYC"
+
+
+def test_changing_your_mind_twice_appends_rather_than_collides(client):
+    """The reviewer's decisions are part of the record, so they accumulate."""
+    job_id, app_dir = reviewable_job()
+    client.post(f"/review/{job_id}/reject", json={"reason": "poor_fit", "note": "first call"})
+    client.post(f"/review/{job_id}/reject", json={"reason": "location", "note": "second call"})
+    text = (app_dir / "rejection.md").read_text()
+    assert "first call" in text and "second call" in text
+
+
+def test_the_reason_list_is_served_to_the_page(client):
+    reasons = client.get("/review/meta/reject-reasons").json()
+    assert {"value": "poor_fit", "label": "Not a good fit"} in reasons
+    assert len(reasons) == 7
 
 
 def test_revise_reruns_the_pipeline_with_the_instruction(client, monkeypatch):
@@ -151,3 +202,24 @@ def test_the_fill_screenshot_is_served(client):
     job_id, _ = filled_job()
     response = client.get(f"/review/{job_id}/file/fill_screenshot.png")
     assert response.status_code == 200 and response.content.startswith(b"\x89PNG")
+
+
+def test_you_can_reject_at_any_stage(client):
+    """Control stays with the human: an approved or filled job can still be dropped."""
+    for status in (Status.APPROVED, Status.FILLED, Status.FAILED):
+        queue.QUEUE_PATH.unlink(missing_ok=True)
+        job_id, _ = reviewable_job()
+        queue.update(job_id, status=status)
+        response = client.post(f"/review/{job_id}/reject",
+                               json={"reason": "changed_my_mind"})
+        assert response.status_code == 200, status
+        assert queue.get(job_id).status == Status.SKIPPED
+
+
+def test_the_job_list_carries_the_rejection_reason(client):
+    """The sidebar shows why something was rejected without opening it."""
+    job_id, _ = reviewable_job()
+    client.post(f"/review/{job_id}/reject", json={"reason": "location", "note": "onsite NYC"})
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job_id)
+    assert row["reject_reason"] == "location"
+    assert row["reject_note"] == "onsite NYC"

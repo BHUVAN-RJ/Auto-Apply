@@ -6,12 +6,14 @@
     --bg: #fbfbfa; --panel: #fff; --ink: #1a1a1a; --muted: #6b7280;
     --line: #e5e7eb; --accent: #0e5484; --add: #1a7f37; --del: #b32424;
     --addbg: #e6f6ea; --delbg: #fdecec; --warn: #92400e; --warnbg: #fef3c7;
+    --ok: #1a7f37; --okbg: #e6f6ea; --stop: #b32424; --stopbg: #fdecec;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #17181a; --panel: #1f2023; --ink: #e8e8e8; --muted: #9aa0a6;
       --line: #303236; --accent: #6bb3e0; --add: #4ec06f; --del: #ef6b6b;
       --addbg: #13301c; --delbg: #331616; --warn: #fbbf24; --warnbg: #362b10;
+      --ok: #4ec06f; --okbg: #13301c; --stop: #ef6b6b; --stopbg: #331616;
     }
   }
   * { box-sizing: border-box; }
@@ -26,35 +28,51 @@
   }
   header h1 { font-size: 1rem; margin: 0; letter-spacing: .02em; }
   header .count { color: var(--muted); font-size: .85rem; }
-  main { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 57px); }
-  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  main { display: grid; grid-template-columns: 290px 1fr; min-height: calc(100vh - 57px); }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
 
   nav { border-right: 1px solid var(--line); background: var(--panel); }
+  nav .group {
+    padding: .6rem 1rem .3rem; font-size: .68rem; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--line);
+  }
+  nav .group:first-child { border-top: 0; }
   nav button {
-    display: block; width: 100%; text-align: left; padding: .7rem 1rem;
+    display: block; width: 100%; text-align: left; padding: .6rem 1rem;
     background: none; border: 0; border-bottom: 1px solid var(--line);
     color: inherit; font: inherit; cursor: pointer;
   }
   nav button:hover { background: var(--bg); }
   nav button[aria-current="true"] { background: var(--bg); box-shadow: inset 3px 0 var(--accent); }
   nav .role { font-weight: 600; }
-  nav .co, nav .st { color: var(--muted); font-size: .8rem; }
-  .st { text-transform: uppercase; letter-spacing: .04em; font-size: .7rem; }
+  nav .co { color: var(--muted); font-size: .8rem; }
+  nav .why { color: var(--stop); font-size: .75rem; }
 
-  section.detail { padding: 1.25rem 1.5rem 4rem; max-width: 1100px; }
-  .head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; }
+  section.detail { padding: 1.25rem 1.5rem 5rem; max-width: 1100px; }
+  .head { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: baseline; }
   .head h2 { margin: 0; font-size: 1.15rem; }
+  .head a, .head .folder { font-size: .82rem; }
   .head a { color: var(--accent); }
-  .actions { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; }
+  .head .folder { color: var(--muted); font-family: ui-monospace, monospace; }
+
+  .state { display: inline-block; padding: .12rem .5rem; border-radius: 999px;
+           font-size: .72rem; letter-spacing: .03em; text-transform: uppercase;
+           background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+  .state.wait { background: var(--warnbg); color: var(--warn); border-color: transparent; }
+  .state.go { background: var(--okbg); color: var(--ok); border-color: transparent; }
+  .state.stop { background: var(--stopbg); color: var(--stop); border-color: transparent; }
+
+  .actions { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; align-items: center; }
   button.act {
     padding: .5rem .9rem; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: inherit; font: inherit; cursor: pointer;
   }
   button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.act.danger { color: var(--stop); }
   button.act:disabled { opacity: .45; cursor: not-allowed; }
 
   h3 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em;
-       color: var(--muted); margin: 1.5rem 0 .5rem; }
+       color: var(--muted); margin: 1.6rem 0 .5rem; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
   .diff { overflow-x: auto; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .diff div { padding: 0 .75rem; white-space: pre; }
@@ -63,16 +81,33 @@
   .diff .h { color: var(--muted); }
   .prose { padding: .25rem 1rem; }
   .prose li { margin: .25rem 0; }
-  .warn { background: var(--warnbg); color: var(--warn); padding: .6rem 1rem;
-          border-radius: 8px; margin: .75rem 0; }
-  iframe { width: 100%; height: 78vh; border: 1px solid var(--line); border-radius: 8px;
+  .prose h4 { margin: .8rem 0 .3rem; font-size: .9rem; }
+  .banner { padding: .7rem 1rem; border-radius: 8px; margin: .8rem 0; }
+  .banner.warn { background: var(--warnbg); color: var(--warn); }
+  .banner.stop { background: var(--stopbg); color: var(--stop); }
+  .banner.go { background: var(--okbg); color: var(--ok); }
+  iframe { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 8px;
            background: #fff; }
-  textarea { width: 100%; min-height: 5rem; padding: .6rem; border-radius: 6px;
-             border: 1px solid var(--line); background: var(--panel); color: inherit;
-             font: inherit; resize: vertical; }
-  .empty { color: var(--muted); padding: 2rem 1.5rem; }
-  .msg { padding: .6rem 1rem; border-radius: 6px; background: var(--panel);
-         border: 1px solid var(--line); margin: .75rem 0; }
+  img.shot { width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+  pre.posting { white-space: pre-wrap; padding: 1rem; margin: 0; max-height: 40vh;
+                overflow-y: auto; font: 13px/1.55 inherit; }
+  details > summary { cursor: pointer; color: var(--muted); font-size: .82rem;
+                      margin: 1.2rem 0 .4rem; }
+  textarea, select {
+    width: 100%; padding: .55rem; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: inherit; font: inherit;
+  }
+  textarea { min-height: 4.5rem; resize: vertical; }
+  .empty { color: var(--muted); padding: 2rem 0; }
+  .hint { color: var(--muted); font-size: .82rem; }
+
+  dialog {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    color: inherit; padding: 1.25rem; width: min(420px, 92vw);
+  }
+  dialog::backdrop { background: #0008; }
+  dialog h4 { margin: 0 0 .8rem; font-size: 1rem; }
+  dialog label { display: block; font-size: .8rem; color: var(--muted); margin: .8rem 0 .25rem; }
 </style>
 
 <header>
@@ -85,39 +120,87 @@
   <section class="detail" id="detail"><p class="empty">Loading…</p></section>
 </main>
 
+<dialog id="rejectDialog">
+  <form method="dialog" id="rejectForm">
+    <h4>Why are you rejecting this?</h4>
+    <label for="reason">Reason</label>
+    <select id="reason" required></select>
+    <label for="note">Anything else (optional)</label>
+    <textarea id="note" placeholder="e.g. wants 8 years, posting says onsite only"></textarea>
+    <div class="actions" style="justify-content:flex-end;margin-bottom:0">
+      <button class="act" value="cancel" formnovalidate>Cancel</button>
+      <button class="act danger" id="confirmReject" value="reject">Reject</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let jobs = [];
 let current = null;
+let reasons = [];
 
 const LABEL = {
-  queued: "queued", tailoring: "tailoring…", awaiting_review: "needs review",
-  approved: "approved", filling: "filling…", filled: "filled, check it",
-  submitted: "submitted", skipped: "skipped", failed: "failed",
+  queued: "queued", tailoring: "tailoring…", awaiting_review: "needs your review",
+  approved: "approved, ready to fill", filling: "filling…",
+  filled: "filled, needs your check", submitted: "submitted",
+  skipped: "rejected", failed: "failed",
+};
+
+// Which jobs need you, in the order you should deal with them.
+const GROUPS = [
+  ["awaiting_review", "Needs your review"],
+  ["filled", "Filled, check before submitting"],
+  ["approved", "Approved, ready to fill"],
+  ["queued", "Queued"],
+  ["tailoring", "Working"],
+  ["filling", "Working"],
+  ["submitted", "Submitted"],
+  ["skipped", "Rejected"],
+  ["failed", "Failed"],
+];
+
+const TONE = {
+  awaiting_review: "wait", filled: "wait", approved: "go", submitted: "go",
+  skipped: "stop", failed: "stop",
 };
 
 async function api(path, options) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.status);
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+  }
   return res.json();
 }
 
 async function loadList() {
   jobs = await api("/jobs");
-  const waiting = jobs.filter((j) => j.status === "awaiting_review").length;
+  const waiting = jobs.filter((j) => j.status === "awaiting_review" || j.status === "filled");
   $("count").textContent = jobs.length
-    ? `${jobs.length} job${jobs.length === 1 ? "" : "s"}, ${waiting} awaiting review`
+    ? `${jobs.length} job${jobs.length === 1 ? "" : "s"}, ${waiting.length} waiting on you`
     : "";
 
-  $("list").innerHTML = jobs.map((j) => `
-    <button data-id="${j.id}" aria-current="${j.id === current}">
-      <div class="role">${escape(j.title || j.url)}</div>
-      <div class="co">${escape(j.company || j.source || "")}</div>
-      <div class="st">${LABEL[j.status] || j.status}</div>
-    </button>`).join("");
+  const seen = new Set();
+  let html = "";
+  for (const [status, heading] of GROUPS) {
+    if (seen.has(heading)) continue;
+    const statuses = GROUPS.filter(([, h]) => h === heading).map(([s]) => s);
+    const group = jobs.filter((j) => statuses.includes(j.status));
+    if (!group.length) continue;
+    seen.add(heading);
+    html += `<div class="group">${heading} · ${group.length}</div>`;
+    html += group.map((j) => `
+      <button data-id="${j.id}" aria-current="${j.id === current}">
+        <div class="role">${escape(j.title || j.url)}</div>
+        <div class="co">${escape(j.company || j.source || "")}</div>
+        ${j.status === "skipped" && j.reject_reason
+          ? `<div class="why">${escape(reasonLabel(j.reject_reason))}${
+              j.reject_note ? " — " + escape(j.reject_note) : ""}</div>`
+          : ""}
+      </button>`).join("");
+  }
+  $("list").innerHTML = html;
 
   for (const button of $("list").querySelectorAll("button")) {
     button.onclick = () => show(button.dataset.id);
@@ -127,9 +210,13 @@ async function loadList() {
     $("detail").innerHTML = `<p class="empty">Queue is empty. Right-click a posting in
       Chrome and choose “Add this job to autopilot”, then run
       <code>python pipeline.py</code>.</p>`;
-  } else if (!current) {
-    show((jobs.find((j) => j.status === "awaiting_review") || jobs[0]).id);
+  } else if (!current || !jobs.some((j) => j.id === current)) {
+    show((waiting[0] || jobs[0]).id);
   }
+}
+
+function reasonLabel(value) {
+  return (reasons.find((r) => r.value === value) || {}).label || value;
 }
 
 async function show(id) {
@@ -139,9 +226,12 @@ async function show(id) {
   }
 
   const job = jobs.find((j) => j.id === id);
+  if (!job) return;
+
   if (!job.app_dir) {
-    $("detail").innerHTML = `${header(job)}<p class="empty">Not processed yet. Run
-      <code>python pipeline.py ${id}</code>.</p>`;
+    $("detail").innerHTML = `${head(job)}
+      <p class="empty">Not processed yet. Run <code>python pipeline.py ${id}</code>
+      to scrape the posting and tailor your resume.</p>`;
     return;
   }
 
@@ -149,20 +239,33 @@ async function show(id) {
   try {
     data = await api(`/review/${id}`);
   } catch (err) {
-    $("detail").innerHTML = `${header(job)}<div class="msg">${escape(String(err))}</div>`;
+    $("detail").innerHTML = `${head(job)}<div class="banner stop">${escape(err.message)}</div>`;
     return;
   }
 
   const reviewable = data.status === "awaiting_review";
+  const filled = data.status === "filled";
+
   $("detail").innerHTML = `
-    ${header(job, data.folder)}
-    ${data.mismatch ? `<div class="warn">${escape(data.mismatch.replace(/^#.*\n/, "").trim())}</div>` : ""}
-    ${data.error ? `<div class="warn">${escape(data.error.split("\n")[0])}</div>` : ""}
+    ${head(job, data)}
+    ${banners(data)}
     ${reviewable ? `
       <div class="actions">
         <button class="act primary" id="approve">Approve</button>
-        <button class="act" id="reject">Reject</button>
-      </div>` : `<div class="msg">Status: <strong>${LABEL[data.status] || data.status}</strong></div>`}
+        <button class="act danger" id="reject">Reject…</button>
+        <span class="hint">Nothing moves until you pick one.</span>
+      </div>` : ""}
+    ${filled ? `
+      <div class="actions">
+        <button class="act primary" id="submitted">I submitted it</button>
+        <button class="act danger" id="reject">Reject…</button>
+      </div>` : ""}
+    ${!reviewable && !filled ? `
+      <div class="actions">
+        <span class="state ${TONE[data.status] || ""}">${LABEL[data.status] || data.status}</span>
+        ${data.status !== "skipped" && data.status !== "submitted"
+          ? `<button class="act danger" id="reject">Reject…</button>` : ""}
+      </div>` : ""}
 
     ${data.suggestions ? `<h3>What changed, and why</h3>
       <div class="card prose">${markdown(data.suggestions)}</div>` : ""}
@@ -170,76 +273,130 @@ async function show(id) {
     ${data.diff ? `<h3>Diff against your master resume</h3>
       <div class="card diff">${renderDiff(data.diff)}</div>` : ""}
 
-    ${data.status === "filled" ? `
-      <div class="msg"><strong>Form filled, nothing submitted.</strong>
-        Check the screenshot below, submit in the browser yourself, then mark it here.</div>
-      <div class="actions"><button class="act primary" id="submitted">I submitted it</button></div>
-      ${data.fill_notes ? `<div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
-      ${data.artifacts.includes("fill_screenshot.png") ? `<h3>Filled form</h3>
-        <img src="/review/${id}/file/fill_screenshot.png" alt="Filled application form"
-             style="width:100%;border:1px solid var(--line);border-radius:8px">` : ""}
-    ` : ""}
-
     ${data.artifacts.includes("resume.pdf") ? `<h3>Tailored resume</h3>
       <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe>` : ""}
 
-    ${reviewable ? `<h3>Ask for a change instead</h3>
-      <textarea id="instruction" placeholder="e.g. lead the summary with distributed systems, and pull Project Hydra above the MCP server"></textarea>
-      <div class="actions"><button class="act" id="revise">Re-tailor with this note</button></div>
-      <p class="empty" style="padding:0">Re-tailoring writes a new folder. This one is kept.</p>` : ""}
+    ${data.fill_notes ? `<h3>What the browser did</h3>
+      <div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
+
+    ${data.artifacts.includes("fill_screenshot.png") ? `<h3>The filled form</h3>
+      <img class="shot" src="/review/${id}/file/fill_screenshot.png"
+           alt="The filled application form">` : ""}
+
+    ${reviewable ? `<h3>Or ask for a change</h3>
+      <textarea id="instruction" placeholder="e.g. lead the summary with distributed systems, and put Project Hydra above the MCP server"></textarea>
+      <div class="actions">
+        <button class="act" id="revise">Re-tailor with this note</button>
+        <span class="hint">Writes a new version. This one is kept.</span>
+      </div>` : ""}
+
+    ${data.artifacts.includes("posting.md") ? `
+      <details>
+        <summary>The job posting as scraped</summary>
+        <div class="card"><pre class="posting" id="posting">loading…</pre></div>
+      </details>` : ""}
+
+    ${data.history.length ? `
+      <details>
+        <summary>History</summary>
+        <div class="card prose"><ul>${data.history.map((h) =>
+          `<li><strong>${escape(LABEL[h.status] || h.status)}</strong>
+           <span class="hint">${escape((h.at || "").replace("T", " ").replace("+00:00", " UTC"))}</span>
+           ${h.note ? "<br>" + escape(h.note) : ""}</li>`).join("")}</ul></div>
+      </details>` : ""}
   `;
 
-  if (data.status === "filled") {
-    $("submitted").onclick = () => decide(id, "submitted");
-  }
+  if ($("approve")) $("approve").onclick = () => approve(id);
+  if ($("reject")) $("reject").onclick = () => openReject(id);
+  if ($("submitted")) $("submitted").onclick = () => markSubmitted(id);
+  if ($("revise")) $("revise").onclick = () => revise(id);
 
-  if (reviewable) {
-    $("approve").onclick = () => decide(id, "approve");
-    $("reject").onclick = () => decide(id, "reject");
-    $("revise").onclick = () => revise(id);
+  if ($("posting")) {
+    fetch(`/review/${id}/file/posting.md`).then((r) => r.text())
+      .then((text) => { if ($("posting")) $("posting").textContent = text; });
   }
 }
 
-function header(job, folder) {
+function head(job, data) {
   return `<div class="head">
       <h2>${escape(job.title || "Untitled role")}</h2>
       <span class="co">${escape(job.company || "")}</span>
-      <a href="${job.url}" target="_blank" rel="noreferrer">open posting ↗</a>
-      ${folder ? `<span class="co">${escape(folder)}</span>` : ""}
+      <a href="${escape(job.url)}" target="_blank" rel="noreferrer">open posting ↗</a>
+      ${data ? `<span class="folder">${escape(data.folder)}</span>` : ""}
     </div>`;
 }
 
-async function decide(id, action) {
-  const note = action === "reject" ? prompt("Why? (optional)") ?? "" : "";
-  if (action === "submitted" && !confirm("Only confirm this after you submitted the form yourself.")) return;
-  for (const button of document.querySelectorAll("button.act")) button.disabled = true;
-  try {
-    await api(`/review/${id}/${action}`, { method: "POST", body: JSON.stringify({ note }) });
-    await loadList();
-    await show(id);
-  } catch (err) {
-    alert(err);
-    for (const button of document.querySelectorAll("button.act")) button.disabled = false;
+function banners(data) {
+  let html = "";
+  if (data.reject_label) {
+    html += `<div class="banner stop"><strong>You rejected this: ${escape(data.reject_label)}.</strong>
+      ${data.reject_note ? escape(data.reject_note) : ""}</div>`;
   }
+  if (data.mismatch) {
+    html += `<div class="banner warn"><strong>The model thinks this is a poor fit.</strong>
+      ${escape(data.mismatch.replace(/^#.*\n/, "").split("\n\n")[0].trim())}
+      <br>Nothing was tailored. It is still your call.</div>`;
+  }
+  if (data.error) {
+    html += `<div class="banner stop"><strong>Failed:</strong> ${escape(data.error.split("\n")[0])}</div>`;
+  }
+  if (data.status === "filled") {
+    html += `<div class="banner go"><strong>Form filled, nothing submitted.</strong>
+      Check the screenshot, submit it in the browser yourself, then mark it here.</div>`;
+  }
+  if (data.status === "approved") {
+    html += `<div class="banner go">Approved. Run <code>python apply.py ${data.id}</code>
+      to fill the form.</div>`;
+  }
+  return html;
+}
+
+async function approve(id) {
+  await act(id, () => api(`/review/${id}/approve`, { method: "POST", body: "{}" }));
+}
+
+async function markSubmitted(id) {
+  if (!confirm("Only confirm this after you submitted the form yourself.")) return;
+  await act(id, () => api(`/review/${id}/submitted`, { method: "POST", body: "{}" }));
+}
+
+function openReject(id) {
+  const select = $("reason");
+  select.innerHTML = reasons.map((r) => `<option value="${r.value}">${escape(r.label)}</option>`).join("");
+  $("note").value = "";
+  const dialog = $("rejectDialog");
+  dialog.returnValue = "";
+  dialog.showModal();
+  $("rejectForm").onsubmit = (event) => {
+    if (event.submitter?.value !== "reject") return;
+    const body = JSON.stringify({ reason: select.value, note: $("note").value.trim() || null });
+    dialog.close();
+    act(id, () => api(`/review/${id}/reject`, { method: "POST", body }));
+  };
 }
 
 async function revise(id) {
   const instruction = $("instruction").value.trim();
   if (!instruction) return $("instruction").focus();
   const button = $("revise");
-  button.disabled = true;
-  button.textContent = "Re-tailoring… this takes a moment";
-  try {
+  button.textContent = "Re-tailoring…";
+  await act(id, async () => {
     const result = await api(`/review/${id}/revise`, {
       method: "POST", body: JSON.stringify({ instruction }),
     });
+    alert(`New version written to ${result.folder}`);
+  });
+}
+
+async function act(id, work) {
+  for (const button of document.querySelectorAll("button.act")) button.disabled = true;
+  try {
+    await work();
     await loadList();
     await show(id);
-    alert(`New version written to ${result.folder}`);
   } catch (err) {
-    alert(err);
-    button.disabled = false;
-    button.textContent = "Re-tailor with this note";
+    alert(err.message);
+    for (const button of document.querySelectorAll("button.act")) button.disabled = false;
   }
 }
 
@@ -252,14 +409,14 @@ function renderDiff(diff) {
   }).join("");
 }
 
-// Just enough markdown for the rationale block: headings, bullets, bold.
+// Just enough markdown for the rationale blocks: headings, bullets, bold.
 function markdown(text) {
-  const html = escape(text)
+  return escape(text)
     .replace(/^#+\s*(.+)$/gm, "<h4>$1</h4>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>")
-    .replace(/(<li>[\s\S]*?<\/li>)(?![\s\S]*?<li>)/, "<ul>$1</ul>");
-  return html.replace(/\n{2,}/g, "<p>");
+    .replace(/(?:<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
+    .replace(/\n{2,}/g, "<p>");
 }
 
 function escape(value) {
@@ -267,6 +424,14 @@ function escape(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-loadList();
-setInterval(() => { if (!document.hidden) loadList(); }, 5000);
+api("/review/meta/reject-reasons")
+  .then((data) => { reasons = data; })
+  .catch(() => { reasons = [{ value: "other", label: "Other" }]; })
+  .then(loadList);
+
+// Refresh while a pipeline run is in flight, but never while a dialog is open
+// or the page is hidden, so a decision in progress is not interrupted.
+setInterval(() => {
+  if (!document.hidden && !$("rejectDialog").open) loadList();
+}, 5000);
 </script>

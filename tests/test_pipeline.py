@@ -93,8 +93,8 @@ def test_one_failure_does_not_stop_the_batch(monkeypatch, capsys):
     assert statuses["https://example.com/jobs/2"] == Status.AWAITING_REVIEW
 
 
-def test_a_mismatch_is_skipped_not_failed(monkeypatch):
-    """A poor-fit posting stops cleanly and records why, without tailoring."""
+def test_a_mismatch_waits_for_the_human_rather_than_closing_itself(monkeypatch):
+    """The agent may recommend dropping a job; only the human decides."""
     stub_success(monkeypatch)
 
     def mismatch(posting, **kwargs):
@@ -105,7 +105,9 @@ def test_a_mismatch_is_skipped_not_failed(monkeypatch):
 
     app_dir = pipeline.process(job)
 
-    assert queue.get(job.id).status == Status.SKIPPED
+    assert queue.get(job.id).status == Status.AWAITING_REVIEW, (
+        "a poor-fit verdict is advice; the agent must not close the job itself")
+    assert queue.get(job.id).status != Status.SKIPPED
     assert "clearance" in (app_dir / "mismatch.md").read_text()
     assert not (app_dir / "resume.tex").exists(), "nothing may be tailored on a mismatch"
 

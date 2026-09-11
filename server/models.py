@@ -27,6 +27,33 @@ def url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:4]
 
 
+class RejectReason(str, Enum):
+    """Why an application was dropped.
+
+    Structured rather than free text so the reasons can be counted later; a
+    note always travels alongside for the specifics.
+    """
+
+    POOR_FIT = "poor_fit"
+    LOCATION = "location"
+    SENIORITY = "seniority"
+    COMPENSATION = "compensation"
+    RESUME_WRONG = "resume_wrong"
+    CHANGED_MY_MIND = "changed_my_mind"
+    OTHER = "other"
+
+
+REJECT_LABELS = {
+    RejectReason.POOR_FIT: "Not a good fit",
+    RejectReason.LOCATION: "Location or work authorisation",
+    RejectReason.SENIORITY: "Wrong seniority",
+    RejectReason.COMPENSATION: "Compensation",
+    RejectReason.RESUME_WRONG: "Tailoring was wrong",
+    RejectReason.CHANGED_MY_MIND: "Changed my mind",
+    RejectReason.OTHER: "Other",
+}
+
+
 class Status(str, Enum):
     """Lifecycle of a single job through the pipeline.
 
@@ -56,6 +83,8 @@ class Job(BaseModel):
     status: Status = Status.QUEUED
     app_dir: Optional[str] = None
     error: Optional[str] = None
+    reject_reason: Optional[RejectReason] = None
+    reject_note: Optional[str] = None
 
     @property
     def id(self) -> str:

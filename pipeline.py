@@ -100,10 +100,18 @@ def process(job: Job, extra_instruction: str = "") -> Path:
             extra_instruction=extra_instruction,
         )
     except tailor.Mismatch as exc:
-        store.write(app_dir, "mismatch.md", f"# Not a match\n\n{exc}\n")
-        store.set_status(app_dir, Status.SKIPPED, str(exc))
-        queue.update(job.id, status=Status.SKIPPED, error=str(exc))
-        print(f"  not a match: {exc}")
+        # A poor-fit verdict is advice, not a decision. The job still stops at
+        # checkpoint 1 with the reasoning on show; only the human closes it.
+        store.write(
+            app_dir,
+            "mismatch.md",
+            f"# The model thinks this is a poor fit\n\n{exc}\n\n"
+            "Nothing was tailored. Reject it if you agree, or re-tailor with a "
+            "note if you think the model is wrong.\n",
+        )
+        store.set_status(app_dir, Status.AWAITING_REVIEW, f"poor fit: {exc}")
+        queue.update(job.id, status=Status.AWAITING_REVIEW)
+        print(f"  flagged as a poor fit, waiting on you: {exc}")
         return app_dir
 
     store.write(app_dir, "resume.tex", result.tex)
