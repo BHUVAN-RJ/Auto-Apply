@@ -153,3 +153,34 @@ def test_attach_mode_connects_instead_of_launching(monkeypatch):
     fill.build_browser(FakeBrowser)
     assert seen["cdp_url"] == "http://127.0.0.1:9222"
     assert "user_data_dir" not in seen, "attach mode must not touch a profile directory"
+
+
+@pytest.mark.parametrize("model,expected", [
+    ("z-ai/glm-5v-turbo", True),
+    ("z-ai/glm-4.6v", True),
+    ("qwen/qwen3-vl-235b", True),
+    ("z-ai/glm-5.3", False),
+    ("deepseek/deepseek-v4-pro", False),
+])
+def test_vision_is_only_enabled_for_a_model_that_accepts_images(model, expected, monkeypatch):
+    """A text-only model 404s on every screenshot and the run fills nothing."""
+    monkeypatch.delenv("AUTOPILOT_VISION", raising=False)
+    assert fill.uses_vision(model) is expected
+
+
+def test_vision_can_be_forced_either_way(monkeypatch):
+    monkeypatch.setenv("AUTOPILOT_VISION", "0")
+    assert fill.uses_vision("z-ai/glm-5v-turbo") is False
+    monkeypatch.setenv("AUTOPILOT_VISION", "1")
+    assert fill.uses_vision("z-ai/glm-5.3") is True
+
+
+def test_the_default_browser_model_accepts_images():
+    assert fill.uses_vision(fill.DEFAULT_BROWSER_MODEL)
+
+
+def test_result_summary_names_errors_and_blocks():
+    result = fill.FillResult(ok=False, steps=6, screenshot=None, notes="",
+                             blocked_attempts=1, errors=["404 no image support"])
+    summary = result.summary()
+    assert "6 step(s)" in summary and "1 submit attempt" in summary and "1 error" in summary

@@ -300,6 +300,12 @@ async function show(id) {
         <div class="card"><pre class="posting" id="posting">loading…</pre></div>
       </details>` : ""}
 
+    ${data.log ? `
+      <details>
+        <summary>Fill log</summary>
+        <div class="card"><pre class="posting" id="filllog">loading…</pre></div>
+      </details>` : ""}
+
     ${data.history.length ? `
       <details>
         <summary>History</summary>
@@ -320,6 +326,11 @@ async function show(id) {
   if ($("posting")) {
     fetch(`/review/${id}/file/posting.md`).then((r) => r.text())
       .then((text) => { if ($("posting")) $("posting").textContent = text; });
+  }
+
+  if ($("filllog")) {
+    fetch(`/review/${id}/log`).then((r) => r.text())
+      .then((text) => { if ($("filllog")) $("filllog").textContent = text; });
   }
 }
 
@@ -343,8 +354,9 @@ function banners(data) {
       ${escape(data.mismatch.replace(/^#.*\n/, "").split("\n\n")[0].trim())}
       <br>Nothing was tailored. It is still your call.</div>`;
   }
-  if (data.error) {
-    html += `<div class="banner stop"><strong>Failed:</strong> ${escape(data.error.split("\n")[0])}</div>`;
+  const failure = data.error_detail || (data.error || "").split("\n")[0];
+  if (failure) {
+    html += `<div class="banner stop"><strong>Failed:</strong> ${escape(failure)}</div>`;
   }
   if (data.status === "filled") {
     html += `<div class="banner go"><strong>Form filled, nothing submitted.</strong>

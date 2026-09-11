@@ -17,6 +17,9 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "APPLICATIONS", tmp_path / "applications")
     monkeypatch.setattr(store, "INDEX_PATH", tmp_path / "applications" / "index.csv")
 
+    import server.review as review
+    monkeypatch.setattr(review, "DATA_DIR", tmp_path / "data")
+
 
 @pytest.fixture
 def client():
@@ -286,3 +289,27 @@ def test_a_fill_can_always_be_restarted(client, monkeypatch, status):
     assert client.post(f"/review/{job_id}/fill", json={}).status_code == 200
     assert queue.get(job_id).status == Status.APPROVED, (
         "a restart must leave the job in a state apply.py will pick up")
+
+
+def test_the_fill_log_is_readable_from_the_page(client, tmp_path, monkeypatch):
+    """A failed fill must be diagnosable without going to the terminal."""
+    job_id, _ = reviewable_job()
+    log_dir = tmp_path / "data"
+    log_dir.mkdir()
+    (log_dir / f"apply_{job_id}.log").write_text("\n".join(f"line {n}" for n in range(200)))
+
+    body = client.get(f"/review/{job_id}/log?lines=10").text
+    assert "line 199" in body
+    assert "line 100" not in body, "only the tail is served"
+
+
+def test_no_log_yet_is_a_404_not_an_error(client):
+    job_id, _ = reviewable_job()
+    assert client.get(f"/review/{job_id}/log").status_code == 404
+
+
+def test_the_failure_reason_reaches_the_detail(client):
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FAILED, error="fill did not complete: 404 no image support")
+    data = client.get(f"/review/{job_id}").json()
+    assert "404 no image support" in data["error_detail"]

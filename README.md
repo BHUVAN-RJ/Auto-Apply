@@ -98,7 +98,7 @@ design and what is deliberately deferred.
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 148 tests
+pytest                        # 162 tests
 ```
 
 ## Setup
@@ -167,8 +167,16 @@ fill can be repeated as often as needed, and a run whose browser died never
 wedges the job — the button says "Restart the fill" and starts a fresh one.
 Set `AUTOPILOT_AUTOFILL=1` if you would rather approval launched it for you.
 
-The fill runs detached, so a browser crash cannot take the server down, and its
-log lands in `data/apply_<job>.log`.
+The fill runs detached, so a browser crash cannot take the server down. Its log
+lands in `data/apply_<job>.log`, and the review page shows the tail of it under
+"Fill log" along with the failure reason, so a broken run can be diagnosed
+without leaving the page.
+
+The browser model must accept images — browser-use sends a screenshot to the
+model on every step, and a text-only model returns 404 on all of them and fills
+nothing. `OPENROUTER_BROWSER_MODEL` defaults to `z-ai/glm-5v-turbo` for that
+reason; vision is switched on only for a model whose name says it can take
+images, and `AUTOPILOT_VISION=0/1` forces the decision either way.
 
 Either way it opens a browser, fills the form, and halts.
 

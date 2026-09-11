@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +57,15 @@ DEFAULT_PROFILE = Path.home() / "Library" / "Application Support" / "job-autopil
 # extension you already have, at the cost of launching the browser yourself.
 CDP_URL = "AUTOPILOT_CDP_URL"
 
+# browser-use sends a screenshot to the model on every step, so the browser
+# model has to accept images. A text-only model returns 404 on every step and
+# the run fails having filled nothing.
+DEFAULT_BROWSER_MODEL = "z-ai/glm-5v-turbo"
+
+# Substrings marking a model as able to accept images. Checked rather than
+# assumed, because picking a text-only model here is a silent, total failure.
+VISION_MODEL_MARKERS = ("-5v", "-4.6v", "vl", "vision", "gpt-4o", "gemini", "claude", "-vl-")
+
 
 @dataclass
 class FillResult:
@@ -65,6 +74,16 @@ class FillResult:
     screenshot: Optional[Path]
     notes: str
     blocked_attempts: int = 0
+    errors: list[str] = field(default_factory=list)
+    done: bool = False
+
+    def summary(self) -> str:
+        parts = [f"{self.steps} step(s)"]
+        if self.blocked_attempts:
+            parts.append(f"blocked {self.blocked_attempts} submit attempt(s)")
+        if self.errors:
+            parts.append(f"{len(self.errors)} error(s)")
+        return "; ".join(parts)
 
 
 class FillError(RuntimeError):
@@ -156,6 +175,21 @@ def describe(node) -> dict:
     }
 
 
+def uses_vision(model: str) -> bool:
+    """Whether to send screenshots to this model.
+
+    AUTOPILOT_VISION forces it either way, for a model whose name does not
+    advertise the capability.
+    """
+    override = os.environ.get("AUTOPILOT_VISION", "").strip().lower()
+    if override in ("1", "true", "yes"):
+        return True
+    if override in ("0", "false", "no"):
+        return False
+    name = model.lower()
+    return any(marker in name for marker in VISION_MODEL_MARKERS)
+
+
 def profile_dir() -> Path:
     return Path(os.environ.get("AUTOPILOT_CHROME_PROFILE", str(DEFAULT_PROFILE)))
 
@@ -194,8 +228,9 @@ async def fill_async(
     if not api_key:
         raise FillError("OPENROUTER_API_KEY is unset")
 
+    model = os.environ.get("OPENROUTER_BROWSER_MODEL", DEFAULT_BROWSER_MODEL)
     llm = ChatOpenAI(
-        model=os.environ.get("OPENROUTER_BROWSER_MODEL", "z-ai/glm-5.3"),
+        model=model,
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
         temperature=0.0,
@@ -209,29 +244,44 @@ async def fill_async(
         browser=browser,
         tools=_build_tools(),
         initial_actions=[{"navigate": {"url": url}}],
+        # Screenshots are sent to the model on every step. A text-only model
+        # 404s on all of them and the whole run fails without filling
+        # anything, so vision is only enabled for a model that can accept it.
+        use_vision=uses_vision(model),
     )
 
-    blocked = 0
+    blocked, steps, done = 0, 0, False
+    errors: list[str] = []
+    notes = ""
     try:
         history = await agent.run(max_steps=max_steps)
         notes = str(history.final_result() or "").strip()
         steps = len(getattr(history, "history", []) or [])
         errors = [str(e) for e in (history.errors() or []) if e]
         blocked = sum(1 for e in errors if "submit control" in e)
+        done = bool(history.is_done())
     except guard.SubmitBlocked as exc:
         # Reaching here means the model kept pushing at the gate. That is a
         # refusal working, not a crash, so the run still ends in a screenshot.
-        notes, steps, blocked = f"blocked: {exc}", 0, 1
+        notes, blocked = f"blocked: {exc}", 1
     finally:
         shot = await _screenshot(browser, screenshot_to)
         await browser.kill()
 
+    # A screenshot proves the browser was alive, not that the form was filled.
+    # A run that never reached done, or that errored on every step other than
+    # a refused submit, has filled nothing and must not be reported as filled.
+    real_errors = [e for e in errors if "submit control" not in e]
+    ok = done and not (real_errors and steps and len(real_errors) >= steps)
+
     return FillResult(
-        ok=shot is not None,
+        ok=ok,
         steps=steps,
         screenshot=shot,
         notes=notes or "(no notes returned)",
         blocked_attempts=blocked,
+        errors=real_errors,
+        done=done,
     )
 
 

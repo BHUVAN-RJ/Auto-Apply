@@ -25,6 +25,9 @@ from server.models import REJECT_LABELS, Job, RejectReason, Status
 
 router = APIRouter(prefix="/review", tags=["review"])
 
+# Where apply.py writes its per-job logs.
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
 # Artifacts the review page may request. An allow-list rather than a path join,
 # so a crafted name cannot walk out of the application folder.
 ARTIFACTS = {
@@ -95,8 +98,26 @@ def detail(job_id: str) -> dict:
         "reject_note": job.reject_note,
         "fill_notes": read("fill_notes.md"),
         "error": read("error.txt"),
+        "error_detail": job.error,
+        "log": _log_path(job.id),
         "history": _history(app_dir),
     }
+
+
+def _log_path(job_id: str) -> Optional[str]:
+    """The apply.py log for this job, if a fill has been attempted."""
+    candidate = DATA_DIR / f"apply_{job_id}.log"
+    return str(candidate) if candidate.exists() else None
+
+
+@router.get("/{job_id}/log")
+def log(job_id: str, lines: int = 120):
+    """The tail of the fill log, so a failure can be read from the page."""
+    path = _log_path(job_id)
+    if path is None:
+        raise HTTPException(404, "no fill has been attempted for this job")
+    text = Path(path).read_text(errors="replace").splitlines()
+    return PlainTextResponse("\n".join(text[-lines:]))
 
 
 def _history(app_dir: Path) -> list[dict]:

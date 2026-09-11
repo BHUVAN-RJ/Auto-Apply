@@ -33,6 +33,7 @@ def stub_fill(monkeypatch, **overrides):
     def fake(url, resume, screenshot, **kwargs):
         calls.update(url=url, resume=resume, screenshot=screenshot)
         screenshot.write_bytes(b"\x89PNG fake")
+        overrides.setdefault("done", True)
         return FillResult(ok=True, steps=7, screenshot=screenshot,
                           notes="filled every field", **overrides)
 
@@ -103,3 +104,30 @@ def test_main_reports_when_nothing_is_approved(capsys):
     approved_job(Status.AWAITING_REVIEW)
     assert apply.main(["apply.py"]) == 0
     assert "nothing approved" in capsys.readouterr().out
+
+
+def test_a_run_that_errored_on_every_step_is_not_reported_as_filled(monkeypatch):
+    """A screenshot proves the browser was alive, not that the form was filled."""
+    job, app_dir = approved_job()
+
+    def fake(url, resume, screenshot, **kwargs):
+        screenshot.write_bytes(b"\x89PNG fake")
+        return FillResult(ok=False, steps=6, screenshot=screenshot,
+                          notes="", done=False,
+                          errors=["404 - No endpoints found that support image input"] * 6)
+
+    monkeypatch.setattr(apply.filler, "fill", fake)
+
+    assert apply.fill_one(job) is False
+    assert queue.get(job.id).status == Status.FAILED
+    assert "image input" in queue.get(job.id).error
+    notes = (app_dir / "fill_notes.md").read_text()
+    assert "image input" in notes, "the reviewer must be able to see what broke"
+    assert f"data/apply_{job.id}.log" in notes, "and where to read more"
+
+
+def test_a_successful_run_records_the_log_path_too(monkeypatch):
+    job, app_dir = approved_job()
+    stub_fill(monkeypatch, done=True)
+    assert apply.fill_one(job) is True
+    assert f"data/apply_{job.id}.log" in (app_dir / "fill_notes.md").read_text()

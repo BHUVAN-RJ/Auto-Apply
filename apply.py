@@ -48,15 +48,24 @@ def fill_one(job: Job) -> bool:
         store.set_status(app_dir, Status.FAILED, detail)
         return False
 
-    note = f"{result.steps} steps"
-    if result.blocked_attempts:
-        note += f"; blocked {result.blocked_attempts} submit attempt(s)"
-    if not (app_dir / "fill_notes.md").exists():
-        store.write(
-            app_dir,
-            "fill_notes.md",
-            f"# Fill notes\n\n_{note}_\n\n{result.notes}\n",
-        )
+    note = result.summary()
+    body = [f"# Fill notes\n\n_{note}_\n\n{result.notes}\n"]
+    if result.errors:
+        shown = "\n".join(f"- {error}" for error in result.errors[:5])
+        body.append(f"\n## Errors\n\n{shown}\n")
+    body.append(f"\nFull log: `data/apply_{job.id}.log`\n")
+    store.write_or_append(app_dir, "fill_notes.md", "".join(body))
+
+    if not result.ok:
+        # The browser ran but the form was not filled. Saying "filled" here
+        # would send the reviewer to check a screenshot of nothing.
+        detail = result.errors[0] if result.errors else "the agent never finished"
+        detail = f"fill did not complete: {detail[:300]}"
+        store.set_status(app_dir, Status.FAILED, detail)
+        queue.update(job.id, status=Status.FAILED, error=detail)
+        print(f"  did not fill: {detail}", file=sys.stderr)
+        print(f"  see data/apply_{job.id}.log", file=sys.stderr)
+        return False
 
     # FILLED is terminal for the agent. Only a human moves it to SUBMITTED.
     store.set_status(app_dir, Status.FILLED, note)
