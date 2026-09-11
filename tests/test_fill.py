@@ -2,6 +2,7 @@
 
 import asyncio
 import types
+from pathlib import Path
 
 import pytest
 
@@ -117,3 +118,38 @@ def test_task_prompt_forbids_submitting_and_names_the_resume(tmp_path):
     assert "Do not submit" in task
     assert "resume.pdf" in task
     assert "Never invent" in task
+
+
+def test_profile_mode_uses_a_dedicated_persistent_directory(tmp_path, monkeypatch):
+    """Never the everyday profile: Chrome will not share it with a running instance."""
+    monkeypatch.delenv("AUTOPILOT_CDP_URL", raising=False)
+    monkeypatch.setenv("AUTOPILOT_CHROME_PROFILE", str(tmp_path / "profile"))
+    seen = {}
+
+    def FakeBrowser(**kwargs):
+        seen.update(kwargs)
+        return "browser"
+
+    fill.build_browser(FakeBrowser)
+    assert seen["user_data_dir"] == str(tmp_path / "profile")
+    assert (tmp_path / "profile").is_dir(), "the directory must exist before launch"
+    assert "cdp_url" not in seen
+
+
+def test_the_default_profile_is_not_the_users_own_chrome():
+    everyday = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+    assert fill.DEFAULT_PROFILE != everyday
+    assert "job-autopilot" in str(fill.DEFAULT_PROFILE)
+
+
+def test_attach_mode_connects_instead_of_launching(monkeypatch):
+    monkeypatch.setenv("AUTOPILOT_CDP_URL", "http://127.0.0.1:9222")
+    seen = {}
+
+    def FakeBrowser(**kwargs):
+        seen.update(kwargs)
+        return "browser"
+
+    fill.build_browser(FakeBrowser)
+    assert seen["cdp_url"] == "http://127.0.0.1:9222"
+    assert "user_data_dir" not in seen, "attach mode must not touch a profile directory"

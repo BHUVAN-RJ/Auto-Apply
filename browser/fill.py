@@ -46,7 +46,16 @@ Applicant details:
 {applicant}
 """
 
-DEFAULT_PROFILE = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+# A dedicated profile directory, not the everyday one. Chrome refuses to share
+# a user-data-dir with a running instance and silently falls back to a
+# throwaway, which is why pointing at the real profile lost the login on every
+# run. This one belongs to Auto-Apply alone: log in once and it persists.
+DEFAULT_PROFILE = Path.home() / "Library" / "Application Support" / "job-autopilot" / "chrome"
+
+# Set AUTOPILOT_CDP_URL to attach to a browser you already have open instead,
+# started with --remote-debugging-port=9222. That reuses every login and
+# extension you already have, at the cost of launching the browser yourself.
+CDP_URL = "AUTOPILOT_CDP_URL"
 
 
 @dataclass
@@ -147,6 +156,31 @@ def describe(node) -> dict:
     }
 
 
+def profile_dir() -> Path:
+    return Path(os.environ.get("AUTOPILOT_CHROME_PROFILE", str(DEFAULT_PROFILE)))
+
+
+def build_browser(browser_class, headless: bool = False):
+    """Attach to a running browser if asked, otherwise own a persistent profile.
+
+    Attach mode reuses the browser the user already has open, with all its
+    logins and extensions. Profile mode launches its own Chrome against a
+    directory that survives between runs, so the Jobright login and extension
+    are installed once.
+    """
+    cdp_url = os.environ.get(CDP_URL, "").strip()
+    if cdp_url:
+        return browser_class(cdp_url=cdp_url, keep_alive=True)
+
+    directory = profile_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return browser_class(
+        headless=headless,
+        user_data_dir=str(directory),
+        keep_alive=True,
+    )
+
+
 async def fill_async(
     url: str,
     resume_pdf: Path,
@@ -167,13 +201,7 @@ async def fill_async(
         temperature=0.0,
     )
 
-    browser = Browser(
-        headless=headless,
-        # The real profile carries the Jobright extension and existing logins,
-        # which is the entire reason for not using a throwaway profile.
-        user_data_dir=os.environ.get("AUTOPILOT_CHROME_PROFILE", str(DEFAULT_PROFILE)),
-        keep_alive=True,
-    )
+    browser = build_browser(Browser, headless=headless)
 
     agent = Agent(
         task=TASK.format(resume=resume_pdf.resolve(), applicant=applicant_details()),

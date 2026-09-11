@@ -98,7 +98,7 @@ design and what is deliberately deferred.
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 140 tests
+pytest                        # 143 tests
 ```
 
 ## Setup
@@ -168,7 +168,36 @@ the log lands in `data/apply_<job>.log`. `python apply.py` does the same by hand
 for every approved job, and the review page has a "Fill the form now" button for
 a retry. Set `AUTOPILOT_NO_AUTOFILL=1` to keep approval and filling separate.
 
-Either way it opens your real Chrome, fills the form, and halts. It refuses any job that is not approved, so checkpoint 1 cannot be
+Either way it opens a browser, fills the form, and halts.
+
+### The browser profile
+
+Chrome refuses to share a user-data-dir with a running instance and silently
+falls back to a throwaway, so pointing at your everyday profile loses every
+login on each run. Two ways round that:
+
+**A profile of its own** (default). Auto-Apply keeps a real profile directory
+at `~/Library/Application Support/job-autopilot/chrome`. Set it up once:
+
+```sh
+python tools/open_profile.py
+```
+
+Sign in to Jobright in the window that opens, install its extension, close it.
+The login persists for every later run, and it never touches your day-to-day
+browser.
+
+**Attach to a browser you already have open**, with all its existing logins and
+extensions. Quit the browser fully, then relaunch it with a debugging port and
+point Auto-Apply at it:
+
+```sh
+python tools/open_profile.py --attach   # prints the exact commands
+export AUTOPILOT_CDP_URL=http://127.0.0.1:9222
+```
+
+This works with Brave, or any Chromium browser. The flag only applies to a
+fresh launch, so the browser has to be fully quit first. It refuses any job that is not approved, so checkpoint 1 cannot be
 bypassed by running it directly.
 
 Three independent things stop it submitting, none of them a prompt rule:
