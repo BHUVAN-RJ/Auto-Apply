@@ -98,7 +98,7 @@ breakdown.
 ```sh
 python pipeline.py            # process every queued job
 python pipeline.py <job_id>   # process one
-pytest                        # 39 tests, all green on a bare BasicTeX install
+pytest                        # 50 tests
 ```
 
 ## Setup
@@ -128,6 +128,40 @@ compiles. Optionally add `base/profile.md` with background that is not on the
 resume; the tailor reads it as extra context but is instructed never to invent
 anything it cannot support.
 
+## Tailoring rules
+
+What the model may and may not change lives in
+[`tailor/rules.md`](tailor/rules.md), which is sent to it verbatim. Edit that
+file to change tailoring behaviour; no Python changes are needed.
+
+The defaults are conservative. Only `SUMMARY`, `EXPERIENCE` bullets, `PROJECTS`
+descriptions, and `TECHNICAL SKILLS` may change. The preamble, heading,
+education, achievements, company names, job titles, dates, and project URLs are
+frozen. Nothing may be invented: every edit has to be traceable to something
+already on the page.
+
+Three of those rules are enforced in code rather than trusted to the prompt,
+because prompt rules leak:
+
+- **Frozen sections.** The tailored source is parsed into sections and every
+  one outside the editable set must come back unchanged, ignoring whitespace.
+- **Bullet count.** The layout is tuned for exactly the bullets that are there,
+  so adding or dropping one is rejected.
+- **Page count.** The candidate is compiled before it is accepted. If it does
+  not match the master's page count, the model is told what it did and asked
+  again, up to three attempts.
+
+A rejection is fed back to the model with the specific problem named, so the
+retry is informed rather than a reroll.
+
+## Fit assessment
+
+The model judges fit before it tailors. A clear mismatch — wrong domain, a
+required credential the candidate lacks, an impossible location — returns a
+`MISMATCH` verdict, and the job is marked skipped with the reason in
+`mismatch.md`. Nothing is tailored and no tokens are spent on a resume that
+will not be sent. A missing nice-to-have is not a mismatch.
+
 ## Missing TeX packages
 
 BasicTeX ships a minimal package set, so a resume template that pulls in
@@ -144,5 +178,6 @@ every non-default package so the test suite passes on a bare install.
 ## Stack
 
 Python 3.10+, FastAPI, [browser-use](https://github.com/browser-use/browser-use),
-OpenRouter, and a local TeX Live install. No cloud services beyond the model
+OpenRouter, and a local TeX Live install. The model is configured in `.env` and
+defaults to `z-ai/glm-5.1`; anything OpenRouter serves works. No cloud services beyond the model
 API; the queue, the archive, and the review UI are all local.

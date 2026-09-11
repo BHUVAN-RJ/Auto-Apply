@@ -1,6 +1,11 @@
 applications/
 data/
 .env
+
+# The master resume carries real contact details; this repo is public.
+base/resume.tex
+base/resume.pdf
+base/profile.md
 __pycache__/
 *.pyc
 .venv/

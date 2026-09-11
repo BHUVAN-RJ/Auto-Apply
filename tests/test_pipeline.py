@@ -23,7 +23,8 @@ def stub_success(monkeypatch):
     monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: Posting(
         url=url, text="Distributed systems role. " * 20,
         title="Backend Engineer", company="Example Corp"))
-    monkeypatch.setattr(pipeline.tailor, "tailor", lambda posting: TailorResult(
+    monkeypatch.setattr(pipeline, "base_page_count", lambda: 1)
+    monkeypatch.setattr(pipeline.tailor, "tailor", lambda posting, **kwargs: TailorResult(
         tex="\\documentclass{article}\\begin{document}x\\end{document}",
         suggestions="- reordered experience",
         diff="--- a/resume.tex\n+++ b/resume.tex\n",
@@ -90,6 +91,23 @@ def test_one_failure_does_not_stop_the_batch(monkeypatch, capsys):
     statuses = {j.url: j.status for j in queue.all_jobs()}
     assert statuses["https://example.com/jobs/1"] == Status.FAILED
     assert statuses["https://example.com/jobs/2"] == Status.AWAITING_REVIEW
+
+
+def test_a_mismatch_is_skipped_not_failed(monkeypatch):
+    """A poor-fit posting stops cleanly and records why, without tailoring."""
+    stub_success(monkeypatch)
+
+    def mismatch(posting, **kwargs):
+        raise pipeline.tailor.Mismatch("MISMATCH: requires a security clearance.")
+
+    monkeypatch.setattr(pipeline.tailor, "tailor", mismatch)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1"))
+
+    app_dir = pipeline.process(job)
+
+    assert queue.get(job.id).status == Status.SKIPPED
+    assert "clearance" in (app_dir / "mismatch.md").read_text()
+    assert not (app_dir / "resume.tex").exists(), "nothing may be tailored on a mismatch"
 
 
 def test_main_with_no_queue_is_a_clean_exit(capsys):
