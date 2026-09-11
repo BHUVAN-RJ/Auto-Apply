@@ -70,7 +70,9 @@ def fill_one(job: Job) -> bool:
     # FILLED is terminal for the agent. Only a human moves it to SUBMITTED.
     store.set_status(app_dir, Status.FILLED, note)
     queue.update(job.id, status=Status.FILLED)
-    print(f"  filled, {note}. Review it at http://127.0.0.1:8787")
+    print(f"  filled, {note}")
+    print("  the browser window is still open on the form — check it, submit it")
+    print("  yourself, then mark it submitted at http://127.0.0.1:8787")
     return True
 
 

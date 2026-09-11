@@ -184,3 +184,34 @@ def test_result_summary_names_errors_and_blocks():
                              blocked_attempts=1, errors=["404 no image support"])
     summary = result.summary()
     assert "6 step(s)" in summary and "1 submit attempt" in summary and "1 error" in summary
+
+
+def test_the_browser_is_never_killed_after_a_fill():
+    """Checkpoint 2 is a human reading the filled form; closing it defeats that."""
+    import inspect
+
+    source = inspect.getsource(fill)
+    assert "browser.kill()" not in source, "kill() closes the window the human needs"
+    assert "await browser.stop()" in inspect.getsource(fill._detach)
+
+
+def test_detach_stops_the_session_without_closing_the_window():
+    calls = []
+
+    class FakeBrowser:
+        async def stop(self):
+            calls.append("stop")
+
+        async def kill(self):
+            calls.append("kill")
+
+    asyncio.run(fill._detach(FakeBrowser()))
+    assert calls == ["stop"]
+
+
+def test_detach_swallows_a_failure_rather_than_closing():
+    class Broken:
+        async def stop(self):
+            raise RuntimeError("cdp gone")
+
+    asyncio.run(fill._detach(Broken()))  # must not raise

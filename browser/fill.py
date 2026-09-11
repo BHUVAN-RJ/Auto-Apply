@@ -274,7 +274,10 @@ async def fill_async(
         notes, blocked = f"blocked: {exc}", 1
     finally:
         shot = await _screenshot(browser, screenshot_to)
-        await browser.kill()
+        # The window stays open. Checkpoint 2 is a human reading the filled
+        # form and pressing submit themselves, which cannot happen if the
+        # browser is closed the moment the agent stops.
+        await _detach(browser)
 
     # A screenshot proves the browser was alive, not that the form was filled.
     # A run that never reached done, or that errored on every step other than
@@ -291,6 +294,22 @@ async def fill_async(
         errors=real_errors,
         done=done,
     )
+
+
+async def _detach(browser) -> None:
+    """Leave the browser running, disconnecting only this session's control.
+
+    Nothing here may close the window: the filled form is the artifact the
+    human acts on. Any failure to detach cleanly is ignored, since a lingering
+    connection is harmless next to a closed window.
+    """
+    # stop() ends this session and saves storage state while leaving the
+    # browser process running. kill() would close the window, which is the one
+    # thing that must not happen here.
+    try:
+        await browser.stop()
+    except Exception:  # noqa: BLE001 - a lingering connection beats a closed window
+        pass
 
 
 async def _screenshot(browser, path: Path) -> Optional[Path]:

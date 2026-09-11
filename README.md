@@ -187,7 +187,10 @@ A fill runs 20-40 steps with a screenshot on each, so the per-step price
 compounds; `google/gemini-3.8-flash` is the fallback if a cheaper model's fills
 come out wrong. Watch one as it happens with `tail -f data/apply_<job>.log`.
 
-Either way it opens a browser, fills the form, and halts.
+Either way it opens a browser, fills the form, and halts — leaving the window
+open on the completed form. That is the point of checkpoint 2: you read the
+form in the browser, submit it yourself, and close the window. The agent's
+session ends without touching the browser process.
 
 ### The browser profile
 

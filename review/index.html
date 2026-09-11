@@ -360,7 +360,8 @@ function banners(data) {
   }
   if (data.status === "filled") {
     html += `<div class="banner go"><strong>Form filled, nothing submitted.</strong>
-      Check the screenshot, submit it in the browser yourself, then mark it here.</div>`;
+      The browser window is still open on the form. Check it there, submit it
+      yourself, then mark it below. Close that window when you are done.</div>`;
   }
   if (data.status === "approved") {
     html += `<div class="banner go"><strong>Approved.</strong> Press “Fill the form now”

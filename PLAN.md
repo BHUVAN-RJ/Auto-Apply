@@ -162,7 +162,13 @@ and the same class of mistake is likely in what remains.
   every run started logged out. The fill loop owns a dedicated profile now,
   with `AUTOPILOT_CDP_URL` to attach to a browser the user already has open.
 - **A text-only browser model fails totally and quietly.** Every step 404s on
-  the screenshot and nothing is filled.
+  the screenshot and nothing is filled. A vision model that mis-formats an
+  action fails the same way: `glm-5v-turbo` emitted `{"click": [3713]}` where
+  `{"index": 3713}` was required, so every step failed validation.
+- **Closing the browser destroys the checkpoint.** The fill ended with
+  `browser.kill()`, which closed the window holding the completed form — the
+  exact thing the human is meant to read and submit. The session is stopped
+  now, never the browser process.
 - **Reporting success on weak evidence is worse than failing.** That failed run
   was recorded as `filled` because a screenshot file existed, which sent the
   reviewer to inspect a screenshot of nothing and left no diagnosable trace.
