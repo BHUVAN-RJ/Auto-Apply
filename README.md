@@ -174,9 +174,16 @@ without leaving the page.
 
 The browser model must accept images — browser-use sends a screenshot to the
 model on every step, and a text-only model returns 404 on all of them and fills
-nothing. `OPENROUTER_BROWSER_MODEL` defaults to `z-ai/glm-5v-turbo` for that
+nothing. `OPENROUTER_BROWSER_MODEL` defaults to `google/gemini-2.5-flash` for that
 reason; vision is switched on only for a model whose name says it can take
 images, and `AUTOPILOT_VISION=0/1` forces the decision either way.
+
+Reliability at the action schema matters more than price here. `glm-5v-turbo`
+accepts images but emits `{"click": [3713]}` where browser-use requires
+`{"index": 3713}`, so every step fails validation and the run explores until it
+exhausts its step budget.
+
+Watch a fill as it happens with `tail -f data/apply_<job>.log`.
 
 Either way it opens a browser, fills the form, and halts.
 

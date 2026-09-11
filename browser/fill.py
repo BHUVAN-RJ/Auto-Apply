@@ -60,11 +60,19 @@ CDP_URL = "AUTOPILOT_CDP_URL"
 # browser-use sends a screenshot to the model on every step, so the browser
 # model has to accept images. A text-only model returns 404 on every step and
 # the run fails having filled nothing.
-DEFAULT_BROWSER_MODEL = "z-ai/glm-5v-turbo"
+# Gemini Flash rather than a GLM vision model: glm-5v-turbo accepts images but
+# is unreliable at browser-use's action schema, emitting {"click": [3713]} where
+# {"index": 3713} is required. Every step then fails validation and the run
+# explores until it runs out of steps. Structured-output reliability matters
+# more here than price.
+DEFAULT_BROWSER_MODEL = "google/gemini-2.5-flash"
 
 # Substrings marking a model as able to accept images. Checked rather than
 # assumed, because picking a text-only model here is a silent, total failure.
-VISION_MODEL_MARKERS = ("-5v", "-4.6v", "vl", "vision", "gpt-4o", "gemini", "claude", "-vl-")
+VISION_MODEL_MARKERS = (
+    "-5v", "-4.6v", "vl", "vision", "gpt-4o", "gpt-5", "gemini", "claude",
+    "gemma", "nova", "pixtral",
+)
 
 
 @dataclass
