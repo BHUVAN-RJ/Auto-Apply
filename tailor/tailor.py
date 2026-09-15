@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import llm
+from . import llm, profile as profile_module
 from .fetch import Posting
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,9 +55,9 @@ MATCH: <one sentence on why this candidate fits>
 ```
 
 ```markdown
-<one bullet per change: what changed, and which posting requirement it
-addresses. Then a "Gaps" section listing posting requirements the candidate
-genuinely does not meet.>
+<one bullet per change, twelve words at most, `where: "old" -> "new" (why)`.
+Then one line starting "Gaps:" listing posting requirements the candidate
+genuinely does not meet, comma separated.>
 ```
 """
 
@@ -202,20 +202,51 @@ def bullet_lengths(tex: str) -> list[int]:
     return [len(_normalise(body)) for body in bullets(tex)]
 
 
+def pair_bullets(original: str, tailored: str) -> list[tuple[int, int, int]]:
+    """Match each tailored bullet to the master bullet it came from.
+
+    Returns (master index from 1, master length, tailored length). Matched by
+    text similarity rather than position, because the rules allow reordering
+    projects and entries: with positional matching a reorder read as one
+    bullet growing by 135 characters and another shrinking by the same, and
+    the retry feedback told the model to cut a bullet that had not changed.
+    """
+    import difflib
+
+    before = [_normalise(b) for b in bullets(original)]
+    after = [_normalise(b) for b in bullets(tailored)]
+    if len(before) != len(after):
+        raise TailorError(
+            f"bullet count changed ({len(before)} -> {len(after)}); "
+            "the layout is tuned for exactly this many"
+        )
+    scores = sorted(
+        ((difflib.SequenceMatcher(None, a, b).ratio(), i, j)
+         for i, a in enumerate(before) for j, b in enumerate(after)),
+        reverse=True,
+    )
+    taken_before: set[int] = set()
+    taken_after: set[int] = set()
+    pairs = []
+    for _, i, j in scores:
+        if i in taken_before or j in taken_after:
+            continue
+        taken_before.add(i)
+        taken_after.add(j)
+        pairs.append((i + 1, len(before[i]), len(after[j])))
+        if len(pairs) == len(before):
+            break
+    return sorted(pairs)
+
+
 def _check_lengths(original: str, tailored: str) -> list[str]:
     """Warn on bullets that drifted far enough to threaten the page break.
 
     Returned as warnings rather than errors: the page-count check is the real
     gate, and this is the earlier, cheaper signal that something is off.
     """
-    before, after = bullet_lengths(original), bullet_lengths(tailored)
-    if len(before) != len(after):
-        raise TailorError(
-            f"bullet count changed ({len(before)} -> {len(after)}); "
-            "the layout is tuned for exactly this many"
-        )
     warnings = []
-    for index, (was, now) in enumerate(zip(before, after), start=1):
+    for index, was, now in pair_bullets(original, tailored):
         if abs(now - was) > LENGTH_TOLERANCE:
             warnings.append(f"bullet {index} length {was} -> {now} chars")
     return warnings
@@ -228,15 +259,12 @@ def overrun_report(original: str, tailored: str) -> str:
     bullets to cut, and it usually guesses wrong. Handing it the arithmetic
     turns the retry into an edit rather than another attempt.
     """
-    before, after = bullet_lengths(original), bullet_lengths(tailored)
-    if len(before) != len(after):
+    try:
+        pairs = pair_bullets(original, tailored)
+    except TailorError:
         return "The bullet count changed, which is itself the problem."
 
-    grew = [
-        (index, was, now)
-        for index, (was, now) in enumerate(zip(before, after), start=1)
-        if now > was
-    ]
+    grew = [(index, was, now) for index, was, now in pairs if now > was]
     total = sum(now - was for _, was, now in grew)
     if not grew:
         return (
@@ -276,8 +304,9 @@ def load_base_resume(path: Path = BASE_RESUME) -> str:
     return path.read_text()
 
 
-def load_profile(path: Path = PROFILE) -> str:
-    return path.read_text() if path.exists() else ""
+def load_profile(path: Optional[Path] = None) -> str:
+    """profile.md, with applicant facts and stories when the switch is on."""
+    return profile_module.context(profile_module.load_profile(path or PROFILE))
 
 
 def _build_user_message(posting: Posting, resume: str, profile: str) -> str:

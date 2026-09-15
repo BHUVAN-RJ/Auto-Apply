@@ -16,24 +16,15 @@ loop reuses on every run. Close the window when you are done.
 
 from __future__ import annotations
 
-import subprocess
 import sys
+import urllib.request
 from pathlib import Path
-from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from browser import chrome  # noqa: E402
+from browser.chrome import BRAVE, CHROME, find_browser  # noqa: E402
 from browser.fill import profile_dir  # noqa: E402
-
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-BRAVE = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
-
-
-def find_browser() -> Optional[str]:
-    for candidate in (CHROME, BRAVE):
-        if Path(candidate).exists():
-            return candidate
-    return None
 
 
 def attach_instructions() -> str:
@@ -66,28 +57,18 @@ def main(argv: list[str]) -> int:
         return 1
 
     directory = profile_dir()
-    directory.mkdir(parents=True, exist_ok=True)
     print(f"Opening {Path(browser).name} with profile:\n  {directory}\n")
-    print("Sign in to Jobright and install its extension, then close the window.")
-    print("Everything you do here persists for every later fill.\n")
+    print("Sign in to Jobright and install its extension. Leave the window open")
+    print("or close it; apply.py starts the same browser again either way.\n")
 
-    # Chrome writes GPU, mailbox, and updater chatter to stderr regardless of
-    # whether anything is wrong. It drowns the terminal, so it goes to a log.
-    log_path = directory.parent / "browser.log"
-    with open(log_path, "a") as log:
-        subprocess.run(
-            [
-                browser,
-                f"--user-data-dir={directory}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-features=Translate",
-                "https://jobright.ai",
-            ],
-            stdout=log,
-            stderr=log,
-        )
-    print(f"\nBrowser closed. Its output went to {log_path}")
+    # The same launcher the fill loop uses, so this is the exact browser a
+    # fill will attach to, on the same port. If one is already up it is
+    # reused and just gets a new tab.
+    url = chrome.ensure(directory)
+    request = urllib.request.Request(f"{url}/json/new?https://jobright.ai", method="PUT")
+    with urllib.request.urlopen(request, timeout=5):
+        pass
+    print(f"Browser is up at {url}. Output goes to {directory.parent / 'browser.log'}")
     return 0
 
 

@@ -77,3 +77,54 @@ function notify(title, message) {
     message,
   });
 }
+
+// Clicking Apply on Jobright or LinkedIn lands on whatever site the employer
+// uses, which cannot be enumerated in the manifest. Any tab that was opened
+// from one of those hosts, or navigated away from one, is screened wherever
+// it ends up. Pages already in the content script's match list run once;
+// the script guards itself against a second copy.
+const SOURCE_HOSTS = ["jobright.ai", "linkedin.com"];
+const marked = new Set();
+const lastUrl = new Map();
+
+function fromSource(url) {
+  try {
+    const host = new URL(url).hostname;
+    return SOURCE_HOSTS.some((h) => host === h || host.endsWith("." + h));
+  } catch {
+    return false;
+  }
+}
+
+chrome.tabs.onCreated.addListener(async (tab) => {
+  if (!tab.openerTabId) return;
+  try {
+    const opener = await chrome.tabs.get(tab.openerTabId);
+    if (fromSource(opener.url || opener.pendingUrl || "")) marked.add(tab.id);
+  } catch {
+    // Opener already gone.
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (info.url) {
+    // Same-tab navigation off Jobright or LinkedIn: the Apply button that
+    // does not open a new tab.
+    const previous = lastUrl.get(tabId) || "";
+    if (fromSource(previous) && !fromSource(info.url)) marked.add(tabId);
+    lastUrl.set(tabId, info.url);
+  }
+  if (info.status !== "complete" || !marked.has(tabId)) return;
+  const url = tab.url || "";
+  if (!/^https?:/.test(url) || fromSource(url)) return;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  } catch {
+    // Restricted page (PDF viewer, chrome://), or the script is already there.
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  marked.delete(tabId);
+  lastUrl.delete(tabId);
+});

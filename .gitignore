@@ -12,3 +12,6 @@ __pycache__/
 *.aux
 *.log
 *.out
+base/applicant.md
+base/stories/
+.DS_Store

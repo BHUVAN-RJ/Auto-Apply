@@ -20,6 +20,16 @@ def isolated(tmp_path, monkeypatch):
     import server.review as review
     monkeypatch.setattr(review, "DATA_DIR", tmp_path / "data")
 
+    # .env on a real machine may switch autofill on; a test approving a job
+    # must never launch the real apply.py against a temporary queue.
+    monkeypatch.setattr(runner, "AUTOFILL_ENABLED", False)
+    monkeypatch.setattr(runner, "_fills", {})
+    monkeypatch.setattr(runner, "_pgrep_fill", lambda job_id: None)
+    # Never touch a real Chrome from a test.
+    import server.review as review_module
+    monkeypatch.setattr(review_module.chrome, "close",
+                        lambda port_number=None: pytest.fail("a test closed Chrome"))
+
 
 @pytest.fixture
 def client():
@@ -47,6 +57,34 @@ def test_detail_returns_the_artifacts(client):
     assert "+tailored" in data["diff"]
     assert "reordered" in data["suggestions"]
     assert "resume.pdf" in data["artifacts"]
+
+
+def test_detail_carries_the_cover_letter_and_its_pdf(client):
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "cover_letter.md", "Dear Hiring Manager,\n\nHi.\n\nSincerely,\nJane\n")
+    store.write(app_dir, "cover_letter.pdf", b"%PDF-1.5 letter")
+    data = client.get(f"/review/{job_id}").json()
+    assert data["cover_letter"].startswith("Dear Hiring Manager")
+    assert "cover_letter.pdf" in data["artifacts"]
+    pdf = client.get(f"/review/{job_id}/file/cover_letter.pdf")
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+
+
+def test_detail_surfaces_a_failed_cover_letter(client):
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "cover_letter_error.txt", "LLMError: no content\n")
+    data = client.get(f"/review/{job_id}").json()
+    assert "no content" in data["cover_letter_error"]
+    assert data["cover_letter"] == ""
+
+
+def test_detail_shows_only_the_latest_fill_notes(client):
+    job_id, app_dir = reviewable_job()
+    store.write_or_append(app_dir, "fill_notes.md", "# Fill notes\n\nfirst run, failed\n")
+    store.write_or_append(app_dir, "fill_notes.md", "# Fill notes\n\nsecond run, filled\n")
+    data = client.get(f"/review/{job_id}").json()
+    assert "second run" in data["fill_notes"] and "first run" not in data["fill_notes"]
+    assert (app_dir / "fill_notes.md").read_text().count("Fill notes") == 2, "the file keeps both"
 
 
 def test_detail_404s_on_an_unknown_job(client):
@@ -188,7 +226,9 @@ def filled_job() -> tuple[str, object]:
     return job_id, app_dir
 
 
-def test_a_human_can_mark_a_filled_job_submitted(client):
+def test_a_human_can_mark_a_filled_job_submitted(client, monkeypatch):
+    import server.review as review_module
+    monkeypatch.setattr(review_module.chrome, "close", lambda port_number=None: True)
     job_id, app_dir = filled_job()
     assert client.post(f"/review/{job_id}/submitted", json={}).json()["status"] == "submitted"
     assert queue.get(job_id).status == Status.SUBMITTED
@@ -258,7 +298,8 @@ def test_approving_still_works_when_autofill_is_off(client, monkeypatch):
     job_id, _ = reviewable_job()
     monkeypatch.setattr(runner, "start_fill", lambda jid: None)
     response = client.post(f"/review/{job_id}/approve", json={})
-    assert response.json() == {"id": job_id, "status": "approved", "filling": False}
+    assert response.json() == {"id": job_id, "status": "approved", "filling": False,
+                               "pid": None}
 
 
 def test_rejecting_never_starts_the_fill(client, monkeypatch):
@@ -313,3 +354,114 @@ def test_the_failure_reason_reaches_the_detail(client):
     queue.update(job_id, status=Status.FAILED, error="fill did not complete: 404 no image support")
     data = client.get(f"/review/{job_id}").json()
     assert "404 no image support" in data["error_detail"]
+
+
+class LiveFill:
+    """Stands in for a Popen that has not exited."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def poll(self):
+        return None
+
+
+def test_fill_is_refused_while_one_is_running(client, monkeypatch):
+    """One fill per job: a second apply.py on the same tab undoes the first."""
+    monkeypatch.setattr(runner, "launch",
+                        lambda script, jid: pytest.fail("must not start a second fill"))
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FILLING)
+    runner._fills[job_id] = (LiveFill(4242), 0.0)
+
+    response = client.post(f"/review/{job_id}/fill", json={})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "error": "fill_running", "pid": 4242,
+        "message": "a fill is already running for this job (pid 4242)"}
+
+
+def test_forced_fill_kills_the_running_one_first(client, monkeypatch):
+    """The page sends force only after the human confirmed the kill."""
+    order = []
+    monkeypatch.setattr(runner, "stop_fill", lambda jid: order.append(("stop", jid)) or 4242)
+    monkeypatch.setattr(runner, "launch", lambda script, jid: order.append(("start", jid)) or 77)
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FILLING)
+    runner._fills[job_id] = (LiveFill(4242), 0.0)
+
+    response = client.post(f"/review/{job_id}/fill", json={"force": True})
+
+    assert response.status_code == 200
+    assert response.json()["pid"] == 77
+    assert order == [("stop", job_id), ("start", job_id)]
+
+
+def test_detail_reports_the_running_fill(client, monkeypatch):
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FILLING)
+    assert client.get(f"/review/{job_id}").json()["fill"] is None
+
+    monkeypatch.setattr(runner.time, "time", lambda: 1000.0)
+    runner._fills[job_id] = (LiveFill(4242), 990.0)
+    fill = client.get(f"/review/{job_id}").json()["fill"]
+    assert fill == {"pid": 4242, "started_at": 990.0, "age": 10}
+
+
+def test_submitting_the_last_form_closes_the_browser(client, monkeypatch):
+    import server.review as review_module
+    closed = []
+    monkeypatch.setattr(review_module.chrome, "close",
+                        lambda port_number=None: closed.append(True) or True)
+    job_id, _ = filled_job()
+
+    result = client.post(f"/review/{job_id}/submitted", json={}).json()
+
+    assert result["status"] == "submitted"
+    assert result["browser"] == "closed"
+    assert closed == [True]
+
+
+def test_submitting_keeps_the_browser_while_another_form_is_open(client, monkeypatch):
+    """The window is shared; another job's half-filled form must survive."""
+    import server.review as review_module
+    monkeypatch.setattr(review_module.chrome, "close",
+                        lambda port_number=None: pytest.fail("must not close"))
+    job_id, _ = filled_job()
+    other, _ = queue.add(Job(url="https://example.com/jobs/2", title="Other Role"))
+    queue.update(other.id, status=Status.FILLING)
+
+    result = client.post(f"/review/{job_id}/submitted", json={}).json()
+
+    assert result["browser"] == "kept"
+    assert result["in_progress"] == [
+        {"id": other.id, "title": "Other Role", "status": "filling", "running": False}]
+
+
+def test_submitting_reports_when_no_browser_was_running(client, monkeypatch):
+    import server.review as review_module
+    monkeypatch.setattr(review_module.chrome, "close", lambda port_number=None: False)
+    job_id, _ = filled_job()
+    assert client.post(f"/review/{job_id}/submitted", json={}).json()["browser"] == "not_running"
+
+
+def test_submitting_while_filling_stops_the_agent(client, monkeypatch):
+    """The human's submission wins over an agent still poking at the form."""
+    import server.review as review_module
+    monkeypatch.setattr(review_module.chrome, "close", lambda port_number=None: True)
+    stopped = []
+    monkeypatch.setattr(runner, "stop_fill", lambda jid: stopped.append(jid) or 4242)
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FILLING)
+
+    result = client.post(f"/review/{job_id}/submitted", json={}).json()
+
+    assert result["status"] == "submitted"
+    assert stopped == [job_id]
+    assert queue.get(job_id).status == Status.SUBMITTED
+
+
+def test_submitting_needs_a_form_in_the_browser(client):
+    job_id, _ = reviewable_job()
+    assert client.post(f"/review/{job_id}/submitted", json={}).status_code == 409

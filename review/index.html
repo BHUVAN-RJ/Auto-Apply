@@ -28,6 +28,8 @@
   }
   header h1 { font-size: 1rem; margin: 0; letter-spacing: .02em; }
   header .count { color: var(--muted); font-size: .85rem; }
+  header .switch { margin-left: auto; color: var(--muted); font-size: .85rem; cursor: pointer;
+                   display: flex; align-items: center; gap: 6px; }
   main { display: grid; grid-template-columns: 290px 1fr; min-height: calc(100vh - 57px); }
   @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
 
@@ -81,9 +83,13 @@
   .diff .h { color: var(--muted); }
   .prose { padding: .25rem 1rem; }
   .prose li { margin: .25rem 0; }
+  .prose.letter p { margin: .6rem 0; line-height: 1.5; max-width: 70ch; }
+  .note { color: var(--muted); font-size: .85rem; padding: 0 .75rem .5rem; }
+  iframe.letter { height: 60vh; margin-top: .5rem; }
   .prose h4 { margin: .8rem 0 .3rem; font-size: .9rem; }
   .banner { padding: .7rem 1rem; border-radius: 8px; margin: .8rem 0; }
   .banner.warn { background: var(--warnbg); color: var(--warn); }
+  .banner ul.flags { margin: 4px 0 0; padding-left: 18px; }
   .banner.stop { background: var(--stopbg); color: var(--stop); }
   .banner.go { background: var(--okbg); color: var(--ok); }
   iframe { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 8px;
@@ -113,6 +119,9 @@
 <header>
   <h1>Job Autopilot</h1>
   <span class="count" id="count"></span>
+  <label class="switch" title="Feed base/applicant.md and base/stories/ to the models. Off, or on with nothing written, means the resume alone.">
+    <input type="checkbox" id="useProfile"> Use profile
+  </label>
 </header>
 
 <main>
@@ -169,7 +178,10 @@ async function api(path, options) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+    const err = new Error(typeof body.detail === "string" ? body.detail
+      : body.detail?.message || `HTTP ${res.status}`);
+    err.detail = body.detail;
+    throw err;
   }
   return res.json();
 }
@@ -208,8 +220,7 @@ async function loadList() {
 
   if (!jobs.length) {
     $("detail").innerHTML = `<p class="empty">Queue is empty. Right-click a posting in
-      Chrome and choose “Add this job to autopilot”, then run
-      <code>python pipeline.py</code>.</p>`;
+      Chrome and choose “Add this job to autopilot”. Tailoring starts on its own.</p>`;
   } else if (!current || !jobs.some((j) => j.id === current)) {
     show((waiting[0] || jobs[0]).id);
   }
@@ -229,9 +240,21 @@ async function show(id) {
   if (!job) return;
 
   if (!job.app_dir) {
+    // Capturing starts the pipeline; this state normally lasts seconds. A
+    // job still here was captured while the server was down, or failed
+    // before it made a folder, and gets a button rather than a command.
+    const running = job.status === "tailoring";
     $("detail").innerHTML = `${head(job)}
-      <p class="empty">Not processed yet. Run <code>python pipeline.py ${id}</code>
-      to scrape the posting and tailor your resume.</p>`;
+      <p class="empty">${running
+        ? "Tailoring now. This page refreshes itself."
+        : `Not tailored yet${job.error ? `: ${escape(job.error)}` : ""}.`}</p>
+      ${running ? "" : `<div class="actions"><button class="act primary" id="processNow">Tailor it now</button></div>`}`;
+    const button = $("processNow");
+    if (button) button.onclick = async () => {
+      button.disabled = true;
+      try { await api(`/jobs/${id}/process`, { method: "POST" }); await loadList(); }
+      catch (err) { alert(err.message); button.disabled = false; }
+    };
     return;
   }
 
@@ -245,6 +268,10 @@ async function show(id) {
 
   const reviewable = data.status === "awaiting_review";
   const filled = data.status === "filled";
+  // A fill that started under WORKING_GRACE seconds ago gets no buttons: the
+  // agent is working and the only honest thing to show is that. After the
+  // grace the restart button comes back, gated behind a confirm.
+  const working = fillWorking(data);
 
   $("detail").innerHTML = `
     ${head(job, data)}
@@ -261,12 +288,20 @@ async function show(id) {
         <button class="act" id="fillNow">Fill it again</button>
         <button class="act danger" id="reject">Reject…</button>
       </div>` : ""}
-    ${!reviewable && !filled ? `
+    ${working ? `
+      <div class="actions">
+        <span class="state wait">Agent is working (pid ${data.fill.pid})</span>
+        <span class="hint">Leave the browser alone. Options return in ${working}s.</span>
+      </div>` : ""}
+    ${!reviewable && !filled && !working ? `
       <div class="actions">
         <span class="state ${TONE[data.status] || ""}">${LABEL[data.status] || data.status}</span>
+        ${data.status === "filling"
+          ? `<button class="act" id="submitted">I submitted it</button>` : ""}
         ${["approved", "filling", "failed"].includes(data.status)
           ? `<button class="act primary" id="fillNow">${
-              data.status === "filling" ? "Restart the fill" : "Fill the form now"}</button>` : ""}
+              data.fill ? "Fill it again" : data.status === "filling"
+                ? "Restart the fill" : "Fill the form now"}</button>` : ""}
         ${data.status !== "skipped" && data.status !== "submitted"
           ? `<button class="act danger" id="reject">Reject…</button>` : ""}
       </div>` : ""}
@@ -280,8 +315,19 @@ async function show(id) {
     ${data.artifacts.includes("resume.pdf") ? `<h3>Tailored resume</h3>
       <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe>` : ""}
 
+    ${data.cover_letter ? `<h3>Cover letter</h3>
+      <div class="card prose letter">${letter(data.cover_letter)}</div>` : ""}
+    ${data.artifacts.includes("cover_letter.pdf") ? `
+      <iframe class="letter" src="/review/${id}/file/cover_letter.pdf" title="Cover letter"></iframe>` : ""}
+    ${data.cover_letter_error ? `<h3>Cover letter</h3>
+      <div class="card"><pre class="posting">${escape(data.cover_letter_error)}</pre>
+      <p class="note">The resume is unaffected. Re-tailor to try the letter again.</p></div>` : ""}
+
     ${data.fill_notes ? `<h3>What the browser did</h3>
       <div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
+
+    ${data.answers ? `<h3>Free-form answers typed into the form</h3>
+      <div class="card prose">${markdown(data.answers)}</div>` : ""}
 
     ${data.artifacts.includes("fill_screenshot.png") ? `<h3>The filled form</h3>
       <img class="shot" src="/review/${id}/file/fill_screenshot.png"
@@ -320,8 +366,8 @@ async function show(id) {
   if ($("reject")) $("reject").onclick = () => openReject(id);
   if ($("submitted")) $("submitted").onclick = () => markSubmitted(id);
   if ($("revise")) $("revise").onclick = () => revise(id);
-  if ($("fillNow")) $("fillNow").onclick = () =>
-    act(id, () => api(`/review/${id}/fill`, { method: "POST", body: "{}" }));
+  if ($("fillNow")) $("fillNow").onclick = () => fillAgain(id);
+  if (working) setTimeout(() => { if (current === id) show(id); }, working * 1000 + 200);
 
   if ($("posting")) {
     fetch(`/review/${id}/file/posting.md`).then((r) => r.text())
@@ -349,12 +395,27 @@ function banners(data) {
     html += `<div class="banner stop"><strong>You rejected this: ${escape(data.reject_label)}.</strong>
       ${data.reject_note ? escape(data.reject_note) : ""}</div>`;
   }
+  if (data.screen && data.screen.flags && data.screen.flags.length) {
+    // The screen ran before tailoring. Terse: one line per flag, in the
+    // posting's own words, and it stays a recommendation.
+    const cls = data.screen.verdict === "reject" ? "stop" : "warn";
+    const lines = data.screen.flags.map((f) =>
+      `<li><strong>${escape(f.category.replace("_", " "))}</strong>${f.severity === "soft" ? " (soft)" : ""}:
+       “${escape(f.quote)}”${f.reason ? ` — ${escape(f.reason)}` : ""}</li>`).join("");
+    const facts = data.screen.facts_source === "resume" ? " Facts derived from the resume, so visa and dates are unknown." : "";
+    html += `<div class="banner ${cls}"><strong>Screen: ${escape(data.screen.verdict)}.</strong>
+      ${escape(data.screen.summary || "")}${facts}<ul class="flags">${lines}</ul></div>`;
+  } else if (data.screen_error) {
+    html += `<div class="banner warn"><strong>Screen failed:</strong> ${escape(data.screen_error.split("\n")[0])}</div>`;
+  }
   if (data.mismatch) {
     html += `<div class="banner warn"><strong>The model thinks this is a poor fit.</strong>
       ${escape(data.mismatch.replace(/^#.*\n/, "").split("\n\n")[0].trim())}
       <br>Nothing was tailored. It is still your call.</div>`;
   }
-  const failure = data.error_detail || (data.error || "").split("\n")[0];
+  // The folder's error.txt belongs to this attempt; the queue's error field
+  // is only current while the job is actually failed.
+  const failure = (data.status === "failed" && data.error_detail) || (data.error || "").split("\n")[0];
   if (failure) {
     html += `<div class="banner stop"><strong>Failed:</strong> ${escape(failure)}</div>`;
   }
@@ -363,14 +424,19 @@ function banners(data) {
       The browser window is still open on the form. Check it there, submit it
       yourself, then mark it below. Close that window when you are done.</div>`;
   }
-  if (data.status === "approved") {
+  if (data.status === "approved" && data.fill) {
+    html += `<div class="banner warn"><strong>Approved, fill starting.</strong>
+      The browser is opening; leave it alone.</div>`;
+  } else if (data.status === "approved") {
     html += `<div class="banner go"><strong>Approved.</strong> Press “Fill the form now”
       when you are ready, or run <code>python apply.py ${data.id}</code>.</div>`;
   }
-  if (data.status === "filling") {
+  if (data.status === "filling" && data.fill) {
     html += `<div class="banner warn"><strong>Filling the form.</strong>
-      Leave the browser window alone. If nothing is happening, the run died —
-      press “Restart the fill”.</div>`;
+      The agent is working in the browser window; leave it alone.</div>`;
+  } else if (data.status === "filling") {
+    html += `<div class="banner stop"><strong>The fill died.</strong>
+      No apply.py is running for this job. Press “Restart the fill”.</div>`;
   }
   return html;
 }
@@ -384,9 +450,43 @@ async function approve(id) {
   });
 }
 
+// Seconds a fresh fill is shown as "working" with no buttons.
+const WORKING_GRACE = 30;
+
+// Seconds left in the grace period, or 0 when buttons should show. A fill
+// this server did not start has no start time and gets no grace.
+function fillWorking(data) {
+  if (!data.fill || data.fill.age == null) return 0;
+  return Math.max(0, WORKING_GRACE - data.fill.age);
+}
+
+// Gate one: the server refuses while a fill runs. Gate two: the human
+// confirms, and only then is the running fill killed and a new one started.
+async function fillAgain(id) {
+  await act(id, async () => {
+    try {
+      await api(`/review/${id}/fill`, { method: "POST", body: "{}" });
+      return;
+    } catch (err) {
+      if (err.detail?.error !== "fill_running") throw err;
+      const ok = confirm(`A fill is already running for this job (pid ${err.detail.pid}).\n` +
+        "This will kill the current job and restart. Are you sure you want to continue?");
+      if (!ok) return;
+    }
+    await api(`/review/${id}/fill`, { method: "POST", body: JSON.stringify({ force: true }) });
+  });
+}
+
 async function markSubmitted(id) {
   if (!confirm("Only confirm this after you submitted the form yourself.")) return;
-  await act(id, () => api(`/review/${id}/submitted`, { method: "POST", body: "{}" }));
+  await act(id, async () => {
+    const result = await api(`/review/${id}/submitted`, { method: "POST", body: "{}" });
+    if (result.browser === "kept") {
+      const list = result.in_progress
+        .map((j) => `${j.title || j.id} — ${LABEL[j.status] || j.status}`).join("\n");
+      alert(`Application filling in progress, so the browser stays open:\n${list}`);
+    }
+  });
 }
 
 function openReject(id) {
@@ -438,6 +538,12 @@ function renderDiff(diff) {
   }).join("");
 }
 
+// The letter is plain paragraphs; line breaks inside one (the sign-off) stay.
+function letter(text) {
+  return escape(text.trim()).split(/\n{2,}/)
+    .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+}
+
 // Just enough markdown for the rationale blocks: headings, bullets, bold.
 function markdown(text) {
   return escape(text)
@@ -452,6 +558,16 @@ function escape(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+// The profile switch is server state, so a pipeline run started later sees
+// it. Failing to load it leaves the box unchecked but never blocks the page.
+api("/settings")
+  .then((data) => { $("useProfile").checked = !!data.use_profile; })
+  .catch(() => {});
+$("useProfile").addEventListener("change", async (e) => {
+  try { await api("/settings", { method: "POST", body: JSON.stringify({ use_profile: e.target.checked }) }); }
+  catch (err) { alert(`Could not save: ${err.message}`); e.target.checked = !e.target.checked; }
+});
 
 api("/review/meta/reject-reasons")
   .then((data) => { reasons = data; })

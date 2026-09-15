@@ -57,13 +57,18 @@ def complete(
     model: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    reasoning: Optional[dict] = None,
 ) -> str:
-    """Single chat completion. Returns the assistant's text."""
+    """Single chat completion. Returns the assistant's text.
+
+    `reasoning` overrides the default low-effort thinking; pass
+    {"enabled": False} for a call that is a lookup rather than an edit.
+    """
     payload = {
         "model": model or tailor_model(),
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "reasoning": {"effort": REASONING_EFFORT},
+        "reasoning": reasoning or {"effort": REASONING_EFFORT},
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},

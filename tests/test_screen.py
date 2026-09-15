@@ -1,0 +1,274 @@
+"""On-page screening: the parser, the facts loader, and the cached endpoint."""
+
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+
+from server import screen as server_screen
+from server import settings
+from server.app import app
+from tailor import profile, screen
+
+
+FACTS = """# Applicant
+
+## Facts
+
+- Years of professional experience: 2
+- Work authorisation: needs sponsorship in the future
+
+## Form details
+
+- Phone: 000
+"""
+
+
+@pytest.fixture(autouse=True)
+def isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr(server_screen, "CACHE_PATH", tmp_path / "screens.json")
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    applicant = tmp_path / "applicant.md"
+    applicant.write_text(FACTS)
+    monkeypatch.setattr(profile, "APPLICANT", applicant)
+    monkeypatch.setattr(profile, "BASE_RESUME", tmp_path / "resume.tex")
+    monkeypatch.setattr(profile, "DERIVED_FACTS", tmp_path / "derived_facts.md")
+
+
+def reply(verdict="reject", flags=None, summary="visa"):
+    return "```json\n" + json.dumps({"verdict": verdict, "flags": flags or [], "summary": summary}) + "\n```"
+
+
+# --- facts -----------------------------------------------------------------
+
+def test_load_facts_returns_only_the_facts_section():
+    facts, source = screen.load_facts()
+    assert "Years of professional experience" in facts
+    assert "Phone" not in facts
+    assert source == "applicant.md"
+
+
+def test_missing_applicant_falls_back_to_the_resume(tmp_path, monkeypatch):
+    monkeypatch.setattr(profile, "APPLICANT", tmp_path / "nope.md")
+    (tmp_path / "resume.tex").write_text("\\section{Education} MS CS 2025")
+    monkeypatch.setattr(profile.llm, "complete",
+                        lambda *a, **k: "- Years of professional experience: 2\n- Degrees held: MS CS (2025)\n")
+    facts, source = screen.load_facts()
+    assert source == "resume" and "MS CS" in facts
+
+
+def test_profile_switch_off_ignores_applicant(tmp_path, monkeypatch):
+    settings.save(use_profile=False)
+    (tmp_path / "resume.tex").write_text("resume")
+    monkeypatch.setattr(profile.llm, "complete", lambda *a, **k: "- Years of professional experience: 3\n")
+    facts, source = screen.load_facts()
+    assert source == "resume" and "3" in facts
+
+
+def test_derived_facts_are_cached_until_the_resume_changes(tmp_path, monkeypatch):
+    resume = tmp_path / "resume.tex"
+    resume.write_text("v1")
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(1)
+        return "- Years of professional experience: 1\n"
+
+    monkeypatch.setattr(profile.llm, "complete", fake)
+    profile.derived_facts()
+    profile.derived_facts()
+    assert len(calls) == 1
+    resume.write_text("v2")
+    import os
+    os.utime(resume, (resume.stat().st_atime, resume.stat().st_mtime + 10))
+    profile.derived_facts()
+    assert len(calls) == 2
+
+
+def test_no_resume_and_no_applicant_is_loud(tmp_path, monkeypatch):
+    monkeypatch.setattr(profile, "APPLICANT", tmp_path / "nope.md")
+    with pytest.raises(FileNotFoundError):
+        screen.load_facts()
+
+
+def test_facts_reach_the_prompt():
+    message = screen.build_user_message("posting text", "FACT LINE", title="T", url="U")
+    assert "FACT LINE" in message
+    assert message.index("FACT LINE") < message.index("posting text")
+    assert "Title: T" in message
+
+
+# --- parser ----------------------------------------------------------------
+
+def test_parse_keeps_valid_flags():
+    result = screen.parse_reply(reply(flags=[{
+        "category": "visa", "severity": "hard",
+        "quote": "unable to sponsor", "reason": "needs sponsorship"}]), model="m")
+    assert result.verdict == "reject"
+    assert result.flags[0].category == "visa"
+    assert result.model == "m"
+
+
+def test_unknown_category_becomes_other():
+    result = screen.parse_reply(reply(flags=[{
+        "category": "astrology", "severity": "soft", "quote": "q", "reason": "r"}]))
+    assert result.flags[0].category == "other"
+
+
+def test_flag_without_quote_is_dropped():
+    result = screen.parse_reply(reply(flags=[{
+        "category": "visa", "severity": "hard", "quote": "", "reason": "r"}]))
+    assert result.flags == []
+    assert result.verdict == "ok"
+
+
+def test_verdict_follows_flags_not_the_model():
+    hard = [{"category": "experience", "severity": "hard", "quote": "5+ years", "reason": "r"}]
+    assert screen.parse_reply(reply(verdict="ok", flags=hard)).verdict == "reject"
+    soft = [{"category": "degree", "severity": "soft", "quote": "PhD preferred", "reason": "r"}]
+    assert screen.parse_reply(reply(verdict="reject", flags=soft)).verdict == "caution"
+    assert screen.parse_reply(reply(verdict="reject", flags=[])).verdict == "ok"
+
+
+def test_not_a_job_survives():
+    assert screen.parse_reply(reply(verdict="not_a_job")).verdict == "not_a_job"
+
+
+def test_garbage_reply_is_an_error():
+    with pytest.raises(screen.ScreenError):
+        screen.parse_reply("I cannot help with that")
+
+
+def test_empty_text_never_calls_the_model(monkeypatch):
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("called"))
+    assert screen.screen("   ").verdict == "not_a_job"
+
+
+def test_screen_uses_the_screen_model(monkeypatch):
+    seen = {}
+
+    def fake(system, user, model=None, **kw):
+        seen["model"] = model
+        seen["system"] = system
+        return reply(verdict="ok")
+
+    monkeypatch.setattr(screen.llm, "complete", fake)
+    monkeypatch.setenv("OPENROUTER_SCREEN_MODEL", "fast/model")
+    screen.screen("a posting")
+    assert seen["model"] == "fast/model"
+    assert "export_control" in seen["system"]
+
+
+# --- endpoint and cache ----------------------------------------------------
+
+def test_cache_key_strips_tracking():
+    k = server_screen.cache_key
+    assert k("https://x.com/j/1?utm_source=a&ref=b#top") == "https://x.com/j/1"
+    assert k("https://x.com/j/1/") == k("https://x.com/j/1")
+    assert k("https://x.com/j/1?gh_jid=5") == "https://x.com/j/1?gh_jid=5"
+
+
+def test_endpoint_caches_by_url(monkeypatch):
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(1)
+        return reply(flags=[{"category": "visa", "severity": "hard",
+                             "quote": "no sponsorship", "reason": "r"}])
+
+    monkeypatch.setattr(screen.llm, "complete", fake)
+    client = TestClient(app)
+    body = {"url": "https://x.com/j/1?ref=jobright", "text": "posting, no sponsorship", "title": "T"}
+    first = client.post("/screen", json=body).json()
+    second = client.post("/screen", json=body | {"url": "https://x.com/j/1"}).json()
+    assert first["verdict"] == "reject" and first["cached"] is False
+    assert second["cached"] is True and second["flags"] == first["flags"]
+    assert len(calls) == 1
+
+
+def test_not_a_job_is_not_cached(monkeypatch):
+    replies = iter([reply(verdict="not_a_job"), reply(verdict="ok")])
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: next(replies))
+    client = TestClient(app)
+    body = {"url": "https://x.com/j/2", "text": "loading"}
+    assert client.post("/screen", json=body).json()["verdict"] == "not_a_job"
+    assert client.post("/screen", json=body).json()["verdict"] == "ok"
+
+
+def test_force_bypasses_cache(monkeypatch):
+    replies = iter([reply(verdict="ok"), reply(verdict="reject", flags=[
+        {"category": "visa", "severity": "hard", "quote": "no visas", "reason": "r"}])])
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: next(replies))
+    client = TestClient(app)
+    body = {"url": "https://x.com/j/3", "text": "posting, no visas"}
+    client.post("/screen", json=body)
+    assert client.post("/screen", json=body | {"force": True}).json()["verdict"] == "reject"
+
+
+def test_nothing_to_screen_against_is_an_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(profile, "APPLICANT", tmp_path / "absent.md")
+    client = TestClient(app)
+    res = client.post("/screen", json={"url": "https://x.com/j/4", "text": "posting"})
+    assert res.status_code == 502
+    assert "resume.tex" in res.json()["detail"]
+
+
+def test_endpoint_reports_the_facts_source(monkeypatch):
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: reply(verdict="ok"))
+    client = TestClient(app)
+    res = client.post("/screen", json={"url": "https://x.com/j/5", "text": "posting"}).json()
+    assert res["facts_source"] == "applicant.md"
+
+
+# --- quote check -----------------------------------------------------------
+
+POSTING = "We are unable to sponsor visas.\nWill you now or in the future require sponsorship?\nMust hold a PhD."
+
+
+def test_invented_quote_is_dropped():
+    result = screen.parse_reply(reply(flags=[{
+        "category": "clearance", "severity": "hard",
+        "quote": "no statement about clearance", "reason": "r"}]), text=POSTING)
+    assert result.flags == [] and result.verdict == "ok"
+
+
+def test_form_question_is_never_a_flag():
+    result = screen.parse_reply(reply(flags=[{
+        "category": "visa", "severity": "hard",
+        "quote": "Will you now or in the future require sponsorship?", "reason": "r"}]), text=POSTING)
+    assert result.flags == []
+
+
+def test_real_quote_survives_punctuation_and_case():
+    result = screen.parse_reply(reply(flags=[{
+        "category": "visa", "severity": "hard",
+        "quote": "unable to sponsor visas", "reason": "r"}]), text=POSTING)
+    assert [f.category for f in result.flags] == ["visa"]
+
+
+def test_quote_check_needs_the_text():
+    # Without the posting there is nothing to check against; keep the flag.
+    result = screen.parse_reply(reply(flags=[{
+        "category": "visa", "severity": "hard", "quote": "anything", "reason": "r"}]))
+    assert len(result.flags) == 1
+
+
+def test_resume_derived_facts_soften_visa_flags():
+    result = screen.Screen(verdict="reject", facts_source="resume", flags=[
+        screen.Flag("visa", "hard", "unable to sponsor", "r"),
+        screen.Flag("clearance", "hard", "US citizen", "r")])
+    result = screen.soften_unknowns(result)
+    assert {f.severity for f in result.flags} == {"soft"}
+    assert result.verdict == "caution"
+
+
+def test_resume_derived_facts_keep_experience_hard():
+    result = screen.Screen(verdict="reject", facts_source="resume", flags=[
+        screen.Flag("experience", "hard", "7+ years", "r")])
+    assert screen.soften_unknowns(result).verdict == "reject"
+
+
+def test_applicant_facts_are_not_softened():
+    result = screen.Screen(verdict="reject", facts_source="applicant.md", flags=[
+        screen.Flag("visa", "hard", "unable to sponsor", "r")])
+    assert screen.soften_unknowns(result).verdict == "reject"

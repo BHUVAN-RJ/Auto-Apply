@@ -1,21 +1,48 @@
 {
   "manifest_version": 3,
   "name": "Job Autopilot Capture",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Right-click any job posting to push it onto the local autopilot queue.",
   "permissions": [
-    "contextMenus",
-    "scripting",
     "activeTab",
-    "notifications"
+    "contextMenus",
+    "notifications",
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8787/*"
+    "http://127.0.0.1:8787/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "icons": {
     "128": "icon128.png"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.greenhouse.io/*",
+        "https://*.lever.co/*",
+        "https://*.ashbyhq.com/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://*.smartrecruiters.com/*",
+        "https://*.icims.com/*",
+        "https://*.bamboohr.com/*",
+        "https://*.workable.com/*",
+        "https://*.jobvite.com/*",
+        "https://*.rippling.com/*",
+        "https://*.dover.com/*",
+        "https://*.wellfound.com/*",
+        "https://*.linkedin.com/jobs/*",
+        "https://jobright.ai/*",
+        "https://*.jobright.ai/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }

@@ -12,6 +12,8 @@ an existing one is ever overwritten.
 
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +22,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from archive import store
+from browser import chrome
 from server import queue, runner
 from server.models import REJECT_LABELS, Job, RejectReason, Status
 
@@ -36,16 +39,29 @@ ARTIFACTS = {
     "resume.diff": "text/plain",
     "suggestions.md": "text/markdown",
     "mismatch.md": "text/markdown",
+    "screen.json": "application/json",
     "rejection.md": "text/markdown",
     "fill_notes.md": "text/markdown",
+    "answers.md": "text/markdown",
     "error.txt": "text/plain",
     "resume.pdf": "application/pdf",
+    "cover_letter.md": "text/markdown",
+    "cover_letter.tex": "text/plain",
+    "cover_letter.pdf": "application/pdf",
+    "cover_letter_error.txt": "text/plain",
     "fill_screenshot.png": "image/png",
 }
 
 
 class Decision(BaseModel):
     note: Optional[str] = None
+
+
+class FillRequest(BaseModel):
+    """`force` is the second gate: the page asks the human before sending it."""
+
+    note: Optional[str] = None
+    force: bool = False
 
 
 class Rejection(BaseModel):
@@ -93,15 +109,52 @@ def detail(job_id: str) -> dict:
         "diff": read("resume.diff"),
         "suggestions": read("suggestions.md"),
         "mismatch": read("mismatch.md"),
+        "screen": _screen(app_dir),
+        "screen_error": read("screen_error.txt"),
+        "cover_letter": read("cover_letter.md"),
+        "cover_letter_error": read("cover_letter_error.txt"),
         "reject_reason": job.reject_reason.value if job.reject_reason else None,
         "reject_label": REJECT_LABELS.get(job.reject_reason) if job.reject_reason else None,
         "reject_note": job.reject_note,
-        "fill_notes": read("fill_notes.md"),
+        # Every fill appends its notes. The page shows the latest; the file
+        # keeps the rest.
+        "fill_notes": latest_section(read("fill_notes.md")),
+        "answers": latest_section(read("answers.md")),
         "error": read("error.txt"),
         "error_detail": job.error,
         "log": _log_path(job.id),
         "history": _history(app_dir),
+        "fill": _fill_state(job.id),
     }
+
+
+def _fill_state(job_id: str) -> Optional[dict]:
+    """The live fill for this job, so the page can show that the agent is
+    working and gate a restart behind a confirmation."""
+    pid = runner.fill_pid(job_id)
+    if pid is None:
+        return None
+    started = runner.fill_started_at(job_id)
+    return {
+        "pid": pid,
+        "started_at": started,
+        "age": round(time.time() - started) if started else None,
+    }
+
+
+def _screen(app_dir: Path) -> Optional[dict]:
+    path = app_dir / "screen.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def latest_section(text: str) -> str:
+    """The last `---`-separated block of an appended-to artifact."""
+    return text.strip().split("\n---\n")[-1].strip() if text.strip() else ""
 
 
 def _log_path(job_id: str) -> Optional[str]:
@@ -160,7 +213,8 @@ def approve(job_id: str, decision: Decision) -> dict:
     pid = runner.start_fill(job_id)
     if pid:
         store.set_status(app_dir, Status.APPROVED, f"filling started (pid {pid})")
-    return {"id": job_id, "status": Status.APPROVED.value, "filling": bool(pid)}
+    return {"id": job_id, "status": Status.APPROVED.value, "filling": bool(pid),
+            "pid": pid}
 
 
 # Every state a fill may be started from. FILLING is included deliberately: a
@@ -170,13 +224,28 @@ REFILLABLE = (Status.APPROVED, Status.FILLING, Status.FILLED, Status.FAILED)
 
 
 @router.post("/{job_id}/fill")
-def fill_now(job_id: str, decision: Decision) -> dict:
-    """Start or restart the fill. Repeatable as often as needed."""
+def fill_now(job_id: str, request: FillRequest) -> dict:
+    """Start or restart the fill. Repeatable, but never concurrent.
+
+    One fill per job at a time: a second apply.py on the same Chrome tab
+    fights the first. If one is running, the request is refused with the pid
+    unless `force` is set, in which case the running fill is killed first.
+    The page only sends `force` after the human has confirmed.
+    """
     job, app_dir = _job_and_dir(job_id)
     if job.status not in REFILLABLE:
         raise HTTPException(
             409, f"job is {job.status.value}; approve it before filling"
         )
+    running = runner.fill_pid(job_id)
+    if running and not request.force:
+        raise HTTPException(
+            409, {"error": "fill_running", "pid": running,
+                  "message": f"a fill is already running for this job (pid {running})"},
+        )
+    if running:
+        runner.stop_fill(job_id)
+        store.set_status(app_dir, Status.APPROVED, f"fill {running} killed for a restart")
     pid = runner.launch("apply.py", job_id)
     if not pid:
         raise HTTPException(500, "could not start apply.py")
@@ -225,11 +294,40 @@ def mark_submitted(job_id: str, decision: Decision) -> dict:
     endpoint is reachable only from the review page.
     """
     job, app_dir = _job_and_dir(job_id)
-    if job.status != Status.FILLED:
+    # FILLING is accepted too: the human may finish and submit the form while
+    # the agent is still poking at it. Their submission wins; the agent stops.
+    if job.status not in (Status.FILLED, Status.FILLING):
         raise HTTPException(409, f"job is {job.status.value}, not filled")
-    store.set_status(app_dir, Status.SUBMITTED, decision.note or "submitted by hand")
+    killed = runner.stop_fill(job_id)
+    note = decision.note or "submitted by hand"
+    if killed:
+        note += f" (fill {killed} still running, killed)"
+    store.set_status(app_dir, Status.SUBMITTED, note)
     queue.update(job_id, status=Status.SUBMITTED)
-    return {"id": job_id, "status": Status.SUBMITTED.value}
+
+    in_progress = _in_progress(job_id)
+    browser = "kept" if in_progress else ("closed" if chrome.close() else "not_running")
+    return {"id": job_id, "status": Status.SUBMITTED.value,
+            "browser": browser, "in_progress": in_progress}
+
+
+# Statuses whose job still has a form, open or about to open, in the browser.
+IN_BROWSER = (Status.APPROVED, Status.FILLING, Status.FILLED)
+
+
+def _in_progress(except_id: str) -> list[dict]:
+    """Other jobs that still need the browser window.
+
+    The window is shared: closing it after one submission would take another
+    job's half-filled form with it. Any other job that is approved, filling,
+    or filled and waiting for its own check keeps the window open.
+    """
+    return [
+        {"id": job.id, "title": job.title, "status": job.status.value,
+         "running": runner.fill_pid(job.id) is not None}
+        for job in queue.all_jobs()
+        if job.id != except_id and job.status in IN_BROWSER
+    ]
 
 
 @router.post("/{job_id}/revise")

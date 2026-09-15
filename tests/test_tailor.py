@@ -222,6 +222,19 @@ def test_overrun_report_names_the_worst_offenders():
     assert "bullet 1" not in report, "an unchanged bullet must not be named"
 
 
+def test_reordered_bullets_are_matched_by_content_not_position():
+    """Reordering entries is allowed; it must not read as one bullet growing
+    by the other's length. A real run failed four times on exactly that."""
+    items = tailor.bullets(ORIGINAL)
+    assert len(items) >= 2
+    swapped = ORIGINAL.replace(items[0], "\x00").replace(items[1], items[0]).replace("\x00", items[1])
+    assert swapped != ORIGINAL
+    pairs = tailor.pair_bullets(ORIGINAL, swapped)
+    assert all(was == now for _, was, now in pairs)
+    assert "No bullet grew" in tailor.overrun_report(ORIGINAL, swapped)
+    assert tailor._check_lengths(ORIGINAL, swapped) == []
+
+
 def test_overrun_report_points_elsewhere_when_no_bullet_grew():
     shrunk = ORIGINAL.replace("Built a scalable Python service handling 50K requests per day",
                               "Built a Python service")
@@ -260,3 +273,12 @@ def test_an_unchanged_resume_is_accepted_on_the_final_attempt(monkeypatch):
     result = tailor.tailor(POSTING, resume_tex=ORIGINAL, max_attempts=2)
     assert result.attempts == 2
     assert result.tex.strip() == ORIGINAL.strip()
+
+
+def test_the_rationale_is_asked_for_in_caveman_style():
+    from tailor import tailor as t
+
+    system = t.system_prompt()
+    assert "twelve words" in system and "caveman" in system
+    assert "rationale block only" in system, "the terse style must never reach the resume"
+    assert "Gaps:" in t.REPLY_FORMAT

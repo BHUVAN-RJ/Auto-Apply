@@ -69,12 +69,13 @@ job you ever considered.
 
 | Component | Role |
 |---|---|
-| `capture/` | MV3 Chrome extension. Right-click any posting → "Add this job to autopilot" |
+| `capture/` | MV3 Chrome extension. Screens every job page as it opens and paints the verdict; right-click any posting → "Add this job to autopilot" |
 | `server/` | FastAPI on `localhost:8787`. Owns the queue, serves the review UI, holds checkpoint state |
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
 | `browser/` | `browser-use` fill loop driving your real Chrome profile |
 | `review/` | Local web page: diff view, PDF preview, approve / reject / chat |
+| `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
 
 The queue file is the seam between the capture half and the pipeline half,
@@ -90,15 +91,16 @@ nothing.
 ## Status
 
 The full path works end to end: capture, scrape, tailor, compile, archive,
-checkpoint 1, browser fill, checkpoint 2. What remains is hardening — retries,
-resume-after-crash, and a per-ATS recipe cache. See [PLAN.md](PLAN.md) for the
-design and what is deliberately deferred.
+checkpoint 1, browser fill, checkpoint 2. The on-page screen and the profile
+switch are built on top. Next is the profile interviewer (PLAN.md, Phase 7),
+then hardening — retries, resume-after-crash, a per-ATS recipe cache. See
+[PLAN.md](PLAN.md) for the design and what is deliberately deferred.
 
 ```sh
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 162 tests
+pytest                        # 307 tests
 ```
 
 ## Setup
@@ -107,6 +109,7 @@ pytest                        # 162 tests
 brew install --cask basictex        # needs sudo
 uv venv && uv pip install -e .
 cp .env.example .env                # add your OpenRouter key
+cp base/applicant.example.md base/applicant.md   # fill in the Facts section
 ```
 
 Load the capture extension: Chrome → `chrome://extensions` → Developer mode →
@@ -161,11 +164,42 @@ You can reject at any stage, including after approving or filling.
 
 ## Checkpoint 2
 
-Approving marks the job; filling is started explicitly, with the review page's
-"Fill the form now" button or `python apply.py`. Keeping them separate means a
-fill can be repeated as often as needed, and a run whose browser died never
-wedges the job — the button says "Restart the fill" and starts a fresh one.
-Set `AUTOPILOT_AUTOFILL=1` if you would rather approval launched it for you.
+Approving starts the fill (`AUTOPILOT_AUTOFILL=1`, the default in `.env`;
+unset it to start fills by hand with "Fill the form now" or `python
+apply.py`). For the first 30 seconds the page shows only "Agent is working"
+with no buttons. After that "Fill it again" and "Reject…" come back.
+
+One fill per job at a time. Two `apply.py` runs on the same job drive the
+same Chrome tab and undo each other's steps, so the server refuses a second
+one while the first is alive. "Fill it again" is double-gated: the server
+answers `fill_running`, the page asks "This will kill the current job and
+restart. Are you sure?", and only a yes kills the running fill and starts a
+fresh one. A run whose browser died shows "The fill died" and restarts
+without the question.
+
+Capturing a job starts the pipeline on its own: by the time the review tab
+is open the posting is scraped and the resume and letter are ready, or a few
+seconds away. A job captured while the server was down shows a "Tailor it
+now" button instead.
+
+The file is uploaded as `<AUTOPILOT_RESUME_FILENAME>.pdf` (spaces become
+underscores; default `Resume.pdf`). Set it in `.env` to whatever you want the
+recruiter to see. A cover letter is written alongside the resume, from the
+tailored resume and `tailor/cover_rules.md`, shown on the review page as text
+and PDF, and uploaded as `<AUTOPILOT_COVER_LETTER_FILENAME>.pdf` wherever the
+form offers a cover letter upload. A form with only a text box gets nothing
+typed into it. A letter that fails to generate does not fail the job; the
+error shows on the review page and re-tailoring tries again.
+
+Open questions on the form ("Why do you want to work here?") are answered by
+the tailoring model from the posting, the tailored resume, your profile, and
+the cover letter, in the same short, plain style; the browser agent only types
+them. Every answer is saved to `answers.md` and shown on the review page.
+
+Questions about visa, sponsorship, work authorisation, OPT / CPT, citizenship
+or immigration status are never answered by the agent: any attempt to type in
+or pick from such a field is refused in code. If Jobright's autofill has set
+one from your profile it stays; otherwise it is left blank for you.
 
 The fill runs detached, so a browser crash cannot take the server down. Its log
 lands in `data/apply_<job>.log`, and the review page shows the tail of it under
@@ -189,8 +223,17 @@ come out wrong. Watch one as it happens with `tail -f data/apply_<job>.log`.
 
 Either way it opens a browser, fills the form, and halts — leaving the window
 open on the completed form. That is the point of checkpoint 2: you read the
-form in the browser, submit it yourself, and close the window. The agent's
-session ends without touching the browser process.
+form in the browser, submit it yourself, and press "I submitted it". The
+agent's session ends without touching the browser process.
+
+The window is shared between fills, so closing it is the server's call, not
+the agent's. Marking a job submitted closes the Auto-Apply Chrome (CDP
+`Browser.close`, the same as Quit, so logins are saved) only when no other
+job is approved, filling, or filled and waiting for its own check. Otherwise
+the page says "Application filling in progress" and lists what is holding
+the window. "I submitted it" is also available while a job is still
+`filling`: your submission wins, and the agent still poking at the form is
+killed.
 
 ### The browser profile
 
@@ -235,7 +278,7 @@ Three independent things stop it submitting, none of them a prompt rule:
   decorative, and Enter submits a single-input form with no button click.
 - **A terminal state.** The run always ends in a screenshot and `status:
   filled`. `SUBMITTED` is reachable only from the review page, only on a job
-  already `filled`, and only behind a confirmation.
+  that is `filled` or still `filling`, and only behind a confirmation.
 
 You then review the screenshot, submit in the browser yourself, and mark it.
 
@@ -264,6 +307,30 @@ because prompt rules leak:
 
 A rejection is fed back to the model with the specific problem named, so the
 retry is informed rather than a reroll.
+
+## On-page screen
+
+Click Apply on Jobright or LinkedIn, and whatever site it lands on gets a
+bar across the top within a couple of seconds: red NOT OK for an
+auto-reject, amber CAUTION for a soft one, green OK for clear, grey when
+the page holds no posting (a login wall, a redirect still loading; press
+Again). The same happens on the usual ATS domains opened any other way. Each line is one requirement in the
+posting's own words — years of experience, no sponsorship, ITAR, clearance
+or citizenship, a start date or graduation window, a role outside the US,
+a required degree, a senior title — and why it applies to the facts in
+`base/applicant.md`. Without that file the facts are derived from the resume
+once and the bar says so, since a resume knows nothing about visas or start
+dates. "Add to autopilot" on the bar is the same capture as the context
+menu. The verdict is cached per URL, reused by the pipeline,
+and shown again on the review page. It is advice; nothing is skipped by it.
+
+## Use profile
+
+A switch in the page header. On, the tailor, the cover letter, the form
+answers, and the screen are given `base/applicant.md` and every document in
+`base/stories/` (one per role or project; the interviewer that writes them
+is the next phase). Off, or on with nothing written yet, everything runs on
+the resume and `base/profile.md` alone.
 
 ## Fit assessment
 

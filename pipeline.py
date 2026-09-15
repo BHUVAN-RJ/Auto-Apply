@@ -10,6 +10,7 @@ against a job a human has approved.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import traceback
@@ -17,8 +18,9 @@ from pathlib import Path
 
 from archive import store
 from server import queue
+from server import screen as screen_server
 from server.models import Job, Status
-from tailor import fetch, tailor
+from tailor import cover, fetch, tailor
 from tex import compile as texc
 
 ROOT = Path(__file__).resolve().parent
@@ -75,20 +77,39 @@ def retailor(job: Job, instruction: str) -> Path:
     return process(job, extra_instruction=instruction)
 
 
-def process(job: Job, extra_instruction: str = "") -> Path:
-    """Fetch, tailor, compile, archive. Returns the application folder."""
-    queue.update(job.id, status=Status.TAILORING)
+def allocate(job: Job) -> Path:
+    """A fresh application folder, recorded on the queue row."""
     app_dir = store.create(job)
     store.set_status(app_dir, Status.TAILORING)
     queue.update(job.id, app_dir=str(app_dir))
+    return app_dir
 
-    posting = fetch.fetch(job.url)
+
+def process(job: Job, extra_instruction: str = "") -> Path:
+    """Fetch, tailor, compile, archive. Returns the application folder."""
+    # A fresh run clears the last one's error; otherwise a retry that
+    # succeeds still shows "Failed" over a perfectly good resume.
+    queue.update(job.id, status=Status.TAILORING, error=None)
+
+    # Fetch before the folder is allocated: its name carries the company, and
+    # the extension often captures none (a Jobright link that lands on Ashby
+    # exposes no metadata), so every first run was `unknown-company_...`.
+    try:
+        posting = fetch.fetch(job.url)
+    except Exception:
+        # A failed fetch still gets its own folder, so the error lands next
+        # to this run's record and not in the previous run's.
+        allocate(job)
+        raise
 
     # The posting is authoritative for company and title; the extension only
     # guessed them from whatever metadata the page happened to expose.
     if posting.company and not job.company:
-        queue.update(job.id, company=posting.company)
+        job = queue.update(job.id, company=posting.company) or job
+
+    app_dir = allocate(job)
     store.write(app_dir, "posting.md", posting.to_markdown())
+    write_screen(app_dir, job, posting)
 
     base_tex = ROOT / "base" / "resume.tex"
     target = base_page_count()
@@ -136,9 +157,52 @@ def process(job: Job, extra_instruction: str = "") -> Path:
     if pages is not None and pages != target:
         note += f" — master is {target}; the page-count gate did not hold"
 
+    note += "; " + write_cover_letter(app_dir, posting, result.tex, extra_instruction)
+
     store.set_status(app_dir, Status.AWAITING_REVIEW, note)
     queue.update(job.id, status=Status.AWAITING_REVIEW)
     return app_dir
+
+
+def write_screen(app_dir: Path, job: Job, posting) -> None:
+    """Archive the auto-reject screen next to the posting.
+
+    The extension usually screened this URL when the page was opened, so this
+    is a cache hit; otherwise the model runs once here. Not fatal: a screen
+    that failed is a line on the review page, not a reason to skip tailoring.
+    """
+    try:
+        result, _ = screen_server.screen_url(job.url, posting.text, title=posting.title)
+        store.write(app_dir, "screen.json", json.dumps(result.to_dict(), indent=2) + "\n")
+        if result.flags:
+            print(f"  screen: {result.verdict}, {len(result.flags)} flag(s)")
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        store.write(app_dir, "screen_error.txt", f"{type(exc).__name__}: {exc}\n")
+        print(f"  screen failed: {exc}", file=sys.stderr)
+
+
+def write_cover_letter(app_dir: Path, posting, resume_tex: str, extra_instruction: str = "") -> str:
+    """Write the letter next to the resume. Returns a one-line note for the status.
+
+    Deliberately not fatal: the resume it sits beside cost several model
+    round-trips and a compile, and a letter that failed to come out is a
+    reason to look at cover_letter_error.txt, not to throw that away. The
+    review page shows the letter when it exists and the error when it does
+    not.
+    """
+    try:
+        letter = cover.write(posting, resume_tex, tailor.load_profile(), extra_instruction)
+        store.write(app_dir, "cover_letter.md", letter.text + "\n")
+        store.write(app_dir, "cover_letter.tex", cover.to_tex(letter.text))
+        texc.compile_pdf(app_dir / "cover_letter.tex", app_dir / "cover_letter.pdf")
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        detail = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, texc.CompileError) and exc.log:
+            detail += "\n\n" + exc.tail(15)
+        store.write(app_dir, "cover_letter_error.txt", detail + "\n")
+        print(f"  cover letter failed: {detail.splitlines()[0]}", file=sys.stderr)
+        return "no cover letter (see cover_letter_error.txt)"
+    return f"cover letter {letter.words} words"
 
 
 def process_safely(job: Job) -> bool:

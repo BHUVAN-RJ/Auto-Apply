@@ -31,7 +31,7 @@ def stub_fill(monkeypatch, **overrides):
     calls = {}
 
     def fake(url, resume, screenshot, **kwargs):
-        calls.update(url=url, resume=resume, screenshot=screenshot)
+        calls.update(url=url, resume=resume, screenshot=screenshot, **kwargs)
         screenshot.write_bytes(b"\x89PNG fake")
         overrides.setdefault("done", True)
         return FillResult(ok=True, steps=7, screenshot=screenshot,
@@ -67,11 +67,32 @@ def test_an_unapproved_job_is_never_filled(monkeypatch, status):
 
 
 def test_the_tailored_resume_is_what_gets_uploaded(monkeypatch):
+    monkeypatch.setenv(apply.RESUME_FILENAME, "Jane Q Doe Resume")
     job, app_dir = approved_job()
     calls = stub_fill(monkeypatch)
     apply.fill_one(job)
-    assert calls["resume"] == app_dir / "resume.pdf"
+    assert calls["resume"] == app_dir / "Jane_Q_Doe_Resume.pdf"
+    assert calls["resume"].read_bytes() == (app_dir / "resume.pdf").read_bytes()
     assert calls["url"] == job.url
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Jane Q Doe Resume", "Jane_Q_Doe_Resume"),
+    ("Jane_Doe_Resume.pdf", "Jane_Doe_Resume"),
+    ("  ", "Resume"),
+    ("../evil name", "evil_name"),
+])
+def test_resume_filename_uses_underscores_and_nothing_unsafe(monkeypatch, raw, expected):
+    monkeypatch.setenv(apply.RESUME_FILENAME, raw)
+    assert apply.resume_filename() == expected
+
+
+def test_the_upload_copy_is_made_once(monkeypatch):
+    monkeypatch.setenv(apply.RESUME_FILENAME, "Jane_Doe_Resume")
+    _, app_dir = approved_job()
+    first = apply.upload_copy(app_dir)
+    first.write_bytes(b"%PDF-1.5 already there")
+    assert apply.upload_copy(app_dir).read_bytes() == b"%PDF-1.5 already there"
 
 
 def test_blocked_submit_attempts_are_recorded(monkeypatch):
@@ -131,3 +152,60 @@ def test_a_successful_run_records_the_log_path_too(monkeypatch):
     stub_fill(monkeypatch, done=True)
     assert apply.fill_one(job) is True
     assert f"data/apply_{job.id}.log" in (app_dir / "fill_notes.md").read_text()
+
+
+def test_the_cover_letter_is_uploaded_under_its_own_name(monkeypatch):
+    monkeypatch.setenv(apply.COVER_LETTER_FILENAME, "Jane Doe cover letter")
+    job, app_dir = approved_job()
+    store.write(app_dir, "cover_letter.pdf", b"%PDF-1.5 letter")
+    calls = stub_fill(monkeypatch)
+    apply.fill_one(job)
+    assert calls["cover_letter_pdf"] == app_dir / "Jane_Doe_cover_letter.pdf"
+    assert calls["cover_letter_pdf"].read_bytes() == b"%PDF-1.5 letter"
+
+
+def test_no_cover_letter_means_none_is_offered(monkeypatch):
+    job, app_dir = approved_job()
+    calls = stub_fill(monkeypatch)
+    apply.fill_one(job)
+    assert calls["cover_letter_pdf"] is None
+    assert not list(app_dir.glob("*over*")), "no stray copy without a source"
+
+
+def test_errors_are_condensed_to_distinct_one_liners():
+    long = ("File path /x/resume.pdf is not available. To fix: The user must add this file "
+            "path to the available_file_paths parameter. Example: Agent(...)")
+    out = apply.condensed([long, long, long, "Element 4 does not exist.\nline two"])
+    assert out == ["File path /x/resume.pdf is not available. (x3)",
+                   "Element 4 does not exist. line two"]
+
+
+def test_condensed_caps_the_list_and_width():
+    out = apply.condensed([f"error {i} " + "x" * 300 for i in range(8)], limit=3, width=40)
+    assert len(out) == 4 and out[-1] == "… and 5 more, see the log"
+    assert all(len(line) <= 40 for line in out[:3])
+
+
+def test_fill_notes_carry_condensed_errors(monkeypatch):
+    job, app_dir = approved_job()
+    stub_fill(monkeypatch, errors=["same thing. To fix: blah"] * 4, resume_uploaded=True)
+    apply.fill_one(job)
+    notes = (app_dir / "fill_notes.md").read_text()
+    assert notes.count("same thing.") == 1 and "(x4)" in notes and "To fix" not in notes
+
+
+def test_answers_are_archived_and_counted(monkeypatch):
+    from tailor import answers
+
+    job, app_dir = approved_job()
+    calls = stub_fill(monkeypatch, resume_uploaded=True)
+
+    def fake_fill(url, resume, screenshot, **kwargs):
+        kwargs["answerer"].answers.append(answers.Answer("Why here?", "Because.", "m"))
+        return apply.filler.FillResult(ok=True, steps=3, screenshot=None, notes="", done=True,
+                                       resume_uploaded=True)
+
+    monkeypatch.setattr(apply.filler, "fill", fake_fill)
+    apply.fill_one(job)
+    assert "**Why here?**" in (app_dir / "answers.md").read_text()
+    assert "1 question(s) answered" in (app_dir / "fill_notes.md").read_text()

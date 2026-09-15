@@ -2,6 +2,8 @@
 
 import pytest
 
+from browser import guard
+
 from browser.guard import (
     FORBIDDEN_ACTIONS,
     SubmitBlocked,
@@ -68,3 +70,48 @@ def test_javascript_and_enter_key_actions_are_removed():
     """Either would route around every other guard here."""
     assert "evaluate" in FORBIDDEN_ACTIONS, "arbitrary JS would make the guard decorative"
     assert "send_keys" in FORBIDDEN_ACTIONS, "Enter submits a single-input form"
+
+
+@pytest.mark.parametrize("label", [
+    "Will you now or in the future require sponsorship for employment visa status (H-1B, J1, F1, OPT, etc.)?",
+    "If you are currently on a VISA sponsorship, what type of VISA?",
+    "Are you legally authorized to work in the United States?",
+    "Work Authorization",
+    "work_status",
+    "Do you have a work permit?",
+    "Are you on OPT or CPT?",
+    "Citizenship",
+    "Immigration status",
+    "Will you require visa sponsorship?",
+    "Green card holder?",
+])
+def test_visa_and_work_authorisation_questions_are_protected(label):
+    assert guard.describes_protected(label)
+
+
+@pytest.mark.parametrize("label", [
+    "Current Company", "Location (City)", "Yes", "Save and continue", "LinkedIn Profile",
+    "Gender", "opt-in to emails", "Opt out of marketing", "Attach", "Remove file",
+    "Are you optimistic?", "Veteran Status",
+])
+def test_ordinary_labels_are_not_protected(label):
+    assert not guard.describes_protected(label)
+
+
+def test_check_protected_raises_with_guidance():
+    with pytest.raises(guard.ProtectedField, match="Leave it"):
+        guard.check_protected(text="Visa sponsorship required?")
+    guard.check_protected(text="Current Company")  # must not raise
+
+
+def test_a_visa_field_is_refused_through_check_click_too():
+    with pytest.raises(guard.ProtectedField):
+        guard.check_click(aria_label="Are you authorized to work in the US?")
+
+
+@pytest.mark.parametrize("field,expected", [
+    ("cover_letter", True), ("Cover Letter", True), ("resume", False), ("cv", False),
+    ("Resume/CV", False), ("upload-cover-letter", True),
+])
+def test_cover_letter_inputs_are_recognised(field, expected):
+    assert guard.describes_cover_letter(field) is expected
