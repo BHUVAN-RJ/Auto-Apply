@@ -185,7 +185,7 @@
   .state.agent { border-color: var(--purple); color: var(--purple); }
 
   .actions { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; align-items: center; }
-  button.act {
+  button.act, label.act {
     padding: .5rem .9rem; border: 2px solid var(--line);
     background: var(--panel); color: inherit; font: inherit; cursor: pointer;
     text-transform: uppercase; font-size: 11px; letter-spacing: .08em; font-weight: 600;
@@ -194,7 +194,9 @@
   button.act.danger { color: var(--red); border-color: var(--red); }
   button.act:disabled { opacity: .45; cursor: not-allowed; }
   /* The native file control cannot be styled, so the label is the button. */
-  label.act { display: inline-block; }
+  label.act { display: inline-flex; align-items: center; gap: .5rem; line-height: 1.2; }
+  label.act::before { content: "+"; font-size: 15px; font-weight: 800; }
+  label.act:hover { background: var(--ink); color: var(--bg); }
   input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   input[type="file"]:focus-visible + .hint, .filepick:has(+ input:focus-visible) { outline: 2px solid var(--focus); }
 
@@ -337,6 +339,8 @@ async function api(path, options) {
 
 let view = "jobs";
 try { view = localStorage.getItem("view") || "jobs"; } catch (_) {}
+// ?view=profile opens that tab directly (links, and headless checks).
+view = new URLSearchParams(location.search).get("view") || view;
 
 function switchView(name) {
   view = name;
@@ -896,7 +900,7 @@ const Profile = (() => {
       <h3>Anything else to hand over (optional)</h3>
       <textarea id="seed" placeholder="Notes, an old resume, a project README… pasted here or picked below (PDF, text, markdown; several files are fine). Used once to find experiences, then discarded."></textarea>
       <div class="actions">
-        <label class="act filepick" for="seedFile">Choose files</label>
+        <label class="act filepick" for="seedFile">Choose files (PDF, text, markdown)</label>
         <input type="file" id="seedFile" accept=".pdf,.txt,.md,.tex,application/pdf,text/plain,text/markdown" multiple>
         <span class="hint" id="seedNote">No file chosen</span>
       </div>
