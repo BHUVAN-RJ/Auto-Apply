@@ -40,8 +40,13 @@
   header h1 { font-size: 13px; margin: 0; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
   header h1::before { content: "▮ "; color: var(--green); }
   header .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-  header .switch { margin-left: auto; color: var(--muted); font-size: 12px; cursor: pointer;
-                   display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: .05em; }
+  /* Profile status: a fact, not a switch. Grey until one story is written,
+     green after; clicking it opens the Profile tab. */
+  header .pstat { margin-left: auto; display: inline-flex; align-items: center; gap: .5rem; cursor: pointer;
+                  background: none; border: 2px solid var(--muted); color: var(--muted); font: inherit;
+                  font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; padding: .3rem .6rem; }
+  header .pstat::before { content: ""; width: 8px; height: 8px; background: currentColor; }
+  header .pstat[data-on="1"] { border-color: var(--green); color: var(--green); }
   header .tabs { display: flex; gap: 0; }
   header .tabs button { background: none; border: 1px solid var(--line); padding: .3rem .7rem;
                         color: var(--muted); font: inherit; cursor: pointer; text-transform: uppercase;
@@ -188,6 +193,10 @@
   button.act.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
   button.act.danger { color: var(--red); border-color: var(--red); }
   button.act:disabled { opacity: .45; cursor: not-allowed; }
+  /* The native file control cannot be styled, so the label is the button. */
+  label.act { display: inline-block; }
+  input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  input[type="file"]:focus-visible + .hint, .filepick:has(+ input:focus-visible) { outline: 2px solid var(--focus); }
 
   /* The floating decision. Big, bottom right, only on jobs waiting on you. */
   .fab { position: fixed; right: 20px; bottom: 20px; z-index: 10; display: flex; gap: .6rem; align-items: center; }
@@ -255,9 +264,7 @@
     <button id="tabProfile" aria-current="false">Profile</button>
   </div>
   <span class="count" id="count"></span>
-  <label class="switch" title="Tailor with your profile and stories as well as the resume. Off, or on with nothing written yet, means the resume alone.">
-    <input type="checkbox" id="useProfile"> Use profile
-  </label>
+  <button class="pstat" id="profileStat" aria-current="false" hidden></button>
 </header>
 
 <main>
@@ -743,15 +750,27 @@ function escape(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// The profile switch is server state, so a pipeline run started later sees
-// it. Failing to load it leaves the box unchecked but never blocks the page.
+// The profile is used whenever it exists (the models fall back to the
+// resume alone when nothing is written), so the header shows a fact, not
+// a switch. The setting is pinned on for older data/settings.json files.
 api("/settings")
-  .then((data) => { $("useProfile").checked = !!data.use_profile; })
+  .then((data) => data.use_profile || api("/settings", { method: "POST", body: JSON.stringify({ use_profile: true }) }))
   .catch(() => {});
-$("useProfile").addEventListener("change", async (e) => {
-  try { await api("/settings", { method: "POST", body: JSON.stringify({ use_profile: e.target.checked }) }); }
-  catch (err) { alert(`Could not save: ${err.message}`); e.target.checked = !e.target.checked; }
-});
+
+async function loadProfileStat() {
+  const stat = $("profileStat");
+  try {
+    const state = await api("/profile");
+    const written = (state.experiences || []).some((e) => e.documents && e.documents.length);
+    stat.dataset.on = written ? "1" : "0";
+    stat.textContent = written ? "Profile used for tailoring" : "Profile not set up yet";
+    stat.title = written ? "Your stories are read when tailoring. Open the Profile tab to add more."
+      : "Tailoring uses the resume alone until the interview writes a story.";
+    stat.hidden = false;
+  } catch (_) { stat.hidden = true; }
+}
+$("profileStat").onclick = () => switchView("profile");
+loadProfileStat();
 
 api("/review/meta/reject-reasons")
   .then((data) => { reasons = data; })
@@ -762,7 +781,7 @@ api("/review/meta/reject-reasons")
 // or the page is hidden, so a decision in progress is not interrupted.
 setInterval(() => {
   if (!document.hidden && !$("rejectDialog").open) {
-    if (view === "jobs") loadList(); else Profile.poll();
+    if (view === "jobs") { loadList(); loadProfileStat(); } else Profile.poll();
   }
 }, 5000);
 
@@ -877,8 +896,9 @@ const Profile = (() => {
       <h3>Anything else to hand over (optional)</h3>
       <textarea id="seed" placeholder="Notes, an old resume, a project README… pasted here or picked below (PDF, text, markdown; several files are fine). Used once to find experiences, then discarded."></textarea>
       <div class="actions">
+        <label class="act filepick" for="seedFile">Choose files</label>
         <input type="file" id="seedFile" accept=".pdf,.txt,.md,.tex,application/pdf,text/plain,text/markdown" multiple>
-        <span class="hint" id="seedNote"></span>
+        <span class="hint" id="seedNote">No file chosen</span>
       </div>
       <div class="actions">
         <button class="act primary" id="startInterview" ${state.has_resume ? "" : "disabled"}>Start the interview</button>
