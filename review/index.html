@@ -30,6 +30,73 @@
   header .count { color: var(--muted); font-size: .85rem; }
   header .switch { margin-left: auto; color: var(--muted); font-size: .85rem; cursor: pointer;
                    display: flex; align-items: center; gap: 6px; }
+  header .tabs { display: flex; gap: .25rem; margin-left: .5rem; }
+  header .tabs button { background: none; border: 1px solid transparent; border-radius: 6px;
+                        padding: .2rem .6rem; color: var(--muted); font: inherit; cursor: pointer; }
+  header .tabs button[aria-current="true"] { color: var(--ink); border-color: var(--line);
+                                             background: var(--bg); }
+
+  /* Profile tab */
+  .chat { display: flex; flex-direction: column; gap: .6rem; margin: 1rem 0; }
+  .msg { max-width: 72ch; padding: .6rem .9rem; border-radius: 10px; white-space: pre-wrap;
+         line-height: 1.5; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .msg.bot.live::after { content: "▍"; color: var(--muted); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .composer { display: flex; gap: .5rem; align-items: flex-end; position: sticky; bottom: 0;
+              background: var(--bg); padding: .6rem 0 1rem; }
+  .composer textarea { min-height: 3rem; flex: 1; }
+  button.mic { width: 2.8rem; height: 2.8rem; border-radius: 50%; border: 1px solid var(--line);
+               background: var(--panel); font-size: 1.1rem; cursor: pointer; color: inherit; }
+  button.mic.on { background: var(--stop); border-color: var(--stop); color: #fff;
+                  animation: pulse 1.2s ease-in-out infinite; }
+  button.mic.busy { opacity: .5; cursor: progress; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--stop) 25%, transparent); } }
+  .voicebar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center;
+              color: var(--muted); font-size: .82rem; margin: .4rem 0; }
+  .voicebar progress { width: 120px; height: 8px; }
+  nav .cov { color: var(--muted); font-size: .78rem; font-family: ui-monospace, monospace; }
+  nav .cov .ok { color: var(--ok); }
+  nav .cov .pend { color: var(--warn); }
+  nav .cov .err { color: var(--stop); }
+  .doc { padding: .5rem 1rem; line-height: 1.55; max-width: 80ch; }
+  .doc h1 { font-size: 1.15rem; margin: .6rem 0; }
+  .doc h2 { font-size: .95rem; margin: 1rem 0 .3rem; }
+  .doc pre { white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; background: var(--bg);
+             padding: .6rem; border-radius: 6px; }
+  /* The orb: the voice of the interview. Floats over the chat. A clear
+     lens drawn as SVG: the outline is a soft body (see the Bubble module)
+     that ripples with the audio at constant area, the rim is a dark edge
+     with one specular arc and a chromatic fringe, and the colour lives in
+     blurred spots inside. No fill to speak of: the page shows through. */
+  .orbwrap { position: fixed; right: 28px; bottom: 96px; z-index: 20; }
+  .orb { --level: 0; --size: 112px; width: var(--size); height: var(--size); position: relative; cursor: grab;
+         display: grid; place-items: center; touch-action: none; }
+  .orb:active { cursor: grabbing; }
+  .orb svg { position: absolute; inset: -20%; width: 140%; height: 140%; overflow: visible; }
+  .orb .lens { -webkit-backdrop-filter: blur(1.5px) saturate(1.3) brightness(1.04); backdrop-filter: blur(1.5px) saturate(1.3) brightness(1.04);
+               position: absolute; inset: 0; border-radius: 50%; }
+  .orb .spot { mix-blend-mode: screen; opacity: .4; transition: opacity .4s; }
+  .orb.idle .spot { opacity: .22; }
+  .orb.speaking .spot { opacity: calc(.75 * var(--flicker, 1)); transition: none; }
+  .orb.speaking .glow { opacity: calc((.45 + var(--level) * .6) * var(--flicker, 1)); transition: none; }
+  .orb.speaking #orbspec { opacity: calc(.7 + .3 * var(--flicker, 1)); }
+  .orb.speaking #orbsheenpath { opacity: calc(1.2 + var(--level)); }
+  .orb.thinking .spot { opacity: .6; }
+  .orb.thinking .glow { opacity: .35; }
+  .orb.listening .spot { opacity: calc(.5 * var(--flicker, 1)); transition: none; }
+  .orb.listening #orbspec { opacity: calc(.7 + .3 * var(--flicker, 1)); }
+  .orb.listening .glow { opacity: calc((.25 + var(--level) * .6) * var(--flicker, 1)); transition: none; }
+  .orb.paused .spot { opacity: .12; }
+  .orb .glow { opacity: 0; transition: opacity .3s; }
+  .orb.listening .glow, .orb.speaking .glow { opacity: calc(.25 + var(--level) * .6); }
+  .orb.error { filter: grayscale(.9); }
+  .orb .orblabel { position: relative; z-index: 1; color: var(--ink); font-weight: 600; font-size: .8rem; letter-spacing: .02em;
+                   text-shadow: 0 1px 2px rgba(255, 255, 255, .5); user-select: none; }
+  @media (prefers-color-scheme: dark) { .orb .orblabel { text-shadow: 0 1px 3px rgba(0, 0, 0, .7); } }
+  .doctabs { display: flex; gap: .25rem; margin: .8rem 0; }
+  .doctabs button[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   main { display: grid; grid-template-columns: 290px 1fr; min-height: calc(100vh - 57px); }
   @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
 
@@ -118,6 +185,10 @@
 
 <header>
   <h1>Job Autopilot</h1>
+  <div class="tabs" role="tablist">
+    <button id="tabJobs" aria-current="true">Jobs</button>
+    <button id="tabProfile" aria-current="false">Profile</button>
+  </div>
   <span class="count" id="count"></span>
   <label class="switch" title="Feed base/applicant.md and base/stories/ to the models. Off, or on with nothing written, means the resume alone.">
     <input type="checkbox" id="useProfile"> Use profile
@@ -186,7 +257,21 @@ async function api(path, options) {
   return res.json();
 }
 
+let view = "jobs";
+try { view = localStorage.getItem("view") || "jobs"; } catch (_) {}
+
+function switchView(name) {
+  view = name;
+  try { localStorage.setItem("view", name); } catch (_) {}
+  $("tabJobs").setAttribute("aria-current", name === "jobs");
+  $("tabProfile").setAttribute("aria-current", name === "profile");
+  if (name === "jobs") { Profile.leave(); loadList(); } else { Profile.open(); }
+}
+$("tabJobs").onclick = () => switchView("jobs");
+$("tabProfile").onclick = () => switchView("profile");
+
 async function loadList() {
+  if (view !== "jobs") return;
   jobs = await api("/jobs");
   const waiting = jobs.filter((j) => j.status === "awaiting_review" || j.status === "filled");
   $("count").textContent = jobs.length
@@ -231,6 +316,7 @@ function reasonLabel(value) {
 }
 
 async function show(id) {
+  if (view !== "jobs") return;
   current = id;
   for (const button of $("list").querySelectorAll("button")) {
     button.setAttribute("aria-current", button.dataset.id === id);
@@ -328,6 +414,9 @@ async function show(id) {
 
     ${data.answers ? `<h3>Free-form answers typed into the form</h3>
       <div class="card prose">${markdown(data.answers)}</div>` : ""}
+
+    ${data.stories_used && data.stories_used.length ? `<h3>Stories the tailor read</h3>
+      <div class="card prose"><p>${data.stories_used.map(escape).join(", ")}</p></div>` : ""}
 
     ${data.artifacts.includes("fill_screenshot.png") ? `<h3>The filled form</h3>
       <img class="shot" src="/review/${id}/file/fill_screenshot.png"
@@ -572,11 +661,948 @@ $("useProfile").addEventListener("change", async (e) => {
 api("/review/meta/reject-reasons")
   .then((data) => { reasons = data; })
   .catch(() => { reasons = [{ value: "other", label: "Other" }]; })
-  .then(loadList);
+  .then(() => switchView(view));
 
 // Refresh while a pipeline run is in flight, but never while a dialog is open
 // or the page is hidden, so a decision in progress is not interrupted.
 setInterval(() => {
-  if (!document.hidden && !$("rejectDialog").open) loadList();
+  if (!document.hidden && !$("rejectDialog").open) {
+    if (view === "jobs") loadList(); else Profile.poll();
+  }
 }, 5000);
+
+// ---------------------------------------------------------------- Profile --
+// The interviewer. Text goes over SSE; voice is optional on both ends and
+// falls back to the browser's own speech APIs when the local binaries are
+// not there. The interview loop is the same either way.
+const Profile = (() => {
+  let state = null;       // GET /profile
+  let voice = null;       // GET /voice/status
+  let busy = false;       // a turn is streaming
+  let viewing = null;     // {slug, name} when reading a document
+  // The chat is the voice: every reply is spoken, the mic reopens after
+  // each one, and the transcript is the same text either way. The orb
+  // pauses it; typing still works while paused.
+  const speak = true;
+  let paused = false;
+  let listenNext = false; // reopen the mic once the reply has been spoken
+
+  async function open() {
+    viewing = null;
+    await Promise.all([refresh(), refreshVoice()]);
+    render();
+    greet();
+  }
+
+  // Leaving the chat: nothing keeps talking or listening behind another view.
+  function leave() {
+    listenNext = false;
+    Voice.interrupt();
+    Voice.cancelListening();
+  }
+
+  // Entering the chat: the open question is spoken, then the mic opens.
+  function greet() {
+    if (!state || state.error || viewing || state.phase === "new" || busy || paused) return;
+    const last = [...state.transcript].reverse().find((m) => m.role === "assistant");
+    listenNext = true;
+    if (last) say(last.content); else speechDone();
+  }
+
+  async function refresh() {
+    try { state = await api("/profile"); } catch (err) { state = { error: err.message }; }
+  }
+  async function refreshVoice() {
+    try { voice = await api("/voice/status"); } catch (_) { voice = null; }
+  }
+
+  // Cheap poll: children generation and downloads finish in the background.
+  async function poll() {
+    if (busy || view !== "profile") return;
+    const pending = state?.experiences?.some((e) => e.children === "pending");
+    const downloading = voice?.downloading;
+    if (!pending && !downloading) return;
+    await Promise.all([pending ? refresh() : null, downloading ? refreshVoice() : null]);
+    renderNav();
+    renderVoiceBar();
+  }
+
+  function render() {
+    renderNav();
+    if (!state) return;
+    if (state.error) {
+      $("detail").innerHTML = `<div class="banner stop">${escape(state.error)}</div>`;
+      return;
+    }
+    if (viewing) return renderDocument();
+    if (state.phase === "new") { leave(); return renderStart(); }
+    renderChat();
+  }
+
+  function renderNav() {
+    if (!state || !state.experiences) { $("list").innerHTML = ""; return; }
+    const groups = [["role", "Roles"], ["project", "Projects"]];
+    let html = "";
+    for (const [kind, heading] of groups) {
+      const items = state.experiences.filter((e) => e.kind === kind);
+      if (!items.length) continue;
+      html += `<div class="group">${heading} · ${items.length}</div>`;
+      html += items.map((e) => `
+        <button data-slug="${escape(e.slug)}" aria-current="${viewing ? viewing.slug === e.slug : e.slug === state.current}">
+          <div class="role">${escape(e.title)}</div>
+          <div class="cov">${coverage(e)}</div>
+        </button>`).join("");
+    }
+    $("list").innerHTML = html;
+    for (const button of $("list").querySelectorAll("button")) {
+      button.onclick = () => openDocument(button.dataset.slug, "main.md");
+    }
+    $("count").textContent = state.experiences.length
+      ? `${state.experiences.filter((e) => e.closed).length}/${state.experiences.length} experiences done`
+      : "";
+  }
+
+  function coverage(e) {
+    const cov = e.total ? `${e.covered}/${e.total} covered` : "not started";
+    if (!e.closed) return e.slug === state.current ? `${cov} · asking now` : cov;
+    const child = { none: "", pending: '<span class="pend">writing documents…</span>',
+      ready: '<span class="ok">documents ready</span>',
+      error: '<span class="err">documents failed</span>' }[e.children] || "";
+    return `${cov}${child ? " · " + child : ""}`;
+  }
+
+  function renderStart() {
+    $("detail").innerHTML = `
+      <div class="head"><h2>Profile interview</h2></div>
+      <p>I read your resume and ask about each role and project, one at a time, the way
+      an interviewer would. What you tell me becomes one document per experience: the tailor
+      swaps in the right story for each posting, and you get a STAR write-up to reread before
+      interviews. Stop any time; the next question picks up where you left off.</p>
+      ${state.has_resume ? "" : `<div class="banner stop">No <code>base/resume.tex</code> found. The interview starts from the resume.</div>`}
+      <h3>Anything else to hand over (optional)</h3>
+      <textarea id="seed" placeholder="Notes, an old resume, a project README… pasted here or picked below (PDF, text, markdown; several files are fine). Used once to find experiences, then discarded."></textarea>
+      <div class="actions">
+        <input type="file" id="seedFile" accept=".pdf,.txt,.md,.tex,application/pdf,text/plain,text/markdown" multiple>
+        <span class="hint" id="seedNote"></span>
+      </div>
+      <div class="actions">
+        <button class="act primary" id="startInterview" ${state.has_resume ? "" : "disabled"}>Start the interview</button>
+        <span class="hint">Reads the resume with ${escape(state.model)}.</span>
+      </div>`;
+    // Files go to the server for text extraction (PDFs need pypdf); each
+    // lands in the box under its own heading so the model knows what is what.
+    $("seedFile").onchange = async (event) => {
+      const files = [...event.target.files];
+      const note = $("seedNote");
+      note.textContent = `Reading ${files.length} file${files.length === 1 ? "" : "s"}…`;
+      const failed = [];
+      for (const file of files) {
+        try {
+          const res = await fetch("/profile/seed-file", { method: "POST",
+            headers: { "X-Filename": file.name, "Content-Type": "application/octet-stream" }, body: file });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+          $("seed").value = [$("seed").value.trim(), `## ${file.name}\n\n${body.text.trim()}`]
+            .filter(Boolean).join("\n\n");
+        } catch (err) { failed.push(`${file.name}: ${err.message}`); }
+      }
+      const total = $("seed").value.length;
+      note.textContent = (failed.length ? failed.join("; ") + ". " : "")
+        + `${total.toLocaleString()} characters${total > 40000 ? " (only the first 40,000 are used)" : ""}.`;
+      event.target.value = "";
+    };
+    $("startInterview").onclick = async () => {
+      const button = $("startInterview");
+      button.disabled = true; button.textContent = "Reading the resume…";
+      try {
+        const result = await api("/profile/start", { method: "POST", body: JSON.stringify({ seed: $("seed").value }) });
+        state = result.status;
+        render();
+        listenNext = true;
+        say(result.message);
+      } catch (err) { alert(err.message); button.disabled = false; button.textContent = "Start the interview"; }
+    };
+  }
+
+  function renderChat() {
+    const title = state.phase === "open" ? "All experiences covered — tell me anything new"
+      : state.phase === "setup" ? "Before we start"
+      : (state.experiences.find((e) => e.slug === state.current) || {}).title || "Interview";
+    $("detail").innerHTML = `
+      <div class="head"><h2>${escape(title)}</h2>
+        <span class="co">${escape({ setup: "checking the list", interviewing: "interviewing", open: "listening for updates" }[state.phase] || "")}</span></div>
+      <div class="voicebar" id="voicebar"></div>
+      <div class="chat" id="chat">${state.transcript.map((m) =>
+        `<div class="msg ${m.role === "user" ? "user" : "bot"}">${escape(m.content)}</div>`).join("")}</div>
+      <div class="composer">
+        <textarea id="say" placeholder="Talk, or type here. Enter sends; Shift+Enter is a new line."></textarea>
+        <button class="act primary" id="send">Send</button>
+      </div>
+      ${orbHtml()}`;
+    renderVoiceBar();
+    $("send").onclick = () => send($("say").value);
+    $("say").onkeydown = (event) => {
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send($("say").value); }
+    };
+    wireOrb();
+    scrollChat();
+  }
+
+  function orbHtml() {
+    return `<div class="orbwrap" id="orbwrap">
+      <div class="orb ${paused ? "paused" : "idle"}" id="orb" title="${paused ? "Tap to resume" : "Tap to pause"}">
+        <div class="lens" id="orblens"></div>
+        ${Bubble.svg()}
+        <span class="orblabel" id="orblabel">${paused ? "Paused" : ""}</span></div></div>`;
+  }
+
+  function wireOrb() {
+    Voice.setHandsFree(true);
+    Bubble.attach($("orb"));
+    placeOrb();
+    dragOrb($("orb"), $("orbwrap"));
+  }
+
+  // The orb goes where it was last dropped, kept inside the window.
+  window.addEventListener("resize", () => { if ($("orbwrap")) placeOrb(); });
+  function placeOrb() {
+    const wrap = $("orbwrap");
+    if (!wrap) return;
+    let pos = null;
+    try { pos = JSON.parse(localStorage.getItem("orbpos") || "null"); } catch (_) {}
+    if (!pos) return;
+    const size = wrap.offsetWidth || 112;
+    const x = Math.max(0, Math.min(window.innerWidth - size, pos.x)), y = Math.max(0, Math.min(window.innerHeight - size, pos.y));
+    Object.assign(wrap.style, { left: `${x}px`, top: `${y}px`, right: "auto", bottom: "auto" });
+  }
+
+  // Drag the bubble anywhere; a press that barely moves is the pause tap.
+  // While it moves the trailing side swells, like something pushed through
+  // air, and it settles with a little wobble on drop.
+  function dragOrb(orb, wrap) {
+    let start = null, last = null, moved = false;
+    orb.onpointerdown = (event) => {
+      if (event.button !== 0) return;
+      const rect = wrap.getBoundingClientRect();
+      start = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      last = { x: event.clientX, y: event.clientY, t: performance.now() };
+      moved = false;
+      orb.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+    orb.onpointermove = (event) => {
+      if (!start) return;
+      const dx = event.clientX - start.x, dy = event.clientY - start.y;
+      if (!moved && Math.hypot(dx, dy) < 6) return;
+      moved = true;
+      const size = wrap.offsetWidth;
+      const x = Math.max(0, Math.min(window.innerWidth - size, start.left + dx));
+      const y = Math.max(0, Math.min(window.innerHeight - size, start.top + dy));
+      Object.assign(wrap.style, { left: `${x}px`, top: `${y}px`, right: "auto", bottom: "auto" });
+      const vx = event.clientX - last.x, vy = event.clientY - last.y, speed = Math.hypot(vx, vy);
+      if (speed > 1) Bubble.push(Math.atan2(-vy, -vx), Math.min(1.2, speed * 0.08));
+      last = { x: event.clientX, y: event.clientY, t: performance.now() };
+    };
+    orb.onpointerup = orb.onpointercancel = (event) => {
+      if (!start) return;
+      orb.releasePointerCapture?.(event.pointerId);
+      const wasDrag = moved;
+      start = null;
+      if (!wasDrag) { togglePause(); return; }
+      const rect = wrap.getBoundingClientRect();
+      try { localStorage.setItem("orbpos", JSON.stringify({ x: rect.left, y: rect.top })); } catch (_) {}
+      Bubble.push(Math.random() * Math.PI * 2, 0.9);  // the landing wobble
+    };
+  }
+
+  // Tap: pause everything and go red; tap again: back to listening.
+  function togglePause() {
+    paused = !paused;
+    if (paused) {
+      listenNext = false;
+      Voice.interrupt();
+      Voice.cancelListening();
+      orb("paused", 0);
+    } else {
+      orb("idle", 0);
+      Voice.listen();
+    }
+  }
+
+  // Called by Voice: the orb mirrors what the audio is doing.
+  function orb(stateName, level) {
+    const el = $("orb");
+    if (!el) return;
+    if (paused && stateName !== "paused") stateName = "paused";
+    if (stateName) {
+      el.className = `orb ${stateName}`;
+      el.title = stateName === "paused" ? "Tap to resume" : "Tap to pause";
+      const label = $("orblabel");
+      if (label) label.textContent = stateName === "paused" ? "Paused" : "";
+    }
+    if (level != null) el.style.setProperty("--level", Math.min(1, level).toFixed(2));
+    Bubble.set(stateName || null, level);
+  }
+  // The transcript is the only text; the orb carries none.
+  function caption() {}
+
+  // The reply has been spoken (or there was nothing to speak): reopen the mic.
+  function speechDone() {
+    if (Voice.isListening() || Voice.isPending()) return;
+    if (!listenNext || busy || paused || view !== "profile") { if (!busy) orb("idle", 0); return; }
+    listenNext = false;
+    Voice.listen({ quiet: true });
+  }
+
+  // Resolves once no turn is streaming. An interruption transcribed while
+  // the reply is still arriving waits here rather than being dropped.
+  function idle() {
+    return new Promise((resolve) => {
+      const tick = () => (busy ? setTimeout(tick, 100) : resolve());
+      tick();
+    });
+  }
+
+  function renderVoiceBar() {
+    const bar = $("voicebar");
+    if (!bar) return;
+    if (!voice) { bar.innerHTML = `<span>Voice status unavailable.</span>`; return; }
+    const stt = voice.stt.ready ? "local whisper" : Voice.browserSTT() ? "browser speech (local whisper not set up)" : "unavailable";
+    const names = { fish: "Fish Audio", kokoro: "Kokoro", piper: "Piper", say: "system voice" };
+    const tts = !voice.tts.ready ? "browser voice"
+      : voice.tts.backend === "fish" ? `Fish Audio ${escape(voice.tts.fish.model)}`
+      : `local ${names[voice.tts.backend] || voice.tts.backend}`;
+    const why = voice.tts.kokoro && voice.tts.backend !== "kokoro" ? `<span title="${escape(voice.tts.kokoro)}">(Kokoro: ${escape(voice.tts.kokoro)})</span>` : "";
+    let setup = "";
+    if (voice.downloading) {
+      setup = Object.entries(voice.progress).map(([name, p]) => p.state === "downloading" && p.total
+        ? `<span>${escape(name)} <progress value="${p.done}" max="${p.total}"></progress></span>`
+        : `<span>${escape(name)}: ${escape(p.state)}${p.error ? " — " + escape(p.error) : ""}</span>`).join("");
+    } else if (voice.missing.length) {
+      setup = `<button class="act" id="voiceSetup">Download the speech model (${voice.missing.length} file${voice.missing.length === 1 ? "" : "s"})</button>`;
+    }
+    const brew = voice.stt.install ? `<span>whisper.cpp missing: <code>${escape(voice.stt.install)}</code></span>` : "";
+    bar.innerHTML = `<span>Mic: ${stt}</span><span>Replies: ${tts} ${why}</span>${setup}${brew}`;
+    if ($("voiceSetup")) $("voiceSetup").onclick = async () => {
+      voice = await api("/voice/setup", { method: "POST", body: "{}" });
+      renderVoiceBar();
+    };
+  }
+
+  function scrollChat() {
+    const chat = $("chat");
+    if (chat) chat.lastElementChild?.scrollIntoView({ block: "end" });
+  }
+
+  function bubble(cls, text) {
+    const div = document.createElement("div");
+    div.className = `msg ${cls}`;
+    div.textContent = text;
+    $("chat").appendChild(div);
+    scrollChat();
+    return div;
+  }
+
+  // One turn: post the message, render the SSE events as they come.
+  async function send(text) {
+    text = (text || "").trim();
+    if (!text || busy || !$("chat")) return;
+    busy = true;
+    $("say").value = "";
+    $("send").disabled = true;
+    Voice.stopSpeaking();
+    bubble("user", text);
+    let live = bubble("bot live", "");
+    orb("thinking", 0);
+    caption(text);
+    let captionText = "";
+    const speaker = Voice.sentenceSpeaker(speak && !paused);  // paused is text only, both ways
+    try {
+      const res = await fetch("/profile/turn", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let index;
+        while ((index = buffer.indexOf("\n\n")) >= 0) {
+          const line = buffer.slice(0, index).trim();
+          buffer = buffer.slice(index + 2);
+          if (!line.startsWith("data: ")) continue;
+          const event = JSON.parse(line.slice(6));
+          if (event.type === "delta") { live.textContent += event.text; captionText += event.text; caption(captionText); speaker.feed(event.text, event.part, event.spoken); scrollChat(); }
+          else if (event.type === "replace") { speaker.reset(); live.textContent = event.text; captionText = event.text; caption(captionText); speaker.feed(event.text, "ask", true); }
+          else if (event.type === "break") { live.classList.remove("live"); speaker.flush(); live = bubble("bot live", ""); captionText = ""; }
+          else if (event.type === "error") { live.classList.remove("live"); live.textContent = live.textContent || `Error: ${event.message}`; live.classList.add("stop"); orb("error", 0); caption(`Error: ${event.message}`); }
+          else if (event.type === "experience" || event.type === "phase") { await refresh(); renderNav(); }
+        }
+      }
+      speaker.flush();
+    } catch (err) {
+      live.textContent = `Error: ${err.message}`;
+    } finally {
+      live.classList.remove("live");
+      if (!live.textContent) live.remove();
+      busy = false;
+      await refresh();
+      // The heading follows the phase; the transcript on screen is already right.
+      const heading = $("detail").querySelector(".head h2");
+      const current = state.experiences.find((e) => e.slug === state.current);
+      if (heading) heading.textContent = state.phase === "open" ? "All experiences covered — tell me anything new"
+        : current ? current.title : heading.textContent;
+      renderNav();
+      if ($("send")) $("send").disabled = false;
+      if (!live.classList.contains("stop") && !paused) {
+        // The mic reopens once the reply has been spoken.
+        listenNext = true;
+        if (!Voice.isSpeaking()) speechDone();
+      } else if (!Voice.isSpeaking()) { Voice.stopWatching(); orb("idle", 0); }
+    }
+  }
+
+  function say(text) { const s = Voice.sentenceSpeaker(true); s.feed(text); s.flush(); }
+
+  async function openDocument(slug, name) {
+    leave();
+    viewing = { slug, name };
+    renderNav();
+    renderDocument();
+  }
+
+  async function renderDocument() {
+    const { slug, name } = viewing;
+    const exp = state.experiences.find((e) => e.slug === slug) || { title: slug, documents: [] };
+    const tabs = [["main.md", "In your words"], ["tailor.md", "For the tailor"], ["star.md", "Interview prep"]];
+    $("detail").innerHTML = `
+      <div class="head"><h2>${escape(exp.title)}</h2><span class="co">${escape(exp.kind || "")}</span></div>
+      <div class="actions">
+        <button class="act" id="backToChat">← Back to the interview</button>
+        ${exp.closed ? `<button class="act" id="regen">Regenerate documents</button>` : ""}
+        ${exp.children === "error" ? `<span class="hint">${escape(exp.children_error)}</span>` : ""}
+      </div>
+      <div class="doctabs">${tabs.map(([n, label]) =>
+        `<button class="act" data-name="${n}" aria-current="${n === name}" ${exp.documents.includes(n) ? "" : "disabled"}>${label}</button>`).join("")}</div>
+      <div class="card doc" id="doc">${exp.documents.includes(name) ? "loading…"
+        : exp.closed ? "Not written yet. Documents follow the interview by a minute or two."
+        : "Written when this experience's interview closes."}</div>`;
+    $("backToChat").onclick = () => { viewing = null; render(); };
+    if ($("regen")) $("regen").onclick = async () => {
+      try { await api(`/profile/experiences/${slug}/regenerate`, { method: "POST", body: "{}" }); await refresh(); renderNav(); }
+      catch (err) { alert(err.message); }
+    };
+    for (const button of $("detail").querySelectorAll(".doctabs button")) {
+      button.onclick = () => openDocument(slug, button.dataset.name);
+    }
+    if (exp.documents.includes(name)) {
+      const text = await fetch(`/profile/experiences/${slug}/${name}`).then((r) => r.text());
+      if ($("doc") && viewing?.slug === slug && viewing?.name === name) $("doc").innerHTML = docMarkdown(text);
+    }
+  }
+
+  function docMarkdown(text) {
+    return escape(text)
+      .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+      .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+      .replace(/^### (.+)$/gm, "<h2>$1</h2>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>")
+      .replace(/(?:<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`)
+      .replace(/```[a-z]*\n([\s\S]*?)```/g, "<pre>$1</pre>")
+      .replace(/\n{2,}/g, "<p>");
+  }
+
+  return { open, leave, poll, send, orb, caption, speechDone, idle, get voice() { return voice; },
+           get paused() { return paused; } };
+})();
+
+// ----------------------------------------------------------------- Bubble --
+// The orb's shape and colour, as physics rather than keyframes. Sixteen
+// points on a ring, each a damped spring on its radius; the audio level
+// kicks random points outward (a gas pushed from inside), the springs pull
+// back, neighbours couple so a kick spreads as a ripple, and the offsets
+// are kept zero-mean so the ring itself stays a firm circle of radius R:
+// it ripples, it never grows or shrinks. The path is rebuilt each frame
+// and drives the rim, the clip for the colour spots, and the lens clip.
+const Bubble = (() => {
+  // The outline is a circle of radius R plus three standing-wave modes
+  // (two, three and four lobes), each a damped spring on its amplitude.
+  // A kick from the audio excites a mode at a random phase; the springs
+  // pull it back. Sums of low modes are smooth by construction (no spikes,
+  // zero mean), and the total amplitude is capped, so the ring reads as a
+  // firm circle that bounces rather than a shape that changes.
+  const N = 24, R = 50, K = 0.06, DAMP = 0.9, MAX = 0.035;
+  const modes = [2, 3, 4];
+  const amp = new Float32Array(modes.length), vel = new Float32Array(modes.length), phase = new Float32Array(modes.length);
+  let el = null, state = "idle", level = 0, raf = 0, t = 0, flicker = 1;
+  const spots = [
+    { c: "#ff8fd0", a: 0.0, d: 26, r: 22 }, { c: "#9b8cff", a: 2.1, d: 28, r: 24 },
+    { c: "#78e8ff", a: 4.2, d: 24, r: 22 }, { c: "#ffd27a", a: 3.1, d: 32, r: 16 },
+  ];
+  const svg = () => `<svg viewBox="-70 -70 140 140" aria-hidden="true">
+    <defs>
+      <clipPath id="orbclip"><path id="orbclippath" d=""/></clipPath>
+      <filter id="orbblur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9"/></filter>
+      <linearGradient id="orbrim" x1="0" y1="0" x2="0.4" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".22" stop-color="#fff" stop-opacity=".25"/>
+        <stop offset=".55" stop-color="#000" stop-opacity=".35"/><stop offset="1" stop-color="#000" stop-opacity=".6"/></linearGradient>
+      <linearGradient id="orbfringe" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff7ad9" stop-opacity=".0"/><stop offset=".3" stop-color="#ff7ad9" stop-opacity=".7"/>
+        <stop offset=".5" stop-color="#7ad9ff" stop-opacity=".7"/><stop offset=".7" stop-color="#b08cff" stop-opacity=".6"/>
+        <stop offset="1" stop-color="#ffd27a" stop-opacity=".0"/></linearGradient>
+      <linearGradient id="orbfringegreen" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#5ef0b0" stop-opacity=".0"/><stop offset=".3" stop-color="#9dffcf" stop-opacity=".8"/>
+        <stop offset=".6" stop-color="#5ef0b0" stop-opacity=".8"/><stop offset="1" stop-color="#5ef0b0" stop-opacity=".0"/></linearGradient>
+      <radialGradient id="orbglass" cx=".5" cy=".5" r=".5">
+        <stop offset="0" stop-color="#fff" stop-opacity=".0"/><stop offset=".72" stop-color="#fff" stop-opacity=".03"/>
+        <stop offset=".9" stop-color="#000" stop-opacity=".12"/><stop offset="1" stop-color="#000" stop-opacity=".4"/></radialGradient>
+      <radialGradient id="orbsheen" cx=".5" cy=".12" r=".55">
+        <stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".45" stop-color="#fff" stop-opacity=".06"/>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <radialGradient id="orbglowg" cx=".5" cy=".5" r=".5">
+        <stop offset=".6" stop-color="var(--orbglow, #8fb0ff)" stop-opacity=".45"/><stop offset="1" stop-color="var(--orbglow, #8fb0ff)" stop-opacity="0"/></radialGradient>
+    </defs>
+    <circle class="glow" id="orbglow" r="70" fill="url(#orbglowg)"/>
+    <g clip-path="url(#orbclip)">
+      <g filter="url(#orbblur)">${spots.map((s, i) => `<circle class="spot" id="orbspot${i}" r="${s.r}" fill="${s.c}"/>`).join("")}</g>
+      <path id="orbfill" d="" fill="url(#orbglass)"/>
+      <path id="orbsheenpath" d="" fill="url(#orbsheen)"/>
+    </g>
+    <path id="orbfringepath" d="" fill="none" stroke="url(#orbfringe)" stroke-width="1.6"/>
+    <path id="orbrimpath" d="" fill="none" stroke="url(#orbrim)" stroke-width="3.2"/>
+    <path id="orbspec" d="" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.4" stroke-linecap="round"/>
+    <path id="orbspec2" d="" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="1.4" stroke-linecap="round"/>
+  </svg>`;
+
+  function attach(node) {
+    el = node;
+    if (!raf) raf = requestAnimationFrame(frame);
+  }
+  // A push from outside at `angle` (radians, screen axes): the two-lobe
+  // mode lines up with it so the bubble squashes along the travel axis.
+  function push(angle, amount) {
+    phase[0] = -2 * angle;
+    vel[0] += amount * 0.012;
+    vel[2] += amount * 0.004;
+  }
+  // An internal kick: one random mode, random phase.
+  function kick(amount) {
+    const m = (Math.random() * modes.length) | 0;
+    phase[m] = Math.random() * Math.PI * 2;
+    vel[m] += amount * 0.012 * (Math.random() < 0.3 ? -1 : 1);
+  }
+  function set(name, lv) {
+    if (name) state = name;
+    if (lv != null) level = Math.min(1, lv);
+    if (el) el.style.setProperty("--orbglow", state === "listening" ? "#5ef0b0" : state === "speaking" ? "#ffb070" : "#8fb0ff");
+  }
+
+  function frame() {
+    raf = 0;
+    if (!el || !el.isConnected) { el = null; return; }
+    t += 1;
+    const live = state === "listening" || state === "speaking";
+    // Kicks: the level excites a mode now and then; idle gets a whisper
+    // so it never looks frozen; paused gets nothing.
+    if (state !== "paused") {
+      const amount = live ? 0.3 + level * 0.9 : 0.05;
+      if (Math.random() < (live ? 0.06 + level * 0.14 : 0.02)) kick(amount * (0.5 + Math.random()));
+    }
+    let total = 0;
+    for (let m = 0; m < modes.length; m++) {
+      vel[m] = (vel[m] - K * amp[m]) * DAMP;
+      amp[m] = (amp[m] + vel[m]) * (live ? 0.985 : 0.85);  // a slow leak; fast settle when not live
+      if (!live) vel[m] *= 0.7;
+      total += Math.abs(amp[m]);
+    }
+    if (total > MAX) for (let m = 0; m < modes.length; m++) amp[m] *= MAX / total;
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      let ripple = 0;
+      for (let m = 0; m < modes.length; m++) ripple += amp[m] * Math.cos(modes[m] * a + phase[m]);
+      const rad = R * (1 + ripple);
+      pts.push([Math.cos(a) * rad, Math.sin(a) * rad]);
+    }
+    const d = smooth(pts);
+    for (const id of ["orbclippath", "orbfill", "orbsheenpath", "orbrimpath", "orbfringepath"]) { const n = el.querySelector("#" + id); if (n) n.setAttribute("d", d); }
+    // Speculars: a bright arc upper left, a faint one lower right.
+    const spec = pts.slice(13, 19).map(([x, y]) => [x * 0.9, y * 0.9]);
+    el.querySelector("#orbspec")?.setAttribute("d", smooth(spec, false));
+    const spec2 = pts.slice(2, 6).map(([x, y]) => [x * 0.9, y * 0.9]);
+    el.querySelector("#orbspec2")?.setAttribute("d", smooth(spec2, false));
+    // Live states flicker like a candle (smoothed noise plus the level), so
+    // the light inside and the glow shimmer. Listening is green only; any
+    // other state has no green.
+    const listening = state === "listening";
+    el.querySelector("#orbfringepath")?.setAttribute("stroke", listening ? "url(#orbfringegreen)" : "url(#orbfringe)");
+    if (live) {
+      flicker = flicker * 0.7 + (0.5 + Math.random() * 0.5 + level * 0.4) * 0.3;
+      el.style.setProperty("--flicker", flicker.toFixed(2));
+    } else el.style.removeProperty("--flicker");
+    // The lens clip follows the outline (percent path is not available, so
+    // scale the SVG coordinates to the element box).
+    const lens = el.querySelector("#orblens");
+    if (lens) lens.style.clipPath = `path("${smooth(pts.map(([x, y]) => [(x + 50) * 1.12, (y + 50) * 1.12]))}")`;
+    // Colour spots drift slowly; when speaking two orbit and two trace a
+    // figure of eight through the middle, so the motion is not one wheel.
+    // Thinking: all four chase round the rim fast, one way, a spinner.
+    const speaking = state === "speaking", thinking = state === "thinking";
+    const spin = speaking ? t * 0.03 : thinking ? t * 0.11 : t * 0.006;
+    spots.forEach((s, i) => {
+      const n = el.querySelector("#orbspot" + i);
+      if (!n) return;
+      const a = thinking ? spin + (i / spots.length) * Math.PI * 2 : s.a + spin * (i % 2 ? -1 : 1);
+      const dist = thinking ? 30 : s.d * (listening ? 0.8 : 1);
+      let x = Math.cos(a) * dist, y = Math.sin(a) * dist;
+      if (speaking && i >= 2) { x = Math.cos(a) * dist * 1.1; y = Math.sin(a) * Math.cos(a) * dist * 1.1; if (i === 3) [x, y] = [y, x]; }
+      n.setAttribute("cx", x.toFixed(1));
+      n.setAttribute("cy", y.toFixed(1));
+      if (listening) n.setAttribute("fill", ["#5ef0b0", "#8ef5c8", "#3ddc97", "#bfffe0"][i]);
+      else n.setAttribute("fill", s.c);
+    });
+    raf = requestAnimationFrame(frame);
+  }
+
+  // Catmull-Rom through the points as cubic Beziers; closed by default.
+  function smooth(pts, closed = true) {
+    const n = pts.length;
+    const at = (i) => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
+    let d = `M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`;
+    const last = closed ? n : n - 1;
+    for (let i = 0; i < last; i++) {
+      const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += `C${c1[0].toFixed(2)},${c1[1].toFixed(2)} ${c2[0].toFixed(2)},${c2[1].toFixed(2)} ${p2[0].toFixed(2)},${p2[1].toFixed(2)}`;
+    }
+    return closed ? d + "Z" : d;
+  }
+
+  return { svg, attach, set, push, kick };
+})();
+
+// ------------------------------------------------------------------ Voice --
+// Mic in, speech out. Local first (whisper.cpp / Piper on 8787), browser Web
+// Speech API when a half is not set up. Recording is raw PCM encoded to a
+// 16 kHz WAV here, so the server needs no ffmpeg.
+const Voice = (() => {
+  let recording = null;   // {ctx, source, processor, chunks, rate, stream}
+  let recognition = null; // browser SpeechRecognition
+  let playing = [];       // queue of Audio for local TTS
+  let current = null;
+  let handsFree = false;  // voice mode: stop on silence, reopen after replies
+  let outCtx = null;      // AudioContext + analyser for the speaking level
+  let analyser = null;
+  let muted = false;      // interrupted: drop the rest of this reply's sentences
+  let pending = false;    // an interruption is being transcribed and sent
+
+  // Silence detection, hands-free only. RMS above SPEECH counts as talking;
+  // SILENCE_MS of quiet after talking ends the turn. Before any talking the
+  // mic stays open indefinitely, keeping only the last BARGE_KEEP_MS.
+  const SPEECH = 0.015, SILENCE_MS = 1100;
+  // Barge-in: while a reply plays the mic stays open in watch mode. A cough
+  // or a keyboard is short and broadband, a fan is low; a voice is louder
+  // than the speaker bleed (echo cancellation takes most of it), sits in
+  // the 300-3400 Hz band and lasts. All three for BARGE_MS interrupt.
+  // Off by default: the loudness-and-band gate cannot tell music from a
+  // voice, and a song in the room flipped replies on and off. The tap
+  // interrupts. A real voice detector (Silero VAD) is what turning this
+  // back on needs.
+  const BARGE_IN = false;
+  const BARGE_RMS = 0.04, BARGE_BAND = [300, 3400], BARGE_SHARE = 0.55, BARGE_MS = 350, BARGE_KEEP_MS = 600;
+
+  const browserSTT = () => !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const setHandsFree = (on) => { handsFree = !!on; };
+  const isSpeaking = () => !!current || playing.length > 0 || (window.speechSynthesis?.speaking ?? false);
+  const isListening = () => !!(recording && !recording.watch) || !!recognition;
+  const isPending = () => pending;
+
+  // Start listening; used by the greeting, the orb, and the hands-free loop.
+  async function listen({ quiet = false } = {}) {
+    if (recording?.watch) { engage(); return; }
+    if (recording || recognition) return;
+    stopSpeaking();
+    const local = Profile.voice?.stt?.ready;
+    try {
+      if (local) await startLocal(); else if (browserSTT()) startBrowser();
+      else if (quiet) return;
+      else return alert("No speech input available: set up local voice, or use Chrome for browser speech.");
+      $("mic")?.classList.add("on");
+      Profile.orb("listening", 0);
+    } catch (err) {
+      // Auto-start with no gesture or no grant: stay idle, the tap asks again.
+      if (quiet) { Profile.orb("idle", 0); return; }
+      Profile.orb("error", 0); alert(`Microphone: ${err.message}`);
+    }
+  }
+
+  // Stop the reply for good: nothing more of it is spoken.
+  function interrupt() { muted = true; stopSpeaking(); }
+
+  // A reply that will not be followed by a turn leaves no mic open.
+  function stopWatching() { if (recording?.watch) cancelListening(); }
+
+  // A watching mic becomes the live one: the turn starts here.
+  function engage() {
+    const rec = recording;
+    if (!rec || !rec.watch) return;
+    rec.watch = false;
+    rec.started = performance.now();
+    $("mic")?.classList.add("on");
+    Profile.orb("listening", 0);
+  }
+
+  function cancelListening() {
+    if (recognition) { recognition.onend = null; recognition.abort(); recognition = null; }
+    if (recording) {
+      const { ctx, source, processor, stream } = recording;
+      recording = null;
+      processor.disconnect(); source.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      ctx.close();
+    }
+    $("mic")?.classList.remove("on");
+  }
+
+  async function startLocal(watch = false) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    const ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(stream);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    const spectrum = ctx.createAnalyser();
+    spectrum.fftSize = 1024;
+    const bins = new Uint8Array(spectrum.frequencyBinCount);
+    const hz = ctx.sampleRate / spectrum.fftSize;
+    const lo = Math.floor(BARGE_BAND[0] / hz), hi = Math.ceil(BARGE_BAND[1] / hz);
+    const chunks = [];
+    const rec = { ctx, source, processor, chunks, rate: ctx.sampleRate, stream, watch, started: performance.now() };
+    let spokeAt = 0, voicedSince = 0;
+    processor.onaudioprocess = (event) => {
+      const data = new Float32Array(event.inputBuffer.getChannelData(0));
+      chunks.push(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      const rms = Math.sqrt(sum / data.length);
+      const now = performance.now();
+      if (rec.watch || !spokeAt) {
+        // Nothing said yet: keep only the last BARGE_KEEP_MS so the first
+        // word survives the trigger and an open mic does not fill memory.
+        const keep = Math.ceil((BARGE_KEEP_MS / 1000) * rec.rate / data.length);
+        if (chunks.length > keep) chunks.splice(0, chunks.length - keep);
+      }
+      if (rec.watch) {
+        spectrum.getByteFrequencyData(bins);
+        let band = 0, total = 0;
+        for (let i = 1; i < bins.length; i++) { total += bins[i]; if (i >= lo && i <= hi) band += bins[i]; }
+        const voiced = rms > BARGE_RMS && total > 0 && band / total > BARGE_SHARE;
+        if (!voiced) { voicedSince = 0; return; }
+        if (!voicedSince) { voicedSince = now; return; }
+        if (now - voicedSince < BARGE_MS) return;
+        interrupt();
+        engage();
+        spokeAt = now;
+        return;
+      }
+      Profile.orb(null, rms * 8);
+      if (!handsFree) return;
+      if (rms > SPEECH) spokeAt = now;
+      else if (spokeAt && now - spokeAt > SILENCE_MS) stop();
+    };
+    source.connect(spectrum);
+    source.connect(processor);
+    processor.connect(ctx.destination);
+    recording = rec;
+  }
+
+  // Open the mic in watch mode while a reply plays, hands-free and local only.
+  async function watchForBargeIn() {
+    if (!BARGE_IN || !handsFree || Profile.paused || recording || recognition || !Profile.voice?.stt?.ready) return;
+    try { await startLocal(true); } catch (_) { /* no mic: the tap still interrupts */ }
+  }
+
+  function startBrowser() {
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new Rec();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    let finalText = "";
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const r = event.results[i];
+        if (r.isFinal) finalText += r[0].transcript + " "; else interim += r[0].transcript;
+      }
+      if ($("say")) $("say").value = (finalText + interim).trim();
+    };
+    recognition.onerror = (event) => { if (event.error !== "no-speech") alert(`Speech: ${event.error}`); };
+    recognition.onend = () => { recognition = null; $("mic")?.classList.remove("on"); const t = $("say")?.value; if (t) Profile.send(t); else Profile.orb("idle", 0); };
+    recognition.start();
+  }
+
+  async function stop() {
+    const button = $("mic");
+    if (recognition) { recognition.stop(); return; }
+    if (!recording || recording.watch) return;
+    const { ctx, source, processor, chunks, rate, stream } = recording;
+    recording = null;
+    pending = true;
+    processor.disconnect(); source.disconnect();
+    stream.getTracks().forEach((t) => t.stop());
+    await ctx.close();
+    button?.classList.remove("on");
+    button?.classList.add("busy");
+    if ($("say")) $("say").placeholder = "Transcribing…";
+    Profile.orb("thinking", 0);
+    Profile.caption("…");
+    try {
+      const wav = encodeWav(downsample(concat(chunks), rate, 16000), 16000);
+      const res = await fetch("/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const { text } = await res.json();
+      if (text) { await Profile.idle(); Profile.send(text); }
+      else { Profile.caption("Heard nothing"); if (!Profile.paused) listen({ quiet: true }); else Profile.orb("idle", 0); }
+    } catch (err) { Profile.orb("error", 0); alert(`Transcription: ${err.message}`); }
+    finally { pending = false; button?.classList.remove("busy"); }
+  }
+
+  function concat(chunks) {
+    const out = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
+    let offset = 0;
+    for (const c of chunks) { out.set(c, offset); offset += c.length; }
+    return out;
+  }
+  function downsample(samples, from, to) {
+    if (from === to) return samples;
+    const ratio = from / to;
+    const out = new Float32Array(Math.floor(samples.length / ratio));
+    for (let i = 0; i < out.length; i++) {
+      const start = Math.floor(i * ratio), end = Math.floor((i + 1) * ratio);
+      let sum = 0;
+      for (let j = start; j < end; j++) sum += samples[j];
+      out[i] = sum / (end - start || 1);
+    }
+    return out;
+  }
+  function encodeWav(samples, rate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(buffer);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+    str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, "data"); v.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return buffer;
+  }
+
+  // Speaks a streamed reply sentence by sentence, starting on the first one.
+  // Only the spoken parts are voiced: the server labels `ack` and `ask`
+  // (spoken) and `note` (text only). Unlabelled text, from a model that
+  // ignored the format or from an old transcript, gets the fallback rule:
+  // the first sentence and every question. A short pause follows the ack.
+  const ACK_PAUSE_MS = 450;
+  function sentenceSpeaker(enabled) {
+    let buffer = "", part = null, spoken = null, count = 0;
+    muted = false;
+    const wanted = (sentence) => spoken != null ? spoken : (count === 0 || sentence.endsWith("?"));
+    const drain = (all) => {
+      let match;
+      while ((match = /^([\s\S]*?[.!?])(\s+)/.exec(buffer))) {
+        const sentence = match[1].trim();
+        if (sentence && wanted(sentence)) enqueue(sentence);
+        if (sentence) count++;
+        buffer = buffer.slice(match[0].length);
+      }
+      if (all && buffer.trim()) { if (wanted(buffer.trim())) enqueue(buffer.trim()); count++; buffer = ""; }
+    };
+    const feed = (text, nextPart, nextSpoken) => {
+      if (!enabled) return;
+      const p = nextPart || null;
+      if (p !== part) {
+        // A part boundary is a sentence boundary; leaving the ack adds the pause.
+        drain(true);
+        if (part === "ack" && p) pause(ACK_PAUSE_MS);
+        part = p;
+        spoken = nextSpoken == null ? null : !!nextSpoken;
+      }
+      buffer += text;
+      drain(false);
+    };
+    const flush = () => { if (enabled) drain(true); buffer = ""; };
+    const reset = () => { buffer = ""; part = null; spoken = null; count = 0; stopSpeaking(); };
+    return { feed, flush, reset };
+  }
+
+  function pause(ms) {
+    if (muted) return;
+    playing.push({ pause: ms, ready: Promise.resolve() });
+    playNext();
+  }
+
+  function enqueue(sentence) {
+    if (!sentence || muted) return;
+    if (Profile.voice?.tts?.ready) {
+      const item = { sentence, audio: null, ready: fetch("/voice/speak", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: sentence }) })
+        .then((r) => r.ok ? r.blob() : null).then((blob) => { if (blob) item.audio = new Audio(URL.createObjectURL(blob)); }) };
+      playing.push(item);
+      playNext();
+    } else if (window.speechSynthesis) {
+      const utterance = new SpeechSynthesisUtterance(sentence);
+      utterance.lang = "en-US";
+      utterance.onstart = () => Profile.orb("speaking", 0.5);
+      utterance.onend = () => { if (!speechSynthesis.pending) Profile.speechDone(); };
+      speechSynthesis.speak(utterance);
+    }
+  }
+  async function playNext() {
+    if (current) return;
+    if (!playing.length) { Profile.speechDone(); return; }
+    current = playing.shift();
+    await current.ready;
+    if (current?.pause) { const item = current; setTimeout(() => { if (current === item) { current = null; playNext(); } }, item.pause); return; }
+    if (!current || !current.audio) { current = null; return playNext(); }
+    current.audio.onended = () => { current = null; playNext(); };
+    current.audio.onerror = () => { current = null; playNext(); };
+    meter(current.audio);
+    Profile.orb("speaking", 0);
+    try { await current.audio.play(); } catch (_) { current = null; playNext(); }
+    watchForBargeIn();
+  }
+  // The speaking level for the orb, read off the element through an analyser.
+  function meter(audio) {
+    try {
+      if (!outCtx) { outCtx = new AudioContext(); analyser = outCtx.createAnalyser(); analyser.fftSize = 512; analyser.connect(outCtx.destination); }
+      if (outCtx.state === "suspended") outCtx.resume();
+      outCtx.createMediaElementSource(audio).connect(analyser);
+    } catch (_) { return; }
+    const data = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      if (current?.audio !== audio) return;
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      Profile.orb(null, Math.sqrt(sum / data.length) * 4);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  function stopSpeaking() {
+    playing = [];
+    if (current?.audio) current.audio.pause();
+    current = null;
+    if (window.speechSynthesis) speechSynthesis.cancel();
+  }
+
+  return { listen, cancelListening, browserSTT, sentenceSpeaker, stopSpeaking, interrupt, stopWatching,
+           setHandsFree, isSpeaking, isListening, isPending };
+})();
 </script>

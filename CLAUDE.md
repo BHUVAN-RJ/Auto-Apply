@@ -66,13 +66,16 @@ Specifically:
 | `tailor/screen.py` + `screen_rules.md` | on-page auto-reject screen: posting vs `base/applicant.md` Facts, fixed category enum, verdict recomputed from flags in code |
 | `server/screen.py` | `POST /screen`, URL-keyed cache in `data/screens.json`; the pipeline reuses it |
 | `server/settings.py` | the "Use profile" switch, `data/settings.json`; scripts read it too |
-| `tailor/profile.py` | what the models are told about the applicant. `context()` = profile.md + applicant facts + `base/stories/` when the switch is on, profile.md alone otherwise. `screen_facts()` falls back to facts derived from the resume, cached in `data/derived_facts.md` |
+| `tailor/profile.py` | what the models are told about the applicant. `context(slugs)` = profile.md + applicant facts + `base/stories/index.md` + the picked stories' `tailor.md` when the switch is on, profile.md alone otherwise. `pick(posting)` chooses the slugs (one cheap call); the pipeline records them in `stories_used.txt` and the cover letter and answers reuse them. `screen_facts()` falls back to facts derived from the resume, cached in `data/derived_facts.md` |
+| `tailor/interview.py` + `interview_rules.md` | the profile interviewer: state machine on disk under `base/stories/` (`_interview.json`, `<slug>/state.json`), one streamed turn per candidate message, header (`COVERED` / `DONE`, then `---`) parsed in code; the body is labelled by line (`ack:` and `ask:` spoken, `note:` text only; `_Parts` strips labels mid-stream and tags each delta `spoken`), and the page speaks only tagged parts, falling back to first sentence plus questions when a reply has no labels. Writes `main.md` on close; `story_rules.md` is the prompt for `tailor.md` and `star.md`, written by the heavy model in a thread |
+| `server/profile.py` | `/profile` status, `/profile/start`, `/profile/turn` (SSE, one JSON event per line), documents, regenerate |
+| `voice/` + `server/voice.py` | speech: whisper.cpp in (`stt.clean` drops whisper's `[BLANK_AUDIO]`-style markers, standalone um/uh/erm/hmm and immediate word repeats); Fish Audio out when `AUTOPILOT_FISH_API_KEY` is set (`fish.py`, hosted, one request per sentence, `s2.1-pro-free` by default, voice pinned by `reference_id` because the API otherwise picks a new voice per request; delivery tuned by ear: `(cheerful)` tag, temperature 0.9, speed 1.08, all overridable in `.env`); Kokoro (ONNX, `kokoro.py`, needs brew `espeak-ng`) out, `say` when Kokoro is not ready, Piper via `AUTOPILOT_PIPER_BIN`. `assets.py` finds binaries and downloads models into the app data dir; `/voice/status`, `/setup`, `/transcribe`, `/speak` |
 | `capture/content.js` | reads the page, calls `/screen`, paints the banner. Injected by match list and into any tab opened from jobright.ai |
 | `browser/guard.py` | the never-submit deny-list |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
 | `archive/store.py` | immutable per-application folders |
-| `review/index.html` | the whole UI, one file, no build step; holds the "Use profile" switch |
+| `review/index.html` | the whole UI, one file, no build step; holds the "Use profile" switch, the Profile tab (chat, seed files, documents) and the floating voice orb, always on: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is SVG: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; colours inside are green only while listening, orbit plus figure-eights while speaking, a spinner while thinking; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
 | `capture/background.js` | context menu, and follows tabs off Jobright / LinkedIn to inject the screen wherever Apply lands |
 | `tools/sweep_failed.py` | moves `failed` application folders under `applications/failed/` and repoints queue rows; nothing deleted |
 
@@ -140,6 +143,47 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 - **`.env` has `AUTOPILOT_AUTOFILL=1`, so a test that approves a job launches
   the real `apply.py`** unless the fixture forces it off. `test_review.py`
   does; a stray `apply.py 3fbd` from a test run once sat in the process list.
+- **A loudness gate cannot tell music from a voice.** Barge-in (`BARGE_*`
+  in `Voice`) flipped replies on and off under a song in the room, and the
+  turn-end detector (`SPEECH` RMS) has the same blind spot. Barge-in is off;
+  the honest fix for both is a voice detector (Silero VAD in the browser),
+  not a stricter threshold.
+- **Fish Audio without `reference_id` picks a new voice per request.**
+  With one request per sentence the reply changed speaker every sentence.
+  `DEFAULT_VOICE` in `voice/fish.py` pins it.
+- **A headless smoke run with a fake mic talks to the real interview.**
+  `--use-fake-device-for-media-stream` fed whisper a tone, it transcribed
+  `[BLANK_AUDIO]`, and the page sent that as an answer, twice, on a fresh
+  profile. `stt.clean` now drops bracketed whisper markers, but do not
+  point a fake mic at the live server; screenshot with static orb markup.
+- **The interview model skips its header sometimes.** A good question,
+  no `COVERED:` line, and the answer's coverage is lost. `_stream_reply`
+  returns an empty header; `_interview_turn` then grades the answer in a
+  second call. Never assume the header is there.
+- **The model does not stop when told to.** "Nothing more, move on" got
+  another question. `MOVE_ON` in `interview.py` closes the experience in
+  code; the prompt alone was not enough.
+- **Two writers on `state.json`.** The children thread saves while a turn
+  reads, and `write_text` truncates first: `_is_closed` read an empty file
+  and the SSE stream died mid-turn. All state goes through `_write_atomic`.
+- **A client that drops the SSE stream loses that question.** The
+  generator is killed where it stands; the recorded transcript ends at the
+  last complete save. The next turn recovers (a closed `current` advances
+  the queue), but do not `head -c` a turn and expect state to be whole.
+- **Bundled espeak-ng libraries are broken on Apple Silicon**, and not
+  gently: the one in `espeakng-loader` (Kokoro) and the one in `piper-tts`
+  both ignore their data path and the C code calls `exit(1)` on the first
+  word. Probing one in the server process kills uvicorn. `voice/kokoro.py`
+  only ever uses Homebrew's `libespeak-ng.dylib` (or `AUTOPILOT_ESPEAK_LIB`)
+  and probes it in a child process. The Piper "macos_aarch64" tarball is
+  x86_64 on top of that.
+- **An `alert()` in the voice path hangs a headless check.** The page
+  alerts on mic and transcription failures; a CDP-driven smoke test must
+  stub `window.alert` first. Real Chrome needs `--use-fake-device-for-media-stream`
+  to exercise the orb without a microphone.
+- **`whisper` on PATH is not whisper.cpp.** It is the openai-whisper
+  Python CLI with different flags. `voice/assets.py` looks for
+  `whisper-cli` / `whisper-cpp` only.
 - **The preamble check is byte-exact** (`_check_frozen_sections`; only
   whitespace runs are collapsed). The model burned two of four attempts on a
   commented-out font line and a dropped space in a macro. `rules.md` now says
@@ -147,8 +191,8 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest`, 320 tests, no network and no browser. The suite stubs the model, the
-browser, and lualatex, so **passing tests do not mean it works** — every real
+`pytest`, 368 tests, no network and no browser. The suite stubs the model, the
+browser, lualatex, and the speech binaries, so **passing tests do not mean it works** — every real
 bug so far survived a green suite and appeared on the first real run. Run
 something end to end before claiming a fix.
 
@@ -172,3 +216,11 @@ Full English in the repo: commits, comments, docs, this file. Conversation in
 the terminal follows whatever mode is active.
 
 Commits explain *why*, not what changed. The diff already says what changed.
+
+## The one-click thesis
+
+Everything after Phase 6 is built toward a single installable app (see
+PLAN.md, "The one-click thesis"). Before proposing a dependency, a model
+runtime, a system install, or a hardcoded path, check it against that
+section and raise it in the conversation if it does not fit. Torch, a
+separate TeX installer, and "run this in the terminal first" all fail it.

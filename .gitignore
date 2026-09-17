@@ -13,5 +13,5 @@ __pycache__/
 *.log
 *.out
 base/applicant.md
-base/stories/
+base/stories*/
 .DS_Store

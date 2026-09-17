@@ -4,9 +4,11 @@ Three layers, each optional:
 
 - base/profile.md: the free-text profile the tailor has always read.
 - base/applicant.md: hard facts (years, visa, dates) and form details.
-- base/stories/*.md: one document per role or project, written by the
-  Phase 7 interviewer. Full context for swapping a project or rewriting a
-  bullet around a fact.
+- base/stories/<slug>/: one folder per role or project, written by the
+  Phase 7 interviewer. main.md is the candidate's words; tailor.md is the
+  dense derivative the job prompts read. index.md, one line per slug, is
+  always in the prompt; a cheap call picks the few tailor.md files that
+  match a posting, so the prompt never carries every story.
 
 The "Use profile" switch on the review page gates the last two. Off, or on
 with nothing written yet, and every caller falls back to what it had before
@@ -32,9 +34,18 @@ STORIES = ROOT / "base" / "stories"
 BASE_RESUME = ROOT / "base" / "resume.tex"
 DERIVED_FACTS = ROOT / "data" / "derived_facts.md"
 
-# Stories are appended whole. Past this many characters the prompt is
-# mostly stories, and the tailor starts drifting from the posting.
-STORIES_CHAR_CAP = 24_000
+INDEX_NAME = "index.md"
+TAILOR_DOC = "tailor.md"
+# The picker returns this many at most. Three or four stories is what a
+# posting can use; every one past that is prompt the tailor drifts on.
+MAX_STORIES = 4
+
+PICK_PROMPT = """You are given a job posting and an index of the candidate's experiences,
+one line per experience, starting with its slug in square brackets. Choose
+the experiences whose work is closest to what the posting asks for: same
+kind of system, same stack, same domain. Reply with the chosen slugs only,
+one per line, most relevant first, at most {n}. If none fit, reply with the
+single word NONE."""
 
 # Same model as the screen: a short extraction, no thinking needed, and the
 # tailor model's provider refuses to run with reasoning off.
@@ -79,38 +90,97 @@ def applicant_facts(path: Optional[Path] = None) -> Optional[str]:
     return facts_section(path.read_text())
 
 
-def stories(directory: Optional[Path] = None, cap: int = STORIES_CHAR_CAP) -> str:
-    """Every story document, concatenated, alphabetical, capped. Empty if none."""
+def story_dirs(directory: Optional[Path] = None) -> list[Path]:
+    """Every experience folder, alphabetical. Folders starting with an
+    underscore are the interviewer's own state, not experiences."""
     directory = directory or STORIES
     if not directory.is_dir():
-        return ""
+        return []
+    return sorted(p for p in directory.iterdir()
+                  if p.is_dir() and not p.name.startswith((".", "_")))
+
+
+def index(directory: Optional[Path] = None) -> str:
+    """base/stories/index.md, or empty. Regenerated with the children."""
+    directory = directory or STORIES
+    path = directory / INDEX_NAME
+    return path.read_text().strip() if path.exists() else ""
+
+
+def stories(directory: Optional[Path] = None, slugs: Optional[list[str]] = None) -> str:
+    """The tailor.md of each slug, concatenated. Nothing else under the
+    folder ever reaches a job prompt; main.md is for the interviewer and
+    star.md for the candidate."""
+    directory = directory or STORIES
     parts: list[str] = []
-    used = 0
-    for path in sorted(directory.glob("*.md")):
-        text = path.read_text().strip()
-        if not text:
+    for slug in slugs or []:
+        path = directory / slug / TAILOR_DOC
+        if not path.exists():
             continue
-        block = f"### {path.stem}\n\n{text}"
-        if used + len(block) > cap:
-            break
-        parts.append(block)
-        used += len(block)
+        text = path.read_text().strip()
+        if text:
+            parts.append(f"### {slug}\n\n{text}")
     return "\n\n".join(parts)
 
 
-def context(base_profile: Optional[str] = None) -> str:
-    """profile.md, plus applicant facts and stories when the switch is on.
+def pick(posting_text: str, directory: Optional[Path] = None,
+         model: Optional[str] = None, limit: int = MAX_STORIES) -> list[str]:
+    """Slugs whose story matches the posting, best first; empty when there
+    is no index or the switch is off. One cheap call, done in code rather
+    than as a tool call, because tool calling has already failed on a
+    cheaper model once."""
+    directory = directory or STORIES
+    if not settings.use_profile():
+        return []
+    listing = index(directory)
+    if not listing:
+        return []
+    known = {p.name for p in story_dirs(directory)}
+    reply = llm.complete(
+        PICK_PROMPT.format(n=limit),
+        f"## Index\n\n{listing}\n\n## Posting\n\n{posting_text[:12_000]}",
+        model=model or derive_model(), temperature=0.0, max_tokens=400,
+        reasoning={"enabled": False},
+    )
+    chosen: list[str] = []
+    for line in reply.splitlines():
+        slug = line.strip().strip("-*[] ").split()[0] if line.strip() else ""
+        slug = slug.strip("[]:,")
+        if slug in known and slug not in chosen:
+            chosen.append(slug)
+    return chosen[:limit]
+
+
+def read_used(app_dir: Optional[Path]) -> list[str]:
+    """The slugs the pipeline picked for this application, so the cover
+    letter and form answers see the same stories the resume did."""
+    if app_dir is None:
+        return []
+    path = Path(app_dir) / "stories_used.txt"
+    if not path.exists():
+        return []
+    return [line.strip() for line in path.read_text().splitlines() if line.strip()]
+
+
+def context(base_profile: Optional[str] = None, slugs: Optional[list[str]] = None) -> str:
+    """profile.md, plus applicant facts, the story index, and the picked
+    stories when the switch is on.
 
     This is what tailor, cover, and answers receive as `profile`. With the
     switch off it is profile.md alone: the behaviour before the profile.
+    `slugs` is the pipeline's pick for this posting; without one the index
+    still goes in, so the model knows what exists, but no story does.
     """
     text = load_profile() if base_profile is None else base_profile
     if not settings.use_profile():
         return text
     facts = applicant_facts()
-    extra = stories()
+    listing = index()
+    extra = stories(slugs=slugs)
     if facts:
         text = f"{text}\n\n## Applicant facts\n\n{facts}".strip()
+    if listing:
+        text = f"{text}\n\n## Experiences on file (one line each)\n\n{listing}".strip()
     if extra:
         text = f"{text}\n\n## Experience in detail\n\n{extra}".strip()
     return text

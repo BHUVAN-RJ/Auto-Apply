@@ -74,7 +74,8 @@ job you ever considered.
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
 | `browser/` | `browser-use` fill loop driving your real Chrome profile |
-| `review/` | Local web page: diff view, PDF preview, approve / reject / chat |
+| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, and the Profile tab |
+| `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
 
@@ -92,9 +93,14 @@ nothing.
 
 The full path works end to end: capture, scrape, tailor, compile, archive,
 checkpoint 1, browser fill, checkpoint 2. The on-page screen and the profile
-switch are built on top. Next is the profile interviewer (PLAN.md, Phase 7),
-then hardening — retries, resume-after-crash, a per-ATS recipe cache. See
-[PLAN.md](PLAN.md) for the design and what is deliberately deferred.
+switch are built on top. The Profile tab holds the interviewer: it reads
+your resume, asks about each role and project the way an interviewer would,
+and writes one story per experience that the tailor, the cover letter, and
+the form answers draw on, plus a STAR write-up for you. Type, or switch to
+voice mode and talk to the orb hands-free; speech runs on this machine
+(whisper.cpp in, Kokoro out) and the models download on first use. Next is hardening — retries,
+resume-after-crash, a per-ATS recipe cache. See [PLAN.md](PLAN.md) for the
+design and what is deliberately deferred.
 
 ```sh
 python pipeline.py            # tailor and compile every queued job

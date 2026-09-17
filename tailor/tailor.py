@@ -304,9 +304,9 @@ def load_base_resume(path: Path = BASE_RESUME) -> str:
     return path.read_text()
 
 
-def load_profile(path: Optional[Path] = None) -> str:
-    """profile.md, with applicant facts and stories when the switch is on."""
-    return profile_module.context(profile_module.load_profile(path or PROFILE))
+def load_profile(path: Optional[Path] = None, stories: Optional[list[str]] = None) -> str:
+    """profile.md, with applicant facts and the picked stories when the switch is on."""
+    return profile_module.context(profile_module.load_profile(path or PROFILE), slugs=stories)
 
 
 def _build_user_message(posting: Posting, resume: str, profile: str) -> str:
@@ -333,6 +333,7 @@ def tailor(
     target_pages: int = 1,
     max_attempts: int = 4,
     extra_instruction: str = "",
+    profile: Optional[str] = None,
 ) -> TailorResult:
     """Tailor the resume, retrying while it does not fit on `target_pages`.
 
@@ -341,7 +342,8 @@ def tailor(
     is what the unit tests do; the pipeline always passes a real compiler.
     """
     original = resume_tex if resume_tex is not None else load_base_resume()
-    profile = load_profile()
+    if profile is None:
+        profile = load_profile()
     model = llm.tailor_model()
 
     message = _build_user_message(posting, original, profile)

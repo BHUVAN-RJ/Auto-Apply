@@ -15,12 +15,13 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
+from typing import Optional
 
 from archive import store
 from server import queue
 from server import screen as screen_server
 from server.models import Job, Status
-from tailor import cover, fetch, tailor
+from tailor import cover, fetch, profile, tailor
 from tex import compile as texc
 
 ROOT = Path(__file__).resolve().parent
@@ -113,12 +114,14 @@ def process(job: Job, extra_instruction: str = "") -> Path:
 
     base_tex = ROOT / "base" / "resume.tex"
     target = base_page_count()
+    stories = pick_stories(app_dir, posting)
     try:
         result = tailor.tailor(
             posting,
             page_check=make_page_check(base_tex),
             target_pages=target,
             extra_instruction=extra_instruction,
+            profile=tailor.load_profile(stories=stories),
         )
     except tailor.Mismatch as exc:
         # A poor-fit verdict is advice, not a decision. The job still stops at
@@ -157,7 +160,7 @@ def process(job: Job, extra_instruction: str = "") -> Path:
     if pages is not None and pages != target:
         note += f" — master is {target}; the page-count gate did not hold"
 
-    note += "; " + write_cover_letter(app_dir, posting, result.tex, extra_instruction)
+    note += "; " + write_cover_letter(app_dir, posting, result.tex, extra_instruction, stories)
 
     store.set_status(app_dir, Status.AWAITING_REVIEW, note)
     queue.update(job.id, status=Status.AWAITING_REVIEW)
@@ -181,7 +184,23 @@ def write_screen(app_dir: Path, job: Job, posting) -> None:
         print(f"  screen failed: {exc}", file=sys.stderr)
 
 
-def write_cover_letter(app_dir: Path, posting, resume_tex: str, extra_instruction: str = "") -> str:
+def pick_stories(app_dir: Path, posting) -> list[str]:
+    """Which experience documents this posting gets, recorded in the folder
+    so the cover letter and the form answers reuse the same pick and the
+    review page can show it. A failed pick is no stories, not a failed job."""
+    try:
+        stories = profile.pick(posting.text)
+    except Exception as exc:  # noqa: BLE001 - advice, not a step
+        print(f"  story pick failed: {exc}", file=sys.stderr)
+        stories = []
+    store.write(app_dir, "stories_used.txt", "\n".join(stories) + ("\n" if stories else ""))
+    if stories:
+        print(f"  stories: {', '.join(stories)}")
+    return stories
+
+
+def write_cover_letter(app_dir: Path, posting, resume_tex: str, extra_instruction: str = "",
+                       stories: Optional[list[str]] = None) -> str:
     """Write the letter next to the resume. Returns a one-line note for the status.
 
     Deliberately not fatal: the resume it sits beside cost several model
@@ -191,7 +210,7 @@ def write_cover_letter(app_dir: Path, posting, resume_tex: str, extra_instructio
     not.
     """
     try:
-        letter = cover.write(posting, resume_tex, tailor.load_profile(), extra_instruction)
+        letter = cover.write(posting, resume_tex, tailor.load_profile(stories=stories), extra_instruction)
         store.write(app_dir, "cover_letter.md", letter.text + "\n")
         store.write(app_dir, "cover_letter.tex", cover.to_tex(letter.text))
         texc.compile_pdf(app_dir / "cover_letter.tex", app_dir / "cover_letter.pdf")

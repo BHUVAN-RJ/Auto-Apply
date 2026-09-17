@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from archive import store
 from browser import fill as filler
-from tailor import answers, tailor
+from tailor import answers, profile, tailor
 from server import queue
 from server.models import Job, Status
 
@@ -111,7 +111,8 @@ def fill_one(job: Job) -> bool:
     # Open questions on the form are answered by the tailoring model from
     # this application's own material, never by the browser model.
     answerer = answers.Answerer(answers.Context.from_app_dir(
-        app_dir, profile=tailor.load_profile(), applicant=filler.applicant_details()))
+        app_dir, profile=tailor.load_profile(stories=profile.read_used(app_dir)),
+        applicant=filler.applicant_details()))
     try:
         result = filler.fill(
             job.url, upload_copy(app_dir), app_dir / "fill_screenshot.png",

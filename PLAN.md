@@ -35,6 +35,38 @@ click, pausing twice for human approval.
 | Checkpoint UI | Local web page on `localhost:8787` | This is the surface the eventual glasses flow renders, so it is not throwaway work |
 | ATS scope (v1) | Whatever Jobright autofill already handles | Autofill reuse means no per-ATS code in v1 |
 
+### The one-click thesis
+
+The end state is an installable app: one download, one install, plus the
+browser extension. No terminal, no `pip`, no TeX installer, no model
+download the user has to run by hand. Every design choice from Phase 7 on
+is checked against this, and anything that does not fit is raised at the
+time it is proposed, not after it is built. Concretely:
+
+- **No heavy Python ML dependencies in the server.** Voice runs through
+  subprocess binaries (whisper.cpp for speech to text, Piper or Kokoro
+  ONNX for text to speech). Anything that pulls in torch is out; torch
+  alone is larger than the rest of the app.
+- **Model files are downloaded on first run**, with a progress bar, into
+  the app data directory. The installer stays small.
+- **LaTeX has to ship with the app.** BasicTeX is a separate installer and
+  its missing packages are already a known bite. Tectonic (single binary,
+  packages fetched on demand, supports fontspec) is the planned third
+  engine in `tex/compile.py`; it has to work before packaging starts.
+- **All state lives under the app data directory or `base/`.** No
+  hardcoded machine paths. Secrets (the OpenRouter key) move from `.env`
+  to a first-run screen when packaging starts; until then `.env` stands.
+- **Chrome stays the user's own.** The fill attaches over CDP; the
+  extension needs Chrome anyway. That is the second click.
+- **The shell is Electron or Tauri around the existing Python server.**
+  The page on 8787 is the UI already; the shell adds a window, spawns the
+  bundled Python, and nothing else.
+- **macOS signing and notarisation are required** for a download to open
+  without a Gatekeeper warning: Apple Developer Program, US$99 a year,
+  configured once in the packager. Nested binaries (Python, whisper.cpp)
+  must be signed too; that is the usual failure. Windows signing is
+  optional and comes later.
+
 ## Architecture
 
 ```
@@ -176,7 +208,10 @@ leak; a deny-list in code does not.
 | 4 | Browser fill loop, checkpoint 2 | 2-3 days |
 | 5 | Glue, `start` command, index, retries | 0.5 day |
 | 6 | On-page auto-reject screen, profile switch | 1 day |
-| 7 | Profile interviewer (text, then voice) | not scoped |
+| 7 | Profile interviewer: stories, index, Profile tab, streaming text chat | 3 days |
+| 8 | Voice for the interviewer: local STT/TTS, the orb | 1.5 days |
+| 9 | Behavioural rundown (non-project stories) | not scoped |
+| 10 | Packaging: Tectonic, first-run setup, signed installer | not scoped |
 
 Phases 0 to 4 are built and have run end to end against real postings
 (Greenhouse and Ashby). Phase 5 is mostly done: capture starts the pipeline,
@@ -457,49 +492,204 @@ Not yet seen on a real run: the Apply landing path from Jobright and
 LinkedIn after the injection rewrite. LinkedIn's own job pages are
 confirmed.
 
-## Phase 7 — profile interviewer (to be scoped after Phase 6)
+## Phase 7 — profile interviewer (built)
 
 The tailor and answer steps work from a one-page resume and a thin profile.
 The experience behind the resume is not on it: what was built, why, what
 broke, the numbers, which part was the candidate's own. Without that the
 tailor can only paraphrase bullets; with it, it can swap a project in,
 rewrite a bullet around a fact the posting cares about, and answer a form
-question with a real story.
+question with a real story. The same material, read back before an
+interview, is the candidate's prep.
 
-### Behaviour, as stated
+### Decisions
 
-- An assistant interviews the candidate one experience at a time: each role
-  (the backend-lead work and the rest) and each project. Text first; voice
-  is the goal and comes later, so the interview loop must not care which.
-- It asks basic questions and keeps asking until it judges it has what it
-  needs for that one experience, then writes a detailed document for it.
-- The documents are the source of truth for the tailor, the cover letter,
-  and the free-form answers, next to `applicant.md` and the resume.
-- The same documents double as interview prep: before an interview the
-  candidate rereads the one for the experience being asked about.
+- **Surface**: a "Profile" tab on the review page. The interviewer lives
+  there, and so do the finished documents, so they can be reread later.
+  Text now; the reply streams token by token so the voice layer (Phase 8)
+  only swaps input and output.
+- **Seed**: `base/resume.tex` is read directly. A free-text box on the tab
+  takes anything else the candidate wants to hand over (notes, an old
+  resume, a project README, `.txt` / `.md` pasted or uploaded). Extra
+  text is used once, to seed the interview, then discarded; once the main
+  document exists there is nothing in it the document does not hold.
+- **Opening turn**: the interviewer lists the experiences it found on the
+  resume and the roles the questions will target (SWE, backend,
+  full-stack, data, ML, infra), asks whether anything is missing from
+  either list, then goes one experience at a time: roles first, then
+  projects, then "anything not on the resume?".
+- **Question bank**: `tailor/interview_rules.md`. A fixed checklist per
+  experience (nine lines for every experience, three more for roles,
+  three more for candidates past their first year), plus domain probes
+  the model picks from the candidate's own answers, not from the target
+  role. The rules file is the prompt; edit it, not the Python.
+- **Enough**: every checklist line covered, or ten questions asked, or the
+  candidate says done. Then "anything about this one I missed?" and on to
+  the next. Uncovered lines are written as "not discussed"; the tailor
+  never fills them in.
+- **Skipping**: the first question for an experience is open ("tell me
+  the story of this work"); the model marks every line that answer
+  settled and asks only about what is left. A long answer covering
+  several lines skips several questions.
+- **Models**: the light model (`OPENROUTER_INTERVIEW_MODEL`, default the
+  screen model) runs every turn and writes the main document. The heavy
+  model (`OPENROUTER_TAILOR_MODEL`) writes the two children afterwards.
+- **Documents**: `base/stories/<slug>/main.md` is the source of truth,
+  organised by checklist line, in the candidate's words. Two children
+  derive from it: `tailor.md` (dense facts for the tailor, cover letter,
+  and form answers: dates, stack, scale, numbers, own contribution, one
+  candidate bullet per notable fact) and `star.md` (for the candidate:
+  the story in Situation / Task / Action / Result / Reflection form, the
+  numbers to say aloud, the questions an interviewer is likely to ask and
+  the line that answers each, the gaps to look up). No rehearsal script;
+  `star.md` holds all the content, so the candidate or any other model
+  can build answers from it. Everything under `base/stories/` is
+  gitignored.
+- **Updates**: the assistant is ever-living. The candidate tells it new
+  information in the same chat ("I also did X on project Y", "the number
+  was 40 percent, not 30"), it updates `main.md`, and regenerates both
+  children with the same rules. Hand-edited children get overwritten by
+  the next regeneration; the main document is the thing to correct. The
+  candidate never hands documents in.
+- **Boundaries**: the interviewer writes only under `base/stories/`. It
+  never edits `base/resume.tex` or `base/applicant.md`.
+- **Resume anywhere**: state per experience in
+  `base/stories/<slug>/state.json` (transcript, coverage). Stop mid-way,
+  come back, the next question picks up where it left off.
+- **Feeding the tailor**: `base/stories/index.md` is regenerated with the
+  children, one line per experience (slug, one-sentence summary, stack),
+  and is always in the prompt. Before a tailor run a cheap call picks the
+  three or four slugs that match the posting; only those `tailor.md`
+  files are appended. The cover letter and form answers reuse the pick,
+  recorded in the application folder as `stories_used.txt` and shown on
+  the review page. This replaces the flat 24k-character cap; nothing
+  outside `tailor.md` and the index ever reaches a job prompt. Done in
+  code, not with model tool calls: the tailor is one completion with a
+  retry loop, and tool calling has already failed once on a cheaper
+  model.
+- **Behavioural material** (conflict, failure, feedback, "why this
+  company") is not part of this interview; collecting the experiences is
+  long enough. It is Phase 9, a separate rundown the candidate can opt
+  into, writing its own main document and `star.md`.
 
-### Already in place for it
+### Build order
 
-- The "Use profile" switch on the review page (`server/settings.py`). On,
-  `tailor.profile.context()` appends `base/applicant.md`'s facts and every
-  `base/stories/*.md` (capped at 24k characters, alphabetical) to the
-  profile the tailor, cover letter, and answer steps receive. Off, or on
-  with nothing written, and they get profile.md alone: the pipeline as it
-  ran before. The interviewer only has to write files into `base/stories/`.
+1. Stories layout, index, picker in `tailor/profile.py`; `stories()`
+   reads only `tailor.md` files. Tests for the picker with a stubbed
+   model.
+2. `tailor/interview.py`: the loop. One turn = transcript + checklist in,
+   coverage update + next question out, as JSON the page can render.
+   State on disk. Main document written when an experience closes.
+3. `server/`: `/profile/*` endpoints, streaming turn over SSE.
+4. Profile tab in `review/index.html`: seed box, chat, list of
+   experiences with coverage, documents readable in place.
+5. Children generation with the heavy model; regeneration on update.
+6. Real run against the real resume before anything is called done.
 
-### Sketch, not committed
+### Status
 
-- `base/stories/<slug>.md`, one per experience, gitignored. Frontmatter
-  with type (role / project), dates, stack; body in fixed sections:
-  context, what was built, own contribution, hard parts, numbers, what
-  would be done differently, one-line summary for a resume bullet.
-- Interview state per story so a session can stop and resume mid-way.
-- The tailor's `load_profile` grows to include the stories, with a size
-  cap so the prompt does not balloon.
-- The UI is the review page (a "Profile" tab) or a terminal loop; decided
-  when scoped. The voice layer swaps the input and output only.
+All six built, 2026-09-15, and run against the real resume: five
+experiences found, first one interviewed and closed, `main.md`,
+`tailor.md`, `star.md`, and `index.md` written, the second experience
+opened. What the first real run changed:
 
-Open questions to settle at scoping time: which model runs the interview,
-how "enough" is judged (a checklist per section is the obvious answer),
-and whether the assistant seeds each interview from the resume bullet so
-the candidate is confirming and expanding rather than starting blank.
+- The model sometimes skips the header on a short turn. The code then
+  grades the answer in a second cheap call rather than lose coverage.
+- "Nothing more, move on" got another question. A move-on phrase from the
+  candidate now closes the experience in code, whatever `DONE` says.
+- The children thread saved `state.json` while a turn was reading it, and
+  the reader saw an empty file. Every state write is now atomic.
+- The heavy model copies the code fence from `story_rules.md` around the
+  whole tailor document. The fence is stripped on save.
+- The model marked "Numbers" covered from the resume entry's own figures.
+  The reply format now says the resume entry covers nothing.
+
+Model comparison, same prompts, real resume, three rounds each
+(`deepseek/deepseek-v4-flash` vs `z-ai/glm-5.3-flash`, 2026-09-15):
+
+| | DeepSeek Flash | GLM 5.3 Flash |
+|---|---|---|
+| Experiences found | 5/5, 2 companies | 5/5, 2 companies |
+| "experienced" (resume is two internships) | true, wrong | false, right |
+| Header present | 9/9 | 9/9 |
+| Coverage judgement | generous: "reported to the lead" marked Day to day; once marked all 15 lines on "move on" | strict: only what the answer said; nothing on "move on" |
+| Turn latency | 0.6-3 s | 3-5 s (one 19 s outlier); reasoning is mandatory on this endpoint |
+| main.md | clean | leaked "move on" into a section once |
+| Cost per experience | $0.0016 | $0.0022 |
+
+GLM is the default (`OPENROUTER_INTERVIEW_MODEL`): coverage drives which
+questions get asked, and over-marking hides gaps for good. The move-on
+over-marking is also blocked in code now. DeepSeek is the choice if the
+voice loop feels slow.
+
+Not built: partial transcripts while the candidate speaks (the recording
+is transcribed on release). A closed experience cannot be reopened from
+the page; corrections go through the open-phase chat, which rewrites
+`main.md`. Seed files: PDF, text, markdown, `.tex`, several at once,
+extracted server-side (`POST /profile/seed-file`, pypdf); a scanned PDF
+is refused with a reason.
+
+## Phase 8 — voice (built)
+
+Local, on-device, in line with the one-click thesis. `voice/` is three
+small modules and no Python ML dependency:
+
+- **In**: the page records raw PCM, resamples to 16 kHz and encodes a WAV
+  itself, so the server needs no ffmpeg. `POST /voice/transcribe` runs
+  `whisper-cli` (whisper.cpp) on it. The text goes into the same turn a
+  typed answer would.
+- **Out**: the streamed reply is split into sentences as it arrives; each
+  is posted to `POST /voice/speak` and the page plays them in order, so
+  speech starts on the first sentence. The backend is **Kokoro** through
+  ONNX Runtime (`voice/kokoro.py`, in process, model kept loaded; the
+  `voice` extra in pyproject, no torch; ~1.5-3 s per sentence on an M-series
+  CPU, fp32 is faster than the int8 file on arm64). It needs a working
+  espeak-ng for phonemes: the one bundled with `espeakng-loader` ignores
+  its data path on Apple Silicon and calls `exit(1)` from C, so it is never
+  loaded in the server; Homebrew's `espeak-ng` is used and probed once in a
+  child process. Without Kokoro the backend is macOS `say`
+  (`AUTOPILOT_SAY_VOICE`), which the user judged not good enough. Piper
+  was the first plan: the 2023.11.14-2 release's "macos_aarch64" tarball
+  is an x86_64 build and the `piper-tts` wheel has the same espeak bug;
+  `AUTOPILOT_PIPER_BIN` still switches to it when a working binary exists.
+  Pocket TTS (Kyutai) was considered and rejected: it pulls torch.
+- **Models** live under the app data directory (`voice/` next to the
+  Chrome profile) and download from the page on first use with a progress
+  bar: the whisper `base.en` model (148 MB) and, once the voice extra is
+  installed, the Kokoro model and voices (325 MB + 28 MB). whisper.cpp publishes no macOS
+  binary, so until the app bundles one it comes from `brew install
+  whisper-cpp`, and the page says so. Packaging (Phase 10) ships it.
+- **Fallback**: with a half not set up, the page uses the browser's own
+  Web Speech API for that half, so the interview is never blocked on a
+  download. `whisper` on PATH is the openai-whisper Python CLI and is
+  deliberately not picked up.
+- **The orb** ("Voice mode" in the voice bar): one element, four states
+  (idle breathing, listening green with the mic level, thinking spinning,
+  speaking amber with the playback level from an AnalyserNode), captions
+  under it. Hands-free loop in the page: tap to talk, silence of 1.5 s
+  ends the turn (RMS above 0.015 counts as speech; 8 s of nothing gives
+  up without sending), the reply is spoken sentence by sentence, then the
+  mic reopens. Tap while speaking interrupts. Two sizes: full (chat
+  hidden) and mini (84 px orb docked above the chat, text box usable),
+  plus "Back to text". Voice mode forces replies aloud. Mode remembered in
+  `localStorage`.
+
+The interview loop did not change: a spoken answer is the same
+`/profile/turn` as a typed one.
+
+### Testing notes
+
+What to try, in order, with the real resume:
+
+1. Text only: Start, confirm the list, answer three or four questions, say
+   "move on"; check the nav coverage, `main.md`, then `tailor.md` and
+   `star.md` a minute later, then `index.md`.
+2. Same in voice mode, full orb, hands-free: does the silence cut-off fire
+   too early on a thoughtful pause? (SILENCE_MS in the page.) Does the
+   interrupt work?
+3. Mini orb: talk while reading the transcript.
+4. Open phase: "the number was 40 percent, not 30" → `main.md` rewritten,
+   children regenerated; "I also built X" → new experience interviewed.
+5. Capture a job with the profile switch on: `stories_used.txt` in the
+   folder and "Stories the tailor read" on the review page.
+6. Reload mid-interview: the next turn continues where it stopped.

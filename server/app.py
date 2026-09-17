@@ -15,9 +15,11 @@ from pydantic import BaseModel
 
 from . import queue, runner
 from .models import Job, Status
+from .profile import router as profile_router
 from .review import router as review_router
 from .screen import router as screen_router
 from .settings import router as settings_router
+from .voice import router as voice_router
 
 ROOT = Path(__file__).resolve().parent.parent
 REVIEW_DIR = ROOT / "review"
@@ -48,6 +50,8 @@ class StatusUpdate(BaseModel):
 app.include_router(review_router)
 app.include_router(screen_router)
 app.include_router(settings_router)
+app.include_router(profile_router)
+app.include_router(voice_router)
 
 
 @app.get("/health")

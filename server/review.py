@@ -120,6 +120,7 @@ def detail(job_id: str) -> dict:
         # keeps the rest.
         "fill_notes": latest_section(read("fill_notes.md")),
         "answers": latest_section(read("answers.md")),
+        "stories_used": [line for line in read("stories_used.txt").splitlines() if line.strip()],
         "error": read("error.txt"),
         "error_detail": job.error,
         "log": _log_path(job.id),
