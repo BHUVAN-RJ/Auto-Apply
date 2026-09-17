@@ -17,6 +17,7 @@ const SETTLE_MS = 1500;
 const HOST_ID = "job-autopilot-screen";
 
 const LABELS = {
+  perm: "PERM ad",
   experience: "Experience",
   visa: "Visa",
   export_control: "Export control",
@@ -40,7 +41,23 @@ const COLOURS = {
   not_a_job: { tone: "#a0a0a0", tag: "NO POSTING", hint: "Could not find a job description on this page. If it is still loading, press Again." },
 };
 
-const CHECKS = "years of experience, visa and sponsorship, export control, clearance and citizenship, start date and graduation window, location, degree, seniority";
+const CHECKS = "years of experience, visa and sponsorship, export control, clearance and citizenship, start date and graduation window, location, degree, seniority, PERM ads";
+
+// An ok or caution verdict queues the job on its own after this long; the
+// bar across the button is the countdown, and a click on it cancels. A
+// reject never queues itself: the button waits for the person.
+const AUTO_ADD_MS = 2000;
+const AUTO_ADD = new Set(["ok", "caution"]);
+
+// On Jobright itself only the posting pages carry a job; the recommend
+// list, search, and the rest are shells around many. A Jobright posting
+// page is screened but never queued on its own: its Apply button leads to
+// the employer's page, which is the URL worth queueing, and queueing both
+// would run the pipeline twice for one job.
+const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
+function isPosting() {
+  return !onJobright || location.pathname.startsWith("/jobs/info/");
+}
 
 let lastUrl = "";
 
@@ -102,8 +119,16 @@ function render(result, { pending = false } = {}) {
                text-transform: uppercase; cursor: pointer; }
       button:hover { background: #fff; color: #000; }
       button:disabled { opacity: .5; cursor: default; }
-      button.add { background: ${c.tone}; color: #000; border-color: ${c.tone}; }
+      button.add { background: ${c.tone}; color: #000; border-color: ${c.tone}; position: relative; overflow: hidden; }
       button.add:hover { background: #fff; border-color: #fff; }
+      button.add.counting { background: #fff; color: #000; border-color: #fff; }
+      button.add.counting::before { content: ""; position: absolute; inset: 0; background: ${c.tone};
+                                    transform-origin: left; transform: scaleX(0);
+                                    animation: fill ${AUTO_ADD_MS}ms linear forwards; z-index: 0; }
+      button.add.counting span { position: relative; z-index: 1; }
+      button.add.done { background: #000; color: ${c.tone}; border-color: ${c.tone}; cursor: default; }
+      @keyframes fill { to { transform: scaleX(1); } }
+      @media (prefers-reduced-motion: reduce) { button.add.counting::before { animation-duration: 0s; transform: scaleX(1); } }
       button:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
       .actions { display: flex; gap: 6px; white-space: nowrap; }
     </style>
@@ -115,19 +140,34 @@ function render(result, { pending = false } = {}) {
         ${flags ? `<ul>${flags}</ul>` : ""}
       </div>
       <div class="actions">
-        ${pending ? "" : `<button class="add" data-act="add">Add to autopilot</button>`}
-        ${pending ? "" : `<button data-act="again">Again</button>`}
+        ${pending ? "" : `<button class="add" data-act="add"><span>Add to autopilot</span></button>`}
         <button data-act="close">✕</button>
       </div>
     </div>`;
 
-  shadow.addEventListener("click", async (e) => {
-    const act = e.target?.dataset?.act;
-    if (act === "close") host.remove();
-    if (act === "again") screen({ force: true });
-    if (act === "add") {
-      e.target.disabled = true;
-      e.target.textContent = await addToQueue();
+  const add = shadow.querySelector("button.add");
+  let timer = null;
+  const label = (text) => { add.querySelector("span").textContent = text; };
+  const queue = async () => {
+    timer = null;
+    add.classList.remove("counting");
+    add.disabled = true;
+    label("Adding…");
+    label(await addToQueue());
+    add.classList.add("done");
+  };
+  if (add && AUTO_ADD.has(verdict) && !onJobright) {
+    add.classList.add("counting");
+    label("Adding to autopilot");
+    timer = setTimeout(queue, AUTO_ADD_MS);
+  }
+
+  shadow.addEventListener("click", (e) => {
+    const act = e.target?.closest?.("[data-act]")?.dataset?.act;
+    if (act === "close") { clearTimeout(timer); host.remove(); }
+    if (act === "add" && !add.disabled) {
+      if (timer) { clearTimeout(timer); timer = null; add.classList.remove("counting"); label("Add to autopilot"); }
+      else queue();
     }
   });
   document.documentElement.appendChild(host);
@@ -158,6 +198,7 @@ async function addToQueue() {
 }
 
 async function screen({ force = false } = {}) {
+  if (!isPosting()) return;
   const text = pageText();
   if (text.length < MIN_TEXT) return;
   render({ summary: "" }, { pending: true });

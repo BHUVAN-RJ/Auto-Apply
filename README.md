@@ -316,27 +316,36 @@ retry is informed rather than a reroll.
 
 ## On-page screen
 
-Click Apply on Jobright or LinkedIn, and whatever site it lands on gets a
-bar across the top within a couple of seconds: red NOT OK for an
-auto-reject, amber CAUTION for a soft one, green OK for clear, grey when
-the page holds no posting (a login wall, a redirect still loading; press
-Again). The same happens on the usual ATS domains opened any other way. Each line is one requirement in the
-posting's own words — years of experience, no sponsorship, ITAR, clearance
-or citizenship, a start date or graduation window, a role outside the US,
-a required degree, a senior title — and why it applies to the facts in
-`base/applicant.md`. Without that file the facts are derived from the resume
-once and the bar says so, since a resume knows nothing about visas or start
-dates. "Add to autopilot" on the bar is the same capture as the context
-menu. The verdict is cached per URL, reused by the pipeline,
-and shown again on the review page. It is advice; nothing is skipped by it.
+Open a posting on Jobright, or click its Apply button, and the page it
+lands on gets a bar across the top within a couple of seconds: red NOT OK
+for an auto-reject, amber CAUTION for a soft one, green OK for clear, grey
+when the page holds no posting (a login wall, a redirect still loading).
+Each line is one requirement in the posting's own words — years of
+experience, no sponsorship, ITAR, clearance or citizenship, a start date or
+graduation window, a role outside the country, a required degree, a senior
+title, a PERM advertisement — and why it applies to the facts in
+`base/applicant.md`. Without that file the facts are derived from the
+resume once and the bar says so, since a resume knows nothing about visas
+or start dates. A stretch is not a reject: another city in the same
+country, a cohort a year off, one year short on experience, a missing
+skill are at most a soft line.
+
+Off Jobright, an OK or CAUTION verdict queues the job by itself after a
+two-second countdown drawn across the button; a click during it cancels.
+NOT OK waits for the click. On Jobright's own posting pages the bar only
+advises, because the Apply button leads to the employer's page, and that is
+the URL worth queueing. The verdict is cached per URL, reused by the
+pipeline, and shown again on the review page. It is advice; nothing is
+skipped by it. Any other page still queues by hand from the context menu.
 
 ## Use profile
 
-A switch in the page header. On, the tailor, the cover letter, the form
+Shown in the page header as "Profile not set up yet" or "Profile used for
+tailoring". Once a story exists, the tailor, the cover letter, the form
 answers, and the screen are given `base/applicant.md` and every document in
-`base/stories/` (one per role or project; the interviewer that writes them
-is the next phase). Off, or on with nothing written yet, everything runs on
-the resume and `base/profile.md` alone.
+`base/stories/` (one per role or project, written by the Profile
+interview). Until then everything runs on the resume and `base/profile.md`
+alone. Clicking the label opens the Profile tab.
 
 ## Fit assessment
 

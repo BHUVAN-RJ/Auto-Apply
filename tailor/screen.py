@@ -24,7 +24,7 @@ RULES = Path(__file__).resolve().parent / "screen_rules.md"
 
 CATEGORIES = (
     "experience", "visa", "export_control", "clearance", "timeline",
-    "location", "degree", "seniority", "other",
+    "location", "degree", "seniority", "perm", "other",
 )
 SEVERITIES = ("hard", "soft")
 VERDICTS = ("reject", "caution", "ok", "not_a_job")

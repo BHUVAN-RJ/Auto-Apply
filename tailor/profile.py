@@ -56,12 +56,13 @@ def derive_model() -> str:
 DERIVE_PROMPT = """You are given a resume in LaTeX. Write the applicant's hard facts as a
 markdown bullet list, in exactly this shape, one line each, nothing else:
 
-- Years of professional experience: <number, counted from the dated roles; internships count at half>
+- Years of professional experience: <number, counted from the dated roles; internships and research posts count in full>
 - Level: <entry level / mid / senior, from titles and years>
 - Work authorisation: unknown
 - Security clearance: unknown
 - Country: <country of the most recent address or role>
 - Location: <city from the resume header, or unknown>
+- Relocation: acceptable anywhere in the country above; remote and hybrid are fine
 - Earliest start date: unknown
 - Degrees held: <each degree with its year>
 - Graduation: <most recent graduation year, and whether it is in the past>

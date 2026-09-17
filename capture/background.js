@@ -78,12 +78,12 @@ function notify(title, message) {
   });
 }
 
-// Clicking Apply on Jobright or LinkedIn lands on whatever site the employer
-// uses, which cannot be enumerated in the manifest. Any tab that was opened
-// from one of those hosts, or navigated away from one, is screened wherever
-// it ends up. Pages already in the content script's match list run once;
-// the script guards itself against a second copy.
-const SOURCE_HOSTS = ["jobright.ai", "linkedin.com"];
+// Clicking Apply on Jobright lands on whatever site the employer uses,
+// which cannot be enumerated in the manifest. Any tab that was opened from
+// Jobright, or navigated away from it, is screened wherever it ends up.
+// Nothing else is screened: the screen is for the Jobright flow, and the
+// context menu still queues any page by hand.
+const SOURCE_HOSTS = ["jobright.ai"];
 const marked = new Set();
 const lastUrl = new Map();
 
@@ -108,8 +108,8 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (info.url) {
-    // Same-tab navigation off Jobright or LinkedIn: the Apply button that
-    // does not open a new tab.
+    // Same-tab navigation off Jobright: the Apply button that does not
+    // open a new tab.
     const previous = lastUrl.get(tabId) || "";
     if (fromSource(previous) && !fromSource(info.url)) marked.add(tabId);
     lastUrl.set(tabId, info.url);

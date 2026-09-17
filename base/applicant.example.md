@@ -17,8 +17,8 @@ so a vague line here means a vague verdict.
   will need H-1B sponsorship in the future.
 - Security clearance: none, and not eligible (not a US citizen).
 - Country: United States only. Roles located outside the US are a reject.
-- Location: Austin, TX. Remote or hybrid anywhere in the US is fine;
-  onsite elsewhere needs relocation, which is acceptable.
+- Location: Austin, TX. Remote or hybrid anywhere in the US is fine.
+- Relocation: acceptable anywhere in the US.
 - Earliest start date: immediately.
 - Degrees held: MS Computer Science (2025), BE Computer Science (2022).
 - Graduation: already graduated. New-grad windows for 2026 or 2027
