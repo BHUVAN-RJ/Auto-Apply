@@ -168,9 +168,8 @@
   section.detail.agent { background: linear-gradient(var(--purple-soft), var(--purple-soft)), var(--bg); }
   .head { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: baseline; margin-bottom: .8rem; }
   .head h2 { margin: 0; font-size: 20px; text-transform: uppercase; letter-spacing: .02em; line-height: 1.2; text-wrap: balance; }
-  .head a, .head .folder { font-size: 11px; }
+  .head a { font-size: 11px; }
   .head a { color: var(--ink); }
-  .head .folder { color: var(--muted); margin-left: auto; }
 
   .state { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .55rem;
            font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
@@ -256,7 +255,7 @@
     <button id="tabProfile" aria-current="false">Profile</button>
   </div>
   <span class="count" id="count"></span>
-  <label class="switch" title="Feed base/applicant.md and base/stories/ to the models. Off, or on with nothing written, means the resume alone.">
+  <label class="switch" title="Tailor with your profile and stories as well as the resume. Off, or on with nothing written yet, means the resume alone.">
     <input type="checkbox" id="useProfile"> Use profile
   </label>
 </header>
@@ -470,7 +469,7 @@ async function show(id) {
     ${banners(data)}
     ${working ? `
       <div class="actions">
-        <span class="state agent">Agent is working (pid ${data.fill.pid})</span>
+        <span class="state agent">Agent is working</span>
         <span class="hint">Leave the browser alone. Options return in ${working}s.</span>
       </div>` : ""}
     ${!reviewable && !filled && !working ? `
@@ -571,7 +570,6 @@ function head(job, data) {
       <h2>${escape(job.title || "Untitled role")}</h2>
       <span class="co">${escape(job.company || "")}</span>
       <a href="${escape(job.url)}" target="_blank" rel="noreferrer">open posting ↗</a>
-      ${data ? `<span class="folder">${escape(data.folder)}</span>` : ""}
     </div>`;
 }
 
@@ -595,7 +593,7 @@ function banners(data) {
     html += `<div class="banner warn"><strong>Screen failed:</strong> ${escape(data.screen_error.split("\n")[0])}</div>`;
   }
   if (data.mismatch) {
-    html += `<div class="banner warn"><strong>The model thinks this is a poor fit.</strong>
+    html += `<div class="banner warn"><strong>This looks like a poor fit.</strong>
       ${escape(data.mismatch.replace(/^#.*\n/, "").split("\n\n")[0].trim())}
       <br>Nothing was tailored. It is still your call.</div>`;
   }
@@ -615,14 +613,14 @@ function banners(data) {
       The browser is opening; leave it alone.</div>`;
   } else if (data.status === "approved") {
     html += `<div class="banner go"><strong>Approved.</strong> Press “Fill the form now”
-      when you are ready, or run <code>python apply.py ${data.id}</code>.</div>`;
+      when you are ready.</div>`;
   }
   if (data.status === "filling" && data.fill) {
     html += `<div class="banner warn"><strong>Filling the form.</strong>
       The agent is working in the browser window; leave it alone.</div>`;
   } else if (data.status === "filling") {
     html += `<div class="banner stop"><strong>The fill died.</strong>
-      No apply.py is running for this job. Press “Restart the fill”.</div>`;
+      Nothing is filling this form any more. Press “Restart the fill”.</div>`;
   }
   return html;
 }
@@ -631,7 +629,7 @@ async function approve(id) {
   await act(id, async () => {
     const result = await api(`/review/${id}/approve`, { method: "POST", body: "{}" });
     if (!result.filling) {
-      alert(`Approved. Autofill is switched off, so run: python apply.py ${id}`);
+      alert("Approved. Automatic filling is switched off, so press “Fill the form now” when you are ready.");
     }
   });
 }
@@ -655,7 +653,7 @@ async function fillAgain(id) {
       return;
     } catch (err) {
       if (err.detail?.error !== "fill_running") throw err;
-      const ok = confirm(`A fill is already running for this job (pid ${err.detail.pid}).\n` +
+      const ok = confirm("A fill is already running for this job.\n" +
         "This will kill the current job and restart. Are you sure you want to continue?");
       if (!ok) return;
     }
@@ -699,7 +697,7 @@ async function revise(id) {
     const result = await api(`/review/${id}/revise`, {
       method: "POST", body: JSON.stringify({ instruction }),
     });
-    alert(`New version written to ${result.folder}`);
+    alert("New version ready.");
   });
 }
 
@@ -875,7 +873,7 @@ const Profile = (() => {
       an interviewer would. What you tell me becomes one document per experience: the tailor
       swaps in the right story for each posting, and you get a STAR write-up to reread before
       interviews. Stop any time; the next question picks up where you left off.</p>
-      ${state.has_resume ? "" : `<div class="banner stop">No <code>base/resume.tex</code> found. The interview starts from the resume.</div>`}
+      ${state.has_resume ? "" : `<div class="banner stop">No resume found. The interview starts from the resume.</div>`}
       <h3>Anything else to hand over (optional)</h3>
       <textarea id="seed" placeholder="Notes, an old resume, a project README… pasted here or picked below (PDF, text, markdown; several files are fine). Used once to find experiences, then discarded."></textarea>
       <div class="actions">
@@ -884,7 +882,6 @@ const Profile = (() => {
       </div>
       <div class="actions">
         <button class="act primary" id="startInterview" ${state.has_resume ? "" : "disabled"}>Start the interview</button>
-        <span class="hint">Reads the resume with ${escape(state.model)}.</span>
       </div>`;
     // Files go to the server for text extraction (PDFs need pypdf); each
     // lands in the box under its own heading so the model knows what is what.
@@ -1064,12 +1061,8 @@ const Profile = (() => {
     const bar = $("voicebar");
     if (!bar) return;
     if (!voice) { bar.innerHTML = `<span>Voice status unavailable.</span>`; return; }
-    const stt = voice.stt.ready ? "local whisper" : Voice.browserSTT() ? "browser speech (local whisper not set up)" : "unavailable";
-    const names = { fish: "Fish Audio", kokoro: "Kokoro", piper: "Piper", say: "system voice" };
-    const tts = !voice.tts.ready ? "browser voice"
-      : voice.tts.backend === "fish" ? `Fish Audio ${escape(voice.tts.fish.model)}`
-      : `local ${names[voice.tts.backend] || voice.tts.backend}`;
-    const why = voice.tts.kokoro && voice.tts.backend !== "kokoro" ? `<span title="${escape(voice.tts.kokoro)}">(Kokoro: ${escape(voice.tts.kokoro)})</span>` : "";
+    const stt = voice.stt.ready ? "ready" : Voice.browserSTT() ? "browser (speech model not set up)" : "unavailable";
+    const tts = voice.tts.ready ? "ready" : "browser voice";
     let setup = "";
     if (voice.downloading) {
       setup = Object.entries(voice.progress).map(([name, p]) => p.state === "downloading" && p.total
@@ -1078,8 +1071,8 @@ const Profile = (() => {
     } else if (voice.missing.length) {
       setup = `<button class="act" id="voiceSetup">Download the speech model (${voice.missing.length} file${voice.missing.length === 1 ? "" : "s"})</button>`;
     }
-    const brew = voice.stt.install ? `<span>whisper.cpp missing: <code>${escape(voice.stt.install)}</code></span>` : "";
-    bar.innerHTML = `<span>Mic: ${stt}</span><span>Replies: ${tts} ${why}</span>${setup}${brew}`;
+    const install = voice.stt.install ? `<span>Speech recognition not installed: <code>${escape(voice.stt.install)}</code></span>` : "";
+    bar.innerHTML = `<span>Mic: ${stt}</span><span>Voice: ${tts}</span>${setup}${install}`;
     if ($("voiceSetup")) $("voiceSetup").onclick = async () => {
       voice = await api("/voice/setup", { method: "POST", body: "{}" });
       renderVoiceBar();
