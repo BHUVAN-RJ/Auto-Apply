@@ -56,8 +56,9 @@ time it is proposed, not after it is built. Concretely:
 - **All state lives under the app data directory or `base/`.** No
   hardcoded machine paths. Secrets (the OpenRouter key) move from `.env`
   to a first-run screen when packaging starts; until then `.env` stands.
-- **Chrome stays the user's own.** The fill attaches over CDP; the
-  extension needs Chrome anyway. That is the second click.
+- **Chrome stays the user's own.** The fill attaches over CDP. The capture
+  needs no extension: `browser/inject.py` puts the script into our
+  Chrome's tabs over the same port (Phase 10).
 - **The shell is Electron or Tauri around the existing Python server.**
   The page on 8787 is the UI already; the shell adds a window, spawns the
   bundled Python, and nothing else.
@@ -756,3 +757,70 @@ Built and checked with headless screenshots on dummy rows; not yet used
 through a full capture → approve → fill → submitted cycle after the
 redesign. The Profile tab took the tokens (mono, square) but its layout
 is unchanged and is the next thing to restyle.
+
+## Phase 10 — the capture without an extension (prototype)
+
+The extension was the one step of the one-click thesis with no clean
+answer. Installing an unpacked extension needs Developer mode and a
+folder pick; `--load-extension` is gone from branded Chrome since 137;
+policy force-install is ignored on unmanaged Macs; the Web Store is a
+review queue, and then still a click. Meanwhile the Chrome the fill runs
+in is already ours (`browser/chrome.py`), and Jobright is already logged
+in there, so the capture can live in that Chrome without installing
+anything.
+
+`browser/inject.py` attaches to the debugging port, watches every tab
+(`Target.setDiscoverTargets` + `setAutoAttach`), and evaluates
+`capture/content.js` on load in the tabs that matter: Jobright, and
+whatever Jobright's Apply opens. The extension code stays in `capture/`
+untouched and still loads the old way; the same `content.js` serves both.
+
+### What the first run taught
+
+- **Jobright's Apply tab has no opener.** "Apply with autofill" is
+  Jobright's own extension creating the tab (`chrome.tabs.create`), so
+  there is no `openerId` and no `Page.windowOpen`. The URL it opens is
+  tagged `?jr_id=<posting id>`; that tag is how the tab is recognised
+  (`SOURCE_MARKS`). Plain links still go by opener.
+- **A main-world `fetch` to 8787 can hang forever.** Oracle's ATS page
+  registers a service worker that swallowed the call. An extension content
+  script never met this. The page now talks to the server through a CDP
+  binding (`Runtime.addBinding`, `__autopilotRequest` /
+  `__autopilotReply`): Python makes the HTTP call. The page's CSP, workers,
+  and fetch overrides are out of the loop, and the server is never
+  reachable from page JavaScript at all. Without the binding (the
+  extension path) `content.js` falls back to `fetch`.
+- **Injecting at `load` is earlier than `document_idle`.** Oracle's page
+  is an empty shell at load and fills in from an XHR seconds later;
+  `content.js` saw 200 characters and gave up for good. It now waits for
+  text, a second at a time, for up to twenty, then paints "No posting"
+  with an Again button (the hint had promised one that did not exist).
+- **Jobright's posting page now presses Apply itself.** An ok or caution
+  verdict counts down and presses Jobright's Apply; the employer tab
+  screens and queues on its own. A reject waits for the click. Nothing on
+  a form is ever pressed: the button matched is the one on the posting
+  page, and it opens a tab.
+- **Some Apply buttons land on a bare form.** No description to fetch,
+  and ATS pages render client-side anyway. `server/postings.py` keeps
+  Jobright's copy of the posting (saved when its page is screened, keyed
+  by posting id) and the employer page's rendered text (sent with the
+  capture). `pipeline.fetch_posting` uses the fetch when it has a real
+  description, else the employer page's text, else Jobright's. Company
+  comes from Jobright's page title when the employer page has none.
+
+### Status
+
+Prototype, run by hand with `python -m browser.inject`. Verified live:
+posting page → countdown → Apply → employer tab screened → queued with
+its text → pipeline reached review on a page the fetch could not read.
+Next, in order:
+
+1. `server/runner.py` starts the injector with the server (one process,
+   restarted if it dies; `Chrome quit` is the normal way it dies) so
+   nothing is run by hand.
+2. Retire the extension path once the injector has done a week of real
+   captures: `capture/background.js` and the manifest go, `content.js`
+   stays as the injected script, the `fetch` fallback in it goes.
+3. Facts are still derived from the resume on most screens; the
+   "Unchecked: visa and dates" line stays until `base/applicant.md` is
+   written from the profile interview.

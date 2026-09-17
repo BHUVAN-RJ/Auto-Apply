@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from archive import store
-from server import queue
+from server import postings, queue
 from server import screen as screen_server
 from server.models import Job, Status
 from tailor import cover, fetch, profile, tailor
@@ -78,6 +78,26 @@ def retailor(job: Job, instruction: str) -> Path:
     return process(job, extra_instruction=instruction)
 
 
+def fetch_posting(job: Job) -> fetch.Posting:
+    """The posting text: fetched when the page has it, else what the browser saw.
+
+    An Apply button can land on a bare application form, and an ATS page can
+    render client-side, so the fetch may come back with nothing worth
+    tailoring against. The browser kept the employer page's text and
+    Jobright's copy of the posting (server/postings.py); the first of those
+    with a real description stands in.
+    """
+    try:
+        return fetch.fetch(job.url)
+    except Exception as error:
+        for saved in postings.fallbacks(job.id, job.url):
+            if len(saved.text) >= fetch.MIN_USEFUL_CHARS:
+                print(f"fetch failed ({error}); using the text the browser saw at {saved.url}")
+                return fetch.Posting(url=job.url, text=saved.text, title=saved.title,
+                                     company=saved.company)
+        raise
+
+
 def allocate(job: Job) -> Path:
     """A fresh application folder, recorded on the queue row."""
     app_dir = store.create(job)
@@ -96,7 +116,7 @@ def process(job: Job, extra_instruction: str = "") -> Path:
     # the extension often captures none (a Jobright link that lands on Ashby
     # exposes no metadata), so every first run was `unknown-company_...`.
     try:
-        posting = fetch.fetch(job.url)
+        posting = fetch_posting(job)
     except Exception:
         # A failed fetch still gets its own folder, so the error lands next
         # to this run's record and not in the previous run's.

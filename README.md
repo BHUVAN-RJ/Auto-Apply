@@ -118,8 +118,10 @@ cp .env.example .env                # add your OpenRouter key
 cp base/applicant.example.md base/applicant.md   # fill in the Facts section
 ```
 
-Load the capture extension: Chrome → `chrome://extensions` → Developer mode →
-Load unpacked → select `capture/`.
+The capture needs no extension in the app's own Chrome: `python -m
+browser.inject` puts the screen into its Jobright tabs and whatever Apply
+opens. To use it in your everyday Chrome instead, load `capture/` as an
+unpacked extension (`chrome://extensions` → Developer mode → Load unpacked).
 
 ## Run
 

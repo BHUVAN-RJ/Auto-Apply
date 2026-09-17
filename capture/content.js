@@ -14,6 +14,10 @@ window.__jobAutopilotScreen = true;
 const SERVER = "http://127.0.0.1:8787";
 const MIN_TEXT = 400; // shorter than this is a shell page, not a posting
 const SETTLE_MS = 1500;
+// An ATS page can be a shell at load and fill in from an XHR seconds later
+// (Oracle does). Too little text is waited on, not given up on.
+const WAIT_MS = 1000;
+const WAIT_MAX = 20;
 const HOST_ID = "job-autopilot-screen";
 
 const LABELS = {
@@ -48,12 +52,16 @@ const CHECKS = "years of experience, visa and sponsorship, export control, clear
 // reject never queues itself: the button waits for the person.
 const AUTO_ADD_MS = 2000;
 const AUTO_ADD = new Set(["ok", "caution"]);
+// Once the job is queued (or its page opened) the bar has done its work and
+// closes itself after this long, counted down in red across the ✕.
+const AUTO_CLOSE_MS = 6000;
 
 // On Jobright itself only the posting pages carry a job; the recommend
 // list, search, and the rest are shells around many. A Jobright posting
-// page is screened but never queued on its own: its Apply button leads to
-// the employer's page, which is the URL worth queueing, and queueing both
-// would run the pipeline twice for one job.
+// page is screened but never queued: its Apply button leads to the
+// employer's page, which is the URL worth queueing, and queueing both
+// would run the pipeline twice for one job. There the button (and the
+// countdown) presses Apply instead, and the employer's page queues itself.
 const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
 function isPosting() {
   return !onJobright || location.pathname.startsWith("/jobs/info/");
@@ -77,14 +85,19 @@ function render(result, { pending = false } = {}) {
   const verdict = pending ? "pending" : result.verdict in COLOURS ? result.verdict : "error";
   const c = COLOURS[verdict];
   const tag = c.tag;
-  const facts = result.facts_source === "resume"
-    ? "facts derived from your resume only, so visa and dates are unknown"
-    : result.facts_source ? "facts from your profile" : "";
+  // Facts derived from the resume say nothing about visa status or dates,
+  // so those checks did not happen. That is a line of its own under the
+  // verdict, not a clause buried in the summary.
+  const fromResume = result.facts_source === "resume";
+  const facts = fromResume ? "" : result.facts_source ? "; facts from your profile" : "";
   const about = pending
     ? `Reading this posting against your profile. Checks: ${CHECKS}.`
-    : verdict === "error" || verdict === "not_a_job" ? c.hint : `${c.hint} Checked ${CHECKS}${facts ? `; ${facts}` : ""}.${result.cached ? " Cached." : ""}`;
+    : verdict === "error" || verdict === "not_a_job" ? c.hint : `${c.hint} Checked ${CHECKS}${facts}.${result.cached ? " Cached." : ""}`;
 
-  const flags = (result.flags || [])
+  const unchecked = fromResume && !(verdict === "error" || verdict === "not_a_job")
+    ? `<li class="unchecked"><b>Unchecked</b>: visa and dates. The facts come from your resume only; add your applicant facts in the app's Profile tab.</li>`
+    : "";
+  const flags = unchecked + (result.flags || [])
     .map(
       (f) =>
         `<li><b>${esc(LABELS[f.category] || f.category)}</b>` +
@@ -122,13 +135,13 @@ function render(result, { pending = false } = {}) {
       button.add { background: ${c.tone}; color: #000; border-color: ${c.tone}; position: relative; overflow: hidden; }
       button.add:hover { background: #fff; border-color: #fff; }
       button.add.counting { background: #fff; color: #000; border-color: #fff; }
-      button.add.counting::before { content: ""; position: absolute; inset: 0; background: ${c.tone};
-                                    transform-origin: left; transform: scaleX(0);
-                                    animation: fill ${AUTO_ADD_MS}ms linear forwards; z-index: 0; }
-      button.add.counting span { position: relative; z-index: 1; }
+      button.add .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: ${c.tone}; }
+      button.add span { position: relative; z-index: 1; }
       button.add.done { background: #000; color: ${c.tone}; border-color: ${c.tone}; cursor: default; }
-      @keyframes fill { to { transform: scaleX(1); } }
-      @media (prefers-reduced-motion: reduce) { button.add.counting::before { animation-duration: 0s; transform: scaleX(1); } }
+      button.close { position: relative; overflow: hidden; }
+      button.close .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #ff5c5c; }
+      button.close span { position: relative; z-index: 1; }
+      li.unchecked b { color: #a0a0a0; }
       button:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
       .actions { display: flex; gap: 6px; white-space: nowrap; }
     </style>
@@ -140,34 +153,81 @@ function render(result, { pending = false } = {}) {
         ${flags ? `<ul>${flags}</ul>` : ""}
       </div>
       <div class="actions">
-        ${pending ? "" : `<button class="add" data-act="add"><span>Add to autopilot</span></button>`}
-        <button data-act="close">✕</button>
+        ${pending ? "" : verdict === "error" || verdict === "not_a_job"
+          ? `<button data-act="again">Again</button>`
+          : `<button class="add" data-act="add"><i class="fill"></i><span>${onJobright ? "Open job page" : "Add to autopilot"}</span></button>`}
+        <button class="close" data-act="close"><i class="fill"></i><span>✕</span></button>
       </div>
     </div>`;
 
+  // On the employer's page the button queues the job; on Jobright's own
+  // posting page it presses Jobright's Apply, which opens the employer's
+  // page in a new tab, where this script runs again and queues from there.
+  // An ok or caution verdict does either by itself after a countdown drawn
+  // left to right across the button; a click during the countdown cancels.
   const add = shadow.querySelector("button.add");
-  let timer = null;
+  const bar = add?.querySelector(".fill");
   const label = (text) => { add.querySelector("span").textContent = text; };
-  const queue = async () => {
-    timer = null;
-    add.classList.remove("counting");
-    add.disabled = true;
-    label("Adding…");
-    label(await addToQueue());
-    add.classList.add("done");
+  const idle = onJobright ? "Open job page" : "Add to autopilot";
+  const closeBar = shadow.querySelector("button.close .fill");
+  let timer = null;
+  let started = 0;
+  let frame = 0;
+  const draw = () => {
+    const done = Math.min(1, (performance.now() - started) / AUTO_ADD_MS);
+    bar.style.width = `${done * 100}%`;
+    if (done < 1 && timer) frame = requestAnimationFrame(draw);
   };
-  if (add && AUTO_ADD.has(verdict) && !onJobright) {
+  // After the job is queued the bar counts itself out, red across the ✕.
+  let closing = 0;
+  const autoClose = () => {
+    const from = performance.now();
+    const tick = () => {
+      const done = Math.min(1, (performance.now() - from) / AUTO_CLOSE_MS);
+      closeBar.style.width = `${done * 100}%`;
+      if (done < 1) closing = requestAnimationFrame(tick);
+      else host.remove();
+    };
+    closing = requestAnimationFrame(tick);
+  };
+  const act = async () => {
+    timer = null;
+    cancelAnimationFrame(frame);
+    add.classList.remove("counting");
+    bar.style.width = "0";
+    add.disabled = true;
+    if (onJobright) {
+      label("Opening job page…");
+      label(openJob() ? "Opened" : "No Apply button found");
+    } else {
+      label("Adding…");
+      label(await addToQueue());
+    }
+    add.classList.add("done");
+    autoClose();
+  };
+  const cancel = () => {
+    clearTimeout(timer); timer = null;
+    cancelAnimationFrame(frame);
+    add.classList.remove("counting");
+    bar.style.width = "0";
+    label(idle);
+  };
+  if (add && AUTO_ADD.has(verdict)) {
     add.classList.add("counting");
-    label("Adding to autopilot");
-    timer = setTimeout(queue, AUTO_ADD_MS);
+    label(onJobright ? "Opening job page" : "Adding to autopilot");
+    started = performance.now();
+    timer = setTimeout(act, AUTO_ADD_MS);
+    frame = requestAnimationFrame(draw);
   }
 
   shadow.addEventListener("click", (e) => {
-    const act = e.target?.closest?.("[data-act]")?.dataset?.act;
-    if (act === "close") { clearTimeout(timer); host.remove(); }
-    if (act === "add" && !add.disabled) {
-      if (timer) { clearTimeout(timer); timer = null; add.classList.remove("counting"); label("Add to autopilot"); }
-      else queue();
+    const action = e.target?.closest?.("[data-act]")?.dataset?.act;
+    if (action === "close") { if (timer) cancel(); cancelAnimationFrame(closing); host.remove(); }
+    if (action === "again") screen({ force: true });
+    if (action === "add" && !add.disabled) {
+      if (timer) cancel();
+      else act();
     }
   });
   document.documentElement.appendChild(host);
@@ -179,16 +239,63 @@ function esc(s) {
   })[ch]);
 }
 
+// Talks to the local server. When browser/inject.py put this script here it
+// also bound `__autopilotRequest`, and the request goes out through it:
+// Python does the HTTP, so the page's CSP, service worker, or a fetch
+// override cannot get in the way (an ATS page's worker has swallowed the
+// call before). As an extension content script there is no bridge, and
+// the fetch is made from the isolated world as before.
+let bridgeSeq = 0;
+const bridgeWaiting = new Map();
+window.__autopilotReply = (id, ok, status, body) => {
+  const settle = bridgeWaiting.get(id);
+  if (!settle) return;
+  bridgeWaiting.delete(id);
+  ok ? settle.resolve({ ok: status < 400, status, json: async () => body })
+     : settle.reject(new Error(body));
+};
+function post(path, body) {
+  if (typeof window.__autopilotRequest === "function") {
+    const id = ++bridgeSeq;
+    return new Promise((resolve, reject) => {
+      bridgeWaiting.set(id, { resolve, reject });
+      window.__autopilotRequest(JSON.stringify({ id, path, body }));
+    });
+  }
+  return fetch(`${SERVER}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// Presses Jobright's own Apply button. That is a user-level click on the
+// posting page, the same as the person pressing it: it opens the employer's
+// page and nothing more. Nothing here ever presses anything on a form.
+function openJob() {
+  const button = [...document.querySelectorAll("button, a")]
+    .find((el) => /^\s*apply\b/i.test(el.innerText || ""));
+  if (!button) return false;
+  button.click();
+  return true;
+}
+
+// The id in /jobs/info/<id>, which Jobright also tags onto the employer
+// URL it opens as ?jr_id=<id>; the server pairs the two by it.
+function postingId() {
+  const match = location.pathname.match(/\/jobs\/info\/([A-Za-z0-9_-]+)/);
+  return match ? match[1] : "";
+}
+
 async function addToQueue() {
   try {
-    const res = await fetch(`${SERVER}/capture`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: location.href,
-        title: document.title,
-        source: location.hostname,
-      }),
+    const res = await post("/capture", {
+      url: location.href,
+      title: document.title,
+      source: location.hostname,
+      // The rendered text, for when the fetch sees a client-side shell or
+      // an Apply that landed straight on the form.
+      text: pageText(),
     });
     const data = await res.json();
     return data.created ? "Added" : "Already queued";
@@ -197,17 +304,18 @@ async function addToQueue() {
   }
 }
 
-async function screen({ force = false } = {}) {
+async function screen({ force = false, waited = 0 } = {}) {
   if (!isPosting()) return;
   const text = pageText();
-  if (text.length < MIN_TEXT) return;
+  if (text.length < MIN_TEXT) {
+    const url = location.href;
+    if (waited < WAIT_MAX) setTimeout(() => { if (location.href === url) screen({ force, waited: waited + 1 }); }, WAIT_MS);
+    else render({ verdict: "not_a_job" });
+    return;
+  }
   render({ summary: "" }, { pending: true });
   try {
-    const res = await fetch(`${SERVER}/screen`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: location.href, title: document.title, text, force }),
-    });
+    const res = await post("/screen", { url: location.href, title: document.title, text, force });
     const data = await res.json();
     if (!res.ok) {
       render({ verdict: "error", error: data.detail || `server ${res.status}` });
@@ -217,6 +325,12 @@ async function screen({ force = false } = {}) {
     // Say so rather than show nothing, so a missing verdict is never
     // mistaken for a clean one.
     render(data);
+    // Jobright's copy of the posting outlives the page: the employer's
+    // Apply may land on a bare form, and the tailor still needs a
+    // description. Best effort, nothing waits on it.
+    if (onJobright && postingId()) {
+      post("/posting", { id: postingId(), url: location.href, title: document.title, text }).catch(() => {});
+    }
   } catch (err) {
     render({ verdict: "error", error: `Is the server running? ${err.message}` });
   }

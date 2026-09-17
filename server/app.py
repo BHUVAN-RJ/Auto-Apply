@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import queue, runner
+from . import postings, queue, runner
 from .models import Job, Status
 from .profile import router as profile_router
 from .review import router as review_router
@@ -41,6 +41,19 @@ class CaptureRequest(BaseModel):
     title: str = ""
     source: str = ""
     company: str = ""
+    # The page's rendered text, when the capture comes from the page itself.
+    # Kept for the pipeline in case the fetch sees only a client-side shell.
+    text: str = ""
+
+
+class PostingRequest(BaseModel):
+    """Jobright's own copy of a posting, keyed by its posting id."""
+
+    id: str
+    url: str
+    title: str = ""
+    text: str
+    company: str = ""
 
 
 class StatusUpdate(BaseModel):
@@ -59,6 +72,18 @@ def health() -> dict:
     return {"ok": True}
 
 
+@app.post("/posting")
+def posting(req: PostingRequest) -> dict:
+    """Keep a source site's copy of a posting, for the pipeline's fallback.
+
+    Some Apply buttons land on a bare application form; this text is what
+    the tailor gets then. Nothing is queued here.
+    """
+    postings.save_source(req.id, postings.Saved(url=req.url, title=req.title,
+                                                text=req.text, company=req.company))
+    return {"ok": True}
+
+
 @app.post("/capture")
 def capture(req: CaptureRequest) -> dict:
     """Called by the capture extension's context-menu item.
@@ -68,7 +93,10 @@ def capture(req: CaptureRequest) -> dict:
     scraped and the resume and letter are ready or on their way. Nothing
     past checkpoint 1 starts here; the fill still waits for approval.
     """
-    job, created = queue.add(Job(**req.model_dump()))
+    job, created = queue.add(Job(**req.model_dump(exclude={"text"})))
+    if req.text.strip():
+        postings.save_captured(job.id, postings.Saved(url=req.url, title=req.title,
+                                                      text=req.text, company=req.company))
     pid = None
     if job.status == Status.QUEUED:
         # A re-captured URL that never got processed is started too, rather

@@ -70,7 +70,9 @@ Specifically:
 | `tailor/interview.py` + `interview_rules.md` | the profile interviewer: state machine on disk under `base/stories/` (`_interview.json`, `<slug>/state.json`), one streamed turn per candidate message, header (`COVERED` / `DONE`, then `---`) parsed in code; the body is labelled by line (`ack:` and `ask:` spoken, `note:` text only; `_Parts` strips labels mid-stream and tags each delta `spoken`), and the page speaks only tagged parts, falling back to first sentence plus questions when a reply has no labels. Writes `main.md` on close; `story_rules.md` is the prompt for `tailor.md` and `star.md`, written by the heavy model in a thread |
 | `server/profile.py` | `/profile` status, `/profile/start`, `/profile/turn` (SSE, one JSON event per line), documents, regenerate |
 | `voice/` + `server/voice.py` | speech: whisper.cpp in (`stt.clean` drops whisper's `[BLANK_AUDIO]`-style markers, standalone um/uh/erm/hmm and immediate word repeats); Fish Audio out when `AUTOPILOT_FISH_API_KEY` is set (`fish.py`, hosted, one request per sentence, `s2.1-pro-free` by default, voice pinned by `reference_id` because the API otherwise picks a new voice per request; delivery tuned by ear: `(cheerful)` tag, temperature 0.9, speed 1.08, all overridable in `.env`); Kokoro (ONNX, `kokoro.py`, needs brew `espeak-ng`) out, `say` when Kokoro is not ready, Piper via `AUTOPILOT_PIPER_BIN`. `assets.py` finds binaries and downloads models into the app data dir; `/voice/status`, `/setup`, `/transcribe`, `/speak` |
-| `capture/content.js` | reads the page, calls `/screen`, paints the banner. Runs on Jobright posting pages (`/jobs/info/`) and on any tab opened from Jobright; an `ok` or `caution` verdict queues the job by itself after a 2 s countdown off Jobright, a `reject` waits for the click |
+| `capture/content.js` | reads the page, calls `/screen`, paints the banner. Runs on Jobright posting pages (`/jobs/info/`) and on any tab opened from Jobright, either as the extension's content script or evaluated by `browser/inject.py` (then it talks to the server through the `__autopilotRequest` binding, not `fetch`). An `ok` or `caution` verdict counts down 2 s and acts by itself: off Jobright it queues the job, on Jobright's posting page it presses Jobright's Apply so the employer tab queues itself; a `reject` waits for the click. Once done, a red 6 s countdown on the ✕ closes the bar. Facts derived from the resume add an "Unchecked: visa and dates" line under the summary. A page with no text after 20 s, or a screen error, gets an Again button |
+| `browser/inject.py` | the capture without an extension: attaches to our Chrome on 9333, evaluates `capture/content.js` in Jobright tabs and the tabs its Apply opens (by opener, or by the `?jr_id=` tag Jobright's extension puts on the URL), and answers the page's `__autopilotRequest` binding by making the HTTP call itself. Run by hand: `python -m browser.inject`. Never launches through browser-use, never closes anything |
+| `server/postings.py` | posting text the browser saw, for when the fetch gets a shell: `POST /posting` keeps Jobright's copy by posting id, `/capture` keeps the employer page's text; `pipeline.fetch_posting` falls back in that order |
 | `browser/guard.py` | the never-submit deny-list |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
@@ -141,8 +143,20 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   hard / soft / never per category; add a new false positive to the
   "never" line of its category, not to the prose.
 - **Auto-queue is off on Jobright's own pages** so one job is not queued
-  under the Jobright URL and the employer URL. If a job shows up twice,
-  look there first.
+  under the Jobright URL and the employer URL; there the countdown presses
+  Apply instead. If a job shows up twice, look there first.
+- **Jobright's Apply tab has no opener.** Jobright's extension creates it,
+  so `openerId` and `Page.windowOpen` are both absent. `inject.py` goes by
+  the `?jr_id=` tag on the URL.
+- **A page's `fetch` to 8787 can hang forever.** Oracle's ATS service
+  worker swallowed it; the banner sat on "Screening" with the server idle.
+  Injected `content.js` never fetches: the CDP binding does the HTTP.
+- **Injection at `load` is before client-side render.** Oracle had 200
+  characters at load; `content.js` now waits for text (up to 20 s) instead
+  of giving up.
+- **`.bar` was two things.** The banner and the button countdown shared a
+  class name inside one shadow root; the countdown became `position:
+  fixed` on top of its own label. Button fills are `.fill`.
 - **Chrome lives on port 9333**, detached, reused across runs. If a fill
   attaches to the wrong thing, `curl 127.0.0.1:9333/json` shows its tabs.
 - **Extra tabs mean extra fills.** Each `apply.py` opens its own tab. Four
