@@ -72,9 +72,10 @@ time it is proposed, not after it is built. Concretely:
 ```
 capture/   MV3 Chrome extension. Context-menu "Add this job" on any page.
            Posts {url, title, source, added_at} to the local server. Its
-           content script screens every page Apply lands on and paints
-           the verdict (content.js); background.js follows tabs off
-           Jobright and LinkedIn to wherever they go.
+           content script screens Jobright posting pages and every page
+           Jobright's Apply lands on, paints the verdict, and queues a
+           clean one by itself (content.js); background.js follows tabs
+           off Jobright to wherever they go.
 
 server/    FastAPI on localhost:8787. Owns queue.json. Serves the review UI.
            Holds approve/reject/revise state for both checkpoints.
@@ -104,8 +105,9 @@ archive/   Application folder writer plus index.csv.
 ## Flow
 
 ```
-you click Apply on Jobright/LinkedIn -> landing page screened, OK / NOT OK bar
-you right-click "Add this job"     ->  queue.json, and pipeline.py starts
+you click Apply on Jobright        -> landing page screened, OK / NOT OK bar
+OK or CAUTION queues itself in 2 s ->  queue.json, and pipeline.py starts
+(NOT OK waits for the button; any page still queues from the context menu)
     fetch posting -> tailor -> compile -> cover letter
     CHECKPOINT 1   web page: rationale, diff, PDF, letter; approve, reject, or revise
     approve starts apply.py (AUTOPILOT_AUTOFILL=1)
@@ -228,15 +230,15 @@ Built since, all verified on real runs:
 - Visa / work-authorisation guard, in code.
 - Terse rationale and fill notes on the review page (caveman style, after
   github.com/juliusbrussee/caveman); the resume and letter stay full prose.
-- Phase 6: the on-page screen. Click Apply on Jobright or LinkedIn and the
-  landing page gets an OK / NOT OK / CAUTION bar within seconds, with the
-  posting's own words per flag. Verdict cached per URL, archived as
-  `screen.json`, shown on the review page. Model side verified on real
-  postings; the browser side on LinkedIn, the Apply landing path awaiting a
-  run.
-- The "Use profile" switch: applicant facts and `base/stories/` fed to the
-  tailor, letter, answers, and screen when on; resume-only otherwise, with
-  screen facts derived from the resume and cached.
+- Phase 6: the on-page screen. Open a posting on Jobright or click its
+  Apply and the page gets an OK / NOT OK / CAUTION bar within seconds, with
+  the posting's own words per flag. Verdict cached per URL, archived as
+  `screen.json`, shown on the review page. OK and CAUTION queue the job on
+  their own off Jobright.
+- Applicant facts and `base/stories/` fed to the tailor, letter, answers,
+  and screen once a story exists; resume-only until then, with screen
+  facts derived from the resume and cached. The header says which.
+- Phase 9: the review page redesigned around the one decision (see below).
 
 ## What the first real run cost us
 
@@ -399,26 +401,32 @@ opens, before any decision to capture.
    posting (cache hit when the extension already did), archives it as
    `screen.json`, and the review page shows the flags above the rationale.
 
-### Categories (v1)
+### Categories (v2)
 
 Fixed set, returned by name so the page can colour and the reviewer can
-grep. Any other restriction the model notices goes under `other` so it can
-be promoted to a category later.
+grep. The first weeks of real screens showed the v1 table rejected
+stretches: another US city, a cohort one year off, 1.5 years against
+"0-1", a skill the resume did not list. A screen exists to catch the
+handful of postings that are certain to be thrown out, so each category in
+`screen_rules.md` now lists three things: what is `hard` (certain), what
+is one `soft` line (apply anyway, but know), and what is never a flag.
 
-| Category | Hard reject when |
-|---|---|
-| `experience` | Years required exceed the applicant's, with no "or equivalent" |
-| `visa` | No sponsorship, must be authorised without sponsorship now or in future, and the applicant needs it |
-| `export_control` | ITAR / EAR / "US persons only" |
-| `clearance` | Active or obtainable security clearance, or citizenship required |
-| `timeline` | Start date, graduation window, or contract term the applicant cannot meet |
-| `location` | Role outside the United States, or onsite in a city the applicant will not relocate to |
-| `degree` | A degree or licence the applicant does not hold, stated as required |
-| `seniority` | Title or scope above entry level (senior, staff, lead, principal, manager) |
-| `other` | Anything else phrased as a hard requirement |
+| Category | Hard | Never |
+|---|---|---|
+| `experience` | Required minimum two or more years above, no "or equivalent" | Over-qualified; no number; years met once internships and research count in full |
+| `visa` | Sponsorship refused now and in future, and needed | The form question; "sponsorship available"; E-Verify text |
+| `export_control` | ITAR / EAR / "US persons only" for this role | Company-wide "some roles may" notes |
+| `clearance` | Active clearance, citizenship, or residency required | The form question; "or" clauses with a path |
+| `timeline` | Enrolment after graduation; a start date or term the facts rule out | A window the latest degree falls in; a cohort year in the title alone |
+| `location` | Outside the applicant's country; remote restricted to a region they will not move to | Another city in the same country (relocation is the default); several offices listed; HQ in a remote header |
+| `degree` | PhD or a licence required, no equivalent | "CS or related" when held; "MS preferred" when held |
+| `seniority` | Staff, principal, director, manager with scope stated | Level names (II, L4); a company's own levelling vocabulary |
+| `perm` | Two or more PERM tells: mail-in resume, job code, single exact salary, "labor certification", a named HR contact | A plain salary range |
+| `other` | A human language; a physical requirement; "internal only" | Skills, domains, salary, posting age |
 
-The verdict is `reject`, `caution`, `ok`, or `not_a_job`. `caution` is for a
-requirement that is present but soft ("preferred", "or equivalent", "ideally").
+The verdict is `reject`, `caution`, `ok`, or `not_a_job`, recomputed from
+the flags in code. Derived facts now carry a relocation line so the model
+does not have to guess.
 
 ### Where things go
 
@@ -428,10 +436,10 @@ requirement that is present but soft ("preferred", "or equivalent", "ideally").
 | `tailor/screen.py` | `screen(posting_text, applicant) -> Screen`; JSON reply parsed and validated against the category enum, never trusted raw |
 | `tailor/screen_rules.md` | The prompt, sent verbatim, same convention as the other rules files |
 | `server/screen.py` | `POST /screen` and the URL-keyed cache in `data/screens.json` |
-| `capture/content.js` | Text extraction, banner, posts to the server. Injected on the ATS match list, and by `background.js` into any tab opened from or navigated away from `jobright.ai` or `linkedin.com`, wherever Apply lands |
+| `capture/content.js` | Text extraction, banner, posts to the server. Runs on `jobright.ai/jobs/info/*` (verdict only) and, via `background.js`, in any tab opened from or navigated away from Jobright, wherever Apply lands (verdict, then a two-second countdown into `/capture` for `ok` and `caution`) |
 | `applications/<job>/screen.json` | The verdict the pipeline archived |
-| `review/index.html` | Flags shown above the tailoring verdict; the "Use profile" switch |
-| `server/settings.py` | `data/settings.json`, read by the server and the scripts it launches |
+| `review/index.html` | Flags shown above the tailoring verdict; the profile state in the header |
+| `server/settings.py` | `data/settings.json`, read by the server and the scripts it launched. `use_profile` is pinned on by the page; the models fall back to the resume on their own |
 | `tailor/profile.py` | What the models know about the applicant: profile.md, plus applicant facts and story documents when the switch is on; derived facts for the screen otherwise |
 
 Model: `OPENROUTER_SCREEN_MODEL` in `.env`, defaulting to a small fast model.
@@ -488,9 +496,22 @@ All five steps built. What the first runs exposed:
 
 Model: `deepseek/deepseek-v4-flash` ($0.066/M in), 1-5 s per posting.
 
-Not yet seen on a real run: the Apply landing path from Jobright and
-LinkedIn after the injection rewrite. LinkedIn's own job pages are
-confirmed.
+- **Every other city was a reject.** Seven of the first 42 screens flagged
+  location, four hard, all for SF / Seattle / NYC / Newark against an LA
+  address, because the derived facts said nothing about relocation. Nine
+  flagged a graduation window the latest degree fell inside, one flagged
+  1.5 years against "0-1". The v2 categories above and a relocation line
+  in the derived facts are the fix; the rules now say what is never a flag.
+- **Screening everywhere was noise.** The bar on every ATS domain and on
+  LinkedIn screened pages nobody was going to apply from. The extension
+  now covers the Jobright flow only, and queues clean verdicts itself:
+  the person's job is to look at the bar, not to click after it.
+- **Two URLs, one job.** A Jobright posting page and the employer page it
+  leads to are the same job. Auto-queue is off on Jobright's own pages so
+  the pipeline runs once, on the employer URL the fill will need anyway.
+
+Not yet seen on a real run: the v2 rules and the auto-queue countdown on
+a live Jobright session.
 
 ## Phase 7 — profile interviewer (built)
 
@@ -693,3 +714,45 @@ What to try, in order, with the real resume:
 5. Capture a job with the profile switch on: `stories_used.txt` in the
    folder and "Stories the tailor read" on the review page.
 6. Reload mid-interview: the next turn continues where it stopped.
+
+## Phase 9 — the review page around one decision (built)
+
+The page grouped jobs under nine status headings in one accent colour, and
+the decision was a row of small buttons above a long page. The person's
+job on this page is to look at two PDFs and press one button; everything
+else is context.
+
+### Decisions
+
+- **Three buckets, not nine.** In flight (queued, tailoring, approved,
+  filling, awaiting review, filled), applied, rejected. Only in flight is
+  open; applied and rejected are shelves that open on a click and never
+  stay open across a reload.
+- **Colour is state.** A row is washed purple while the agent has it and
+  green when the next move is the person's; the detail pane takes the
+  same wash. Each in-flight row ends in one word: `tailoring`, `filling`
+  (with a live ellipsis) or `Approve`, `Submit`. Applied is green,
+  rejected red, both on the shelves only.
+- **The PDFs first, the button floating.** Resume and letter side by side
+  at the top of the pane; a large Approve (or "I submitted it") fixed
+  bottom right with Reject small beside it. Rationale, diff, instruction
+  box, posting, log and history below.
+- **Terminal look.** Monospace, square corners, 1-2 px rules, black on
+  white with a dark theme. Three directions were mocked (editorial,
+  terminal, graphite) with three row-state treatments (rail and chip,
+  stepper, wash and verb); the person chose terminal and wash-and-verb.
+- **No internals.** Model names, pids, folder names, and python commands
+  are gone from the page; the voice bar says ready or not rather than
+  naming backends. The "Use profile" switch became a header fact,
+  "Profile not set up yet" / "Profile used for tailoring", that opens the
+  Profile tab; `use_profile` is pinned on because the models already fall
+  back to the resume when no story exists.
+- **The on-page bar matches.** Black, monospace, one verdict colour on
+  the tag and the rule; purple while the screen runs.
+
+### Status
+
+Built and checked with headless screenshots on dummy rows; not yet used
+through a full capture → approve → fill → submitted cycle after the
+redesign. The Profile tab took the tokens (mono, square) but its layout
+is unchanged and is the next thing to restyle.

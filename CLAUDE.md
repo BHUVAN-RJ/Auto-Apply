@@ -65,7 +65,7 @@ Specifically:
 | `tailor/answers.py` + `answer_rules.md` | free-form form questions, answered by the tailor model via the agent's `answer_question` action; archived to `answers.md` |
 | `tailor/screen.py` + `screen_rules.md` | on-page auto-reject screen: posting vs `base/applicant.md` Facts, fixed category enum, verdict recomputed from flags in code |
 | `server/screen.py` | `POST /screen`, URL-keyed cache in `data/screens.json`; the pipeline reuses it |
-| `server/settings.py` | the "Use profile" switch, `data/settings.json`; scripts read it too |
+| `server/settings.py` | `use_profile` in `data/settings.json`; the page pins it on, the header only reports whether a story exists |
 | `tailor/profile.py` | what the models are told about the applicant. `context(slugs)` = profile.md + applicant facts + `base/stories/index.md` + the picked stories' `tailor.md` when the switch is on, profile.md alone otherwise. `pick(posting)` chooses the slugs (one cheap call); the pipeline records them in `stories_used.txt` and the cover letter and answers reuse them. `screen_facts()` falls back to facts derived from the resume, cached in `data/derived_facts.md` |
 | `tailor/interview.py` + `interview_rules.md` | the profile interviewer: state machine on disk under `base/stories/` (`_interview.json`, `<slug>/state.json`), one streamed turn per candidate message, header (`COVERED` / `DONE`, then `---`) parsed in code; the body is labelled by line (`ack:` and `ask:` spoken, `note:` text only; `_Parts` strips labels mid-stream and tags each delta `spoken`), and the page speaks only tagged parts, falling back to first sentence plus questions when a reply has no labels. Writes `main.md` on close; `story_rules.md` is the prompt for `tailor.md` and `star.md`, written by the heavy model in a thread |
 | `server/profile.py` | `/profile` status, `/profile/start`, `/profile/turn` (SSE, one JSON event per line), documents, regenerate |
@@ -75,7 +75,7 @@ Specifically:
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
 | `archive/store.py` | immutable per-application folders |
-| `review/index.html` | the whole UI, one file, no build step; holds the "Use profile" switch, the Profile tab (chat, seed files, documents) and the floating voice orb, always on: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is SVG: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; colours inside are green only while listening, orbit plus figure-eights while speaking, a spinner while thinking; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
+| `review/index.html` | the whole UI, one file, no build step. Terminal look (mono, square, purple = agent, green = you, red = rejected); `BUCKET` / `VERB` / `ORDER` at the top drive the in-flight list and the two closed shelves; the floating `.fab` is the decision; nothing internal (models, pids, folders, commands) is shown. Holds the profile state pill in the header, the Profile tab (chat, seed files, documents) and the floating voice orb, always on: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is SVG: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; colours inside are green only while listening, orbit plus figure-eights while speaking, a spinner while thinking; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
 | `capture/background.js` | context menu, and follows tabs off Jobright to inject the screen wherever Apply lands |
 | `tools/sweep_failed.py` | moves `failed` application folders under `applications/failed/` and repoints queue rows; nothing deleted |
 
@@ -86,8 +86,8 @@ under each name. `base/resume.tex` is the master resume and
 is **gitignored** — the repo is public and the resume carries real contact
 details. Same for `base/profile.md` and `base/applicant.md`
 (`base/applicant.example.md` is the template; the `## Facts` section is what
-the screen reads. Missing, or with the "Use profile" switch off, the screen
-uses facts derived from the resume and the banner says so).
+the screen reads. Missing, the screen uses facts derived from the resume,
+which now include a relocation line, and the banner says so).
 
 ## Things that will bite you
 
@@ -136,6 +136,13 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   flagged "Will you now or in the future require sponsorship?" as a visa
   flag. The rules say bare questions are not flags; if it recurs, that is
   the section of `screen_rules.md` to sharpen.
+- **A stretch is not a reject.** The screen rejected every other US city,
+  cohorts a year off, and 1.5 years against "0-1". `screen_rules.md` lists
+  hard / soft / never per category; add a new false positive to the
+  "never" line of its category, not to the prose.
+- **Auto-queue is off on Jobright's own pages** so one job is not queued
+  under the Jobright URL and the employer URL. If a job shows up twice,
+  look there first.
 - **Chrome lives on port 9333**, detached, reused across runs. If a fill
   attaches to the wrong thing, `curl 127.0.0.1:9333/json` shows its tabs.
 - **Extra tabs mean extra fills.** Each `apply.py` opens its own tab. Four
