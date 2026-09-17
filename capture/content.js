@@ -28,12 +28,16 @@ const LABELS = {
   other: "Other",
 };
 
+// The bar is black with one colour for the verdict: green ok, amber
+// caution, red reject, purple while the screen runs, grey when it could
+// not run. Same vocabulary as the review page.
 const COLOURS = {
-  reject: { bg: "#7f1d1d", fg: "#fecaca", tag: "NOT OK", hint: "Hard requirement you do not meet. Applying is likely wasted." },
-  caution: { bg: "#78350f", fg: "#fde68a", tag: "CAUTION", hint: "Something to weigh; nothing hard against you." },
-  ok: { bg: "#14532d", fg: "#bbf7d0", tag: "OK", hint: "No auto-reject found in the posting." },
-  error: { bg: "#1f2937", fg: "#e5e7eb", tag: "SCREEN FAILED", hint: "" },
-  not_a_job: { bg: "#1f2937", fg: "#9ca3af", tag: "NO POSTING", hint: "Could not find a job description on this page. If it is still loading, press Again." },
+  reject: { tone: "#ff5c5c", tag: "NOT OK", hint: "Hard requirement you do not meet. Applying is likely wasted." },
+  caution: { tone: "#ffb454", tag: "CAUTION", hint: "Something to weigh; nothing hard against you." },
+  ok: { tone: "#3ddc84", tag: "OK", hint: "No auto-reject found in the posting." },
+  pending: { tone: "#b48cff", tag: "SCREENING", hint: "" },
+  error: { tone: "#a0a0a0", tag: "SCREEN FAILED", hint: "" },
+  not_a_job: { tone: "#a0a0a0", tag: "NO POSTING", hint: "Could not find a job description on this page. If it is still loading, press Again." },
 };
 
 const CHECKS = "years of experience, visa and sponsorship, export control, clearance and citizenship, start date and graduation window, location, degree, seniority";
@@ -53,12 +57,12 @@ function render(result, { pending = false } = {}) {
   host.id = HOST_ID;
   const shadow = host.attachShadow({ mode: "closed" });
 
-  const verdict = pending ? "ok" : result.verdict in COLOURS ? result.verdict : "error";
+  const verdict = pending ? "pending" : result.verdict in COLOURS ? result.verdict : "error";
   const c = COLOURS[verdict];
-  const tag = pending ? "SCREENING…" : c.tag;
+  const tag = c.tag;
   const facts = result.facts_source === "resume"
     ? "facts derived from your resume only, so visa and dates are unknown"
-    : result.facts_source ? "facts from applicant.md" : "";
+    : result.facts_source ? "facts from your profile" : "";
   const about = pending
     ? `Reading this posting against your profile. Checks: ${CHECKS}.`
     : verdict === "error" || verdict === "not_a_job" ? c.hint : `${c.hint} Checked ${CHECKS}${facts ? `; ${facts}` : ""}.${result.cached ? " Cached." : ""}`;
@@ -78,29 +82,40 @@ function render(result, { pending = false } = {}) {
     <style>
       :host { all: initial; }
       .bar { position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
-             background: ${c.bg}; color: ${c.fg}; font: 13px/1.4 -apple-system,
-             system-ui, sans-serif; padding: 8px 12px; box-shadow: 0 2px 8px #0006;
-             display: flex; gap: 12px; align-items: flex-start; }
-      .tag { font-weight: 800; font-size: 15px; letter-spacing: .06em; white-space: nowrap; }
-      .about { display: block; opacity: .7; font-size: 12px; margin-top: 2px; }
-      .body { flex: 1; min-width: 0; }
-      .summary { opacity: .85; }
+             background: #000; color: #fff; border-bottom: 3px solid ${c.tone};
+             font: 12px/1.45 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+             padding: 8px 12px; display: flex; gap: 14px; align-items: flex-start; }
+      .tag { background: ${c.tone}; color: #000; font-weight: 800; font-size: 12px; letter-spacing: .1em;
+             padding: 5px 8px; white-space: nowrap; text-transform: uppercase; }
+      .tag.live::after { content: "…"; animation: dots 1.2s steps(4) infinite; }
+      @keyframes dots { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 -20% 0 0); } }
+      @media (prefers-reduced-motion: reduce) { .tag.live::after { animation: none; } }
+      .about { display: block; color: #a0a0a0; font-size: 11px; margin-top: 2px; }
+      .body { flex: 1; min-width: 0; padding-top: 4px; }
+      .summary { color: #fff; }
       ul { margin: 4px 0 0; padding-left: 18px; }
       li { margin: 2px 0; }
-      button { background: transparent; color: inherit; border: 1px solid currentColor;
-               border-radius: 4px; padding: 2px 8px; font: inherit; cursor: pointer; }
-      button:hover { background: #ffffff22; }
+      li b { color: ${c.tone}; text-transform: uppercase; font-size: 11px; letter-spacing: .06em; }
+      li i { color: #a0a0a0; font-style: normal; }
+      button { background: #000; color: #fff; border: 2px solid #fff; padding: 4px 10px;
+               font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+               text-transform: uppercase; cursor: pointer; }
+      button:hover { background: #fff; color: #000; }
+      button:disabled { opacity: .5; cursor: default; }
+      button.add { background: ${c.tone}; color: #000; border-color: ${c.tone}; }
+      button.add:hover { background: #fff; border-color: #fff; }
+      button:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
       .actions { display: flex; gap: 6px; white-space: nowrap; }
     </style>
     <div class="bar">
-      <span class="tag">${tag}</span>
+      <span class="tag${pending ? " live" : ""}">${tag}</span>
       <div class="body">
         <span class="summary">${esc(result.summary || result.error || "")}</span>
         ${about ? `<span class="about">${esc(about)}</span>` : ""}
         ${flags ? `<ul>${flags}</ul>` : ""}
       </div>
       <div class="actions">
-        ${pending ? "" : `<button data-act="add">Add to autopilot</button>`}
+        ${pending ? "" : `<button class="add" data-act="add">Add to autopilot</button>`}
         ${pending ? "" : `<button data-act="again">Again</button>`}
         <button data-act="close">✕</button>
       </div>
