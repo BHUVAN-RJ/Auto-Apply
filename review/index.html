@@ -1,47 +1,60 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Job Autopilot</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap">
 <style>
+  /* Terminal: monospace, square corners, hard 1-2px rules, black on white.
+     Colour is signal only: purple = the agent is on it, green = it needs
+     you (or is done), red = rejected or failed. */
   :root {
-    --bg: #fbfbfa; --panel: #fff; --ink: #1a1a1a; --muted: #6b7280;
-    --line: #e5e7eb; --accent: #0e5484; --add: #1a7f37; --del: #b32424;
-    --addbg: #e6f6ea; --delbg: #fdecec; --warn: #92400e; --warnbg: #fef3c7;
-    --ok: #1a7f37; --okbg: #e6f6ea; --stop: #b32424; --stopbg: #fdecec;
+    --bg: #fff; --panel: #fff; --ink: #000; --muted: #5a5a5a; --line: #000; --accent: #000;
+    --purple: #6a00ff; --purple-soft: #ece0ff;
+    --green: #00873a; --green-soft: #d7f5df; --green-wash: rgba(0, 135, 58, .08);
+    --red: #e00000; --red-soft: #ffdcdc;
+    --warn: #b85c00; --warnbg: #fff0d6;
+    --ok: var(--green); --okbg: var(--green-soft); --stop: var(--red); --stopbg: var(--red-soft);
+    --add: var(--green); --addbg: var(--green-soft); --del: var(--red); --delbg: var(--red-soft);
+    --focus: #0044ff;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #17181a; --panel: #1f2023; --ink: #e8e8e8; --muted: #9aa0a6;
-      --line: #303236; --accent: #6bb3e0; --add: #4ec06f; --del: #ef6b6b;
-      --addbg: #13301c; --delbg: #331616; --warn: #fbbf24; --warnbg: #362b10;
-      --ok: #4ec06f; --okbg: #13301c; --stop: #ef6b6b; --stopbg: #331616;
+      --bg: #000; --panel: #000; --ink: #fff; --muted: #a0a0a0; --line: #fff; --accent: #fff;
+      --purple: #b48cff; --purple-soft: #261546;
+      --green: #3ddc84; --green-soft: #0f3320; --green-wash: rgba(61, 220, 132, .08);
+      --red: #ff5c5c; --red-soft: #401212;
+      --warn: #ffb454; --warnbg: #3a2600;
+      --focus: #8ab4ff;
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font: 13px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   header {
-    display: flex; align-items: baseline; gap: .75rem; padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; align-items: center; gap: 1rem; padding: .7rem 16px;
+    border-bottom: 2px solid var(--line); background: var(--panel);
     position: sticky; top: 0; z-index: 5;
   }
-  header h1 { font-size: 1rem; margin: 0; letter-spacing: .02em; }
-  header .count { color: var(--muted); font-size: .85rem; }
-  header .switch { margin-left: auto; color: var(--muted); font-size: .85rem; cursor: pointer;
-                   display: flex; align-items: center; gap: 6px; }
-  header .tabs { display: flex; gap: .25rem; margin-left: .5rem; }
-  header .tabs button { background: none; border: 1px solid transparent; border-radius: 6px;
-                        padding: .2rem .6rem; color: var(--muted); font: inherit; cursor: pointer; }
-  header .tabs button[aria-current="true"] { color: var(--ink); border-color: var(--line);
-                                             background: var(--bg); }
+  header h1 { font-size: 13px; margin: 0; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  header h1::before { content: "▮ "; color: var(--green); }
+  header .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  header .switch { margin-left: auto; color: var(--muted); font-size: 12px; cursor: pointer;
+                   display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: .05em; }
+  header .tabs { display: flex; gap: 0; }
+  header .tabs button { background: none; border: 1px solid var(--line); padding: .3rem .7rem;
+                        color: var(--muted); font: inherit; cursor: pointer; text-transform: uppercase;
+                        letter-spacing: .08em; font-size: 11px; }
+  header .tabs button + button { border-left: 0; }
+  header .tabs button[aria-current="true"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 
   /* Profile tab */
   .chat { display: flex; flex-direction: column; gap: .6rem; margin: 1rem 0; }
-  .msg { max-width: 72ch; padding: .6rem .9rem; border-radius: 10px; white-space: pre-wrap;
+  .msg { max-width: 72ch; padding: .6rem .9rem; white-space: pre-wrap;
          line-height: 1.5; }
-  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
-  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .msg.user { align-self: flex-end; background: var(--ink); color: var(--bg); }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 2px solid var(--line); }
   .msg.bot.live::after { content: "▍"; color: var(--muted); animation: blink 1s steps(2) infinite; }
   @keyframes blink { to { visibility: hidden; } }
   .composer { display: flex; gap: .5rem; align-items: flex-end; position: sticky; bottom: 0;
@@ -64,7 +77,7 @@
   .doc h1 { font-size: 1.15rem; margin: .6rem 0; }
   .doc h2 { font-size: .95rem; margin: 1rem 0 .3rem; }
   .doc pre { white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; background: var(--bg);
-             padding: .6rem; border-radius: 6px; }
+             padding: .6rem; border: 1px solid var(--line); }
   /* The orb: the voice of the interview. Floats over the chat. A clear
      lens drawn as SVG: the outline is a soft body (see the Bubble module)
      that ripples with the audio at constant area, the rim is a dark edge
@@ -96,54 +109,107 @@
                    text-shadow: 0 1px 2px rgba(255, 255, 255, .5); user-select: none; }
   @media (prefers-color-scheme: dark) { .orb .orblabel { text-shadow: 0 1px 3px rgba(0, 0, 0, .7); } }
   .doctabs { display: flex; gap: .25rem; margin: .8rem 0; }
-  .doctabs button[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  main { display: grid; grid-template-columns: 290px 1fr; min-height: calc(100vh - 57px); }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .doctabs button[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+  main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 47px); }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } nav { border-right: 0; border-bottom: 2px solid var(--line); } }
 
-  nav { border-right: 1px solid var(--line); background: var(--panel); }
+  /* The list: one open bucket (in flight) and two shelves that stay
+     closed. Each in-flight row is washed in its bucket's colour and ends
+     in one verb: what the agent is doing, or what you should do. */
+  nav { border-right: 2px solid var(--line); background: var(--panel); padding-bottom: 6rem; }
   nav .group {
-    padding: .6rem 1rem .3rem; font-size: .68rem; letter-spacing: .07em;
-    text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: .5rem; padding: .9rem 16px .35rem;
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600;
   }
-  nav .group:first-child { border-top: 0; }
-  nav button {
-    display: block; width: 100%; text-align: left; padding: .6rem 1rem;
-    background: none; border: 0; border-bottom: 1px solid var(--line);
-    color: inherit; font: inherit; cursor: pointer;
+  nav .group .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+  nav .row {
+    display: block; width: 100%; text-align: left; padding: .7rem 5.4rem .7rem 16px;
+    background: var(--tone-soft, transparent); border: 0; border-bottom: 1px solid var(--line);
+    color: inherit; font: inherit; cursor: pointer; position: relative;
   }
-  nav button:hover { background: var(--bg); }
-  nav button[aria-current="true"] { background: var(--bg); box-shadow: inset 3px 0 var(--accent); }
-  nav .role { font-weight: 600; }
-  nav .co { color: var(--muted); font-size: .8rem; }
-  nav .why { color: var(--stop); font-size: .75rem; }
+  nav .row:first-of-type { border-top: 1px solid var(--line); }
+  nav .row[data-tone="agent"] { --tone: var(--purple); --tone-soft: var(--purple-soft); }
+  nav .row[data-tone="you"]   { --tone: var(--green);  --tone-soft: var(--green-soft); }
+  nav .row[data-tone="done"]  { --tone: var(--green);  --tone-soft: transparent; }
+  nav .row[data-tone="stop"]  { --tone: var(--red);    --tone-soft: transparent; }
+  nav .row[aria-current="true"] { background: var(--ink); color: var(--bg); --muted: var(--bg); --tone: var(--bg); }
+  nav .row .role { display: block; font-weight: 600; text-transform: uppercase; font-size: 12px;
+                   letter-spacing: .03em; line-height: 1.3; }
+  nav .row .co { display: block; color: var(--muted); font-size: 11px; margin-top: .15rem; }
+  nav .row .why { display: block; color: var(--red); font-size: 11px; margin-top: .15rem; }
+  nav .row[aria-current="true"] .why { color: var(--bg); }
+  nav .row .verb { position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+                   font-size: 11px; font-weight: 600; color: var(--tone); text-transform: uppercase; letter-spacing: .06em; }
+  nav .row[data-tone="you"] .verb { background: var(--tone); color: var(--bg); padding: .35rem .55rem; }
+  nav .row[aria-current="true"][data-tone="you"] .verb { color: var(--ink); }
+  nav .row[data-live="1"] .verb::after { content: "…"; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 -20% 0 0); } }
+  @media (prefers-reduced-motion: reduce) { nav .row[data-live="1"] .verb::after { animation: none; } }
+  nav .shelf {
+    display: flex; align-items: center; gap: .5rem; width: calc(100% - 32px); margin: .6rem 16px 0;
+    padding: .55rem .7rem; border: 2px solid var(--line); background: transparent; color: var(--ink);
+    cursor: pointer; font: inherit; text-transform: uppercase; font-size: 11px; letter-spacing: .08em; font-weight: 600;
+  }
+  nav .shelf .dot { width: 8px; height: 8px; background: var(--tone); }
+  nav .shelf[data-tone="done"] { --tone: var(--green); }
+  nav .shelf[data-tone="stop"] { --tone: var(--red); }
+  nav .shelf .n { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  nav .shelf .chev { color: var(--muted); }
+  nav .shelf[aria-expanded="true"] { background: var(--ink); color: var(--bg); --muted: var(--bg); }
+  nav .shelfrows { margin: 0 16px; border: 2px solid var(--line); border-top: 0; }
+  nav .shelfrows .row { padding-right: 16px; }
+  nav .shelfrows .row:last-child { border-bottom: 0; }
+  nav .empty { padding: 1rem 16px; }
 
-  section.detail { padding: 1.25rem 1.5rem 5rem; max-width: 1100px; }
-  .head { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: baseline; }
-  .head h2 { margin: 0; font-size: 1.15rem; }
-  .head a, .head .folder { font-size: .82rem; }
-  .head a { color: var(--accent); }
-  .head .folder { color: var(--muted); font-family: ui-monospace, monospace; }
+  /* Detail: washed in the job's colour. Green means the floating button at
+     the bottom right is what happens next. */
+  section.detail { padding: 1.2rem 16px 8rem; position: relative; }
+  section.detail.you   { background: linear-gradient(var(--green-wash), var(--green-wash)), var(--bg); }
+  section.detail.agent { background: linear-gradient(var(--purple-soft), var(--purple-soft)), var(--bg); }
+  .head { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: baseline; margin-bottom: .8rem; }
+  .head h2 { margin: 0; font-size: 20px; text-transform: uppercase; letter-spacing: .02em; line-height: 1.2; text-wrap: balance; }
+  .head a, .head .folder { font-size: 11px; }
+  .head a { color: var(--ink); }
+  .head .folder { color: var(--muted); margin-left: auto; }
 
-  .state { display: inline-block; padding: .12rem .5rem; border-radius: 999px;
-           font-size: .72rem; letter-spacing: .03em; text-transform: uppercase;
-           background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
-  .state.wait { background: var(--warnbg); color: var(--warn); border-color: transparent; }
-  .state.go { background: var(--okbg); color: var(--ok); border-color: transparent; }
-  .state.stop { background: var(--stopbg); color: var(--stop); border-color: transparent; }
+  .state { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .55rem;
+           font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
+           border: 2px solid var(--line); color: var(--ink); }
+  .state.wait { border-color: var(--warn); color: var(--warn); }
+  .state.go { border-color: var(--green); color: var(--green); }
+  .state.stop { border-color: var(--red); color: var(--red); }
+  .state.agent { border-color: var(--purple); color: var(--purple); }
 
   .actions { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; align-items: center; }
   button.act {
-    padding: .5rem .9rem; border-radius: 6px; border: 1px solid var(--line);
+    padding: .5rem .9rem; border: 2px solid var(--line);
     background: var(--panel); color: inherit; font: inherit; cursor: pointer;
+    text-transform: uppercase; font-size: 11px; letter-spacing: .08em; font-weight: 600;
   }
-  button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.act.danger { color: var(--stop); }
+  button.act.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+  button.act.danger { color: var(--red); border-color: var(--red); }
   button.act:disabled { opacity: .45; cursor: not-allowed; }
 
-  h3 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em;
-       color: var(--muted); margin: 1.6rem 0 .5rem; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
-  .diff { overflow-x: auto; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* The floating decision. Big, bottom right, only on jobs waiting on you. */
+  .fab { position: fixed; right: 20px; bottom: 20px; z-index: 10; display: flex; gap: .6rem; align-items: center; }
+  .fab button { font: inherit; cursor: pointer; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+  .fab .big { font-size: 18px; background: var(--green); color: #fff; border: 3px solid var(--ink);
+              padding: 1.05rem 1.9rem; box-shadow: 6px 6px 0 var(--ink); }
+  .fab .big:active { transform: translate(3px, 3px); box-shadow: 3px 3px 0 var(--ink); }
+  .fab .small { font-size: 11px; background: var(--bg); color: var(--ink); border: 2px solid var(--ink); padding: .7rem 1rem; }
+  .fab .small.danger { color: var(--red); border-color: var(--red); }
+  .fab button:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* The two PDFs side by side, first thing on the page. */
+  .docs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: .8rem 0 1.4rem; }
+  @media (max-width: 1100px) { .docs { grid-template-columns: 1fr; } }
+  .docs iframe { height: 78vh; margin: 0; }
+  .docs .card.letter { max-height: 78vh; overflow-y: auto; }
+
+  h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+       color: var(--muted); margin: 1.6rem 0 .5rem; font-weight: 600; }
+  .card { background: var(--panel); border: 2px solid var(--line); }
+  .diff { overflow-x: auto; font-size: 12px; line-height: 1.45; }
   .diff div { padding: 0 .75rem; white-space: pre; }
   .diff .a { background: var(--addbg); color: var(--add); }
   .diff .d { background: var(--delbg); color: var(--del); }
@@ -151,36 +217,36 @@
   .prose { padding: .25rem 1rem; }
   .prose li { margin: .25rem 0; }
   .prose.letter p { margin: .6rem 0; line-height: 1.5; max-width: 70ch; }
-  .note { color: var(--muted); font-size: .85rem; padding: 0 .75rem .5rem; }
+  .note { color: var(--muted); font-size: 12px; padding: 0 .75rem .5rem; }
   iframe.letter { height: 60vh; margin-top: .5rem; }
-  .prose h4 { margin: .8rem 0 .3rem; font-size: .9rem; }
-  .banner { padding: .7rem 1rem; border-radius: 8px; margin: .8rem 0; }
-  .banner.warn { background: var(--warnbg); color: var(--warn); }
+  .prose h4 { margin: .8rem 0 .3rem; font-size: 13px; }
+  .banner { padding: .7rem 1rem; margin: .8rem 0; border: 2px solid currentColor; }
+  .banner.warn { color: var(--warn); background: var(--warnbg); }
   .banner ul.flags { margin: 4px 0 0; padding-left: 18px; }
-  .banner.stop { background: var(--stopbg); color: var(--stop); }
-  .banner.go { background: var(--okbg); color: var(--ok); }
-  iframe { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 8px;
-           background: #fff; }
-  img.shot { width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+  .banner.stop { color: var(--red); background: var(--red-soft); }
+  .banner.go { color: var(--green); background: var(--green-soft); }
+  iframe { width: 100%; height: 80vh; border: 2px solid var(--line); background: #fff; }
+  img.shot { width: 100%; border: 2px solid var(--line); }
   pre.posting { white-space: pre-wrap; padding: 1rem; margin: 0; max-height: 40vh;
-                overflow-y: auto; font: 13px/1.55 inherit; }
-  details > summary { cursor: pointer; color: var(--muted); font-size: .82rem;
-                      margin: 1.2rem 0 .4rem; }
+                overflow-y: auto; font: 12px/1.55 inherit; }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 11px; text-transform: uppercase;
+                      letter-spacing: .1em; font-weight: 600; margin: 1.2rem 0 .4rem; }
   textarea, select {
-    width: 100%; padding: .55rem; border-radius: 6px; border: 1px solid var(--line);
+    width: 100%; padding: .55rem; border: 2px solid var(--line);
     background: var(--panel); color: inherit; font: inherit;
   }
   textarea { min-height: 4.5rem; resize: vertical; }
-  .empty { color: var(--muted); padding: 2rem 0; }
-  .hint { color: var(--muted); font-size: .82rem; }
+  .empty { color: var(--muted); padding: 2rem 0; max-width: 60ch; }
+  .hint { color: var(--muted); font-size: 12px; }
 
   dialog {
-    border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    border: 2px solid var(--line); background: var(--panel);
     color: inherit; padding: 1.25rem; width: min(420px, 92vw);
   }
-  dialog::backdrop { background: #0008; }
-  dialog h4 { margin: 0 0 .8rem; font-size: 1rem; }
-  dialog label { display: block; font-size: .8rem; color: var(--muted); margin: .8rem 0 .25rem; }
+  dialog::backdrop { background: #000a; }
+  dialog h4 { margin: 0 0 .8rem; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+  dialog label { display: block; font-size: 11px; color: var(--muted); margin: .8rem 0 .25rem;
+                 text-transform: uppercase; letter-spacing: .08em; }
 </style>
 
 <header>
@@ -227,23 +293,29 @@ const LABEL = {
   skipped: "rejected", failed: "failed",
 };
 
-// Which jobs need you, in the order you should deal with them.
-const GROUPS = [
-  ["awaiting_review", "Needs your review"],
-  ["filled", "Filled, check before submitting"],
-  ["approved", "Approved, ready to fill"],
-  ["queued", "Queued"],
-  ["tailoring", "Working"],
-  ["filling", "Working"],
-  ["submitted", "Submitted"],
-  ["skipped", "Rejected"],
-  ["failed", "Failed"],
-];
+// Three buckets. "you" = the next move is yours and the page is green for
+// it; "agent" = purple, leave it alone; the rest sit on closed shelves.
+const BUCKET = {
+  awaiting_review: "you", filled: "you",
+  queued: "agent", tailoring: "agent", approved: "agent", filling: "agent",
+  submitted: "done", skipped: "stop", failed: "stop",
+};
+// The one word at the end of an in-flight row.
+const VERB = {
+  awaiting_review: "Approve", filled: "Submit",
+  queued: "queued", tailoring: "tailoring", approved: "starting", filling: "filling",
+};
+const LIVE = new Set(["tailoring", "approved", "filling"]);
+// "you" rows first, then the agent's, newest first inside each.
+const ORDER = ["awaiting_review", "filled", "filling", "approved", "tailoring", "queued"];
 
 const TONE = {
-  awaiting_review: "wait", filled: "wait", approved: "go", submitted: "go",
-  skipped: "stop", failed: "stop",
+  awaiting_review: "wait", filled: "wait", approved: "agent", filling: "agent",
+  tailoring: "agent", queued: "agent", submitted: "go", skipped: "stop", failed: "stop",
 };
+
+// Shelves open on a click and close on the next; nothing remembers them.
+const openShelves = new Set();
 
 async function api(path, options) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -273,34 +345,51 @@ $("tabProfile").onclick = () => switchView("profile");
 async function loadList() {
   if (view !== "jobs") return;
   jobs = await api("/jobs");
-  const waiting = jobs.filter((j) => j.status === "awaiting_review" || j.status === "filled");
+  const waiting = jobs.filter((j) => BUCKET[j.status] === "you");
+  const inflight = jobs.filter((j) => ["you", "agent"].includes(BUCKET[j.status]))
+    .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
+  const applied = jobs.filter((j) => BUCKET[j.status] === "done");
+  const rejected = jobs.filter((j) => BUCKET[j.status] === "stop");
   $("count").textContent = jobs.length
-    ? `${jobs.length} job${jobs.length === 1 ? "" : "s"}, ${waiting.length} waiting on you`
+    ? `${inflight.length} in flight · ${waiting.length} need you`
     : "";
 
-  const seen = new Set();
-  let html = "";
-  for (const [status, heading] of GROUPS) {
-    if (seen.has(heading)) continue;
-    const statuses = GROUPS.filter(([, h]) => h === heading).map(([s]) => s);
-    const group = jobs.filter((j) => statuses.includes(j.status));
-    if (!group.length) continue;
-    seen.add(heading);
-    html += `<div class="group">${heading} · ${group.length}</div>`;
-    html += group.map((j) => `
-      <button data-id="${j.id}" aria-current="${j.id === current}">
-        <div class="role">${escape(j.title || j.url)}</div>
-        <div class="co">${escape(j.company || j.source || "")}</div>
+  const row = (j) => `
+      <button class="row" data-id="${j.id}" data-tone="${BUCKET[j.status]}"
+              data-live="${LIVE.has(j.status) ? 1 : 0}" aria-current="${j.id === current}">
+        <span class="role">${escape(j.title || j.url)}</span>
+        <span class="co">${escape(j.company || j.source || "")}</span>
         ${j.status === "skipped" && j.reject_reason
-          ? `<div class="why">${escape(reasonLabel(j.reject_reason))}${
-              j.reject_note ? " — " + escape(j.reject_note) : ""}</div>`
-          : ""}
-      </button>`).join("");
-  }
+          ? `<span class="why">${escape(reasonLabel(j.reject_reason))}${
+              j.reject_note ? " — " + escape(j.reject_note) : ""}</span>`
+          : j.status === "failed" ? `<span class="why">failed</span>` : ""}
+        ${VERB[j.status] ? `<span class="verb">${VERB[j.status]}</span>` : ""}
+      </button>`;
+  const shelf = (name, tone, group) => `
+      <button class="shelf" data-shelf="${name}" data-tone="${tone}"
+              aria-expanded="${openShelves.has(name)}">
+        <span class="dot"></span>${name}<span class="n">${group.length}</span>
+        <span class="chev">${openShelves.has(name) ? "▾" : "▸"}</span>
+      </button>
+      ${openShelves.has(name) && group.length
+        ? `<div class="shelfrows">${group.map(row).join("")}</div>` : ""}`;
+
+  let html = `<div class="group">In flight <span class="n">${inflight.length}</span></div>`;
+  html += inflight.length ? inflight.map(row).join("")
+    : `<div class="empty hint">Nothing in flight.</div>`;
+  html += shelf("applied", "done", applied);
+  html += shelf("rejected", "stop", rejected);
   $("list").innerHTML = html;
 
-  for (const button of $("list").querySelectorAll("button")) {
+  for (const button of $("list").querySelectorAll(".row")) {
     button.onclick = () => show(button.dataset.id);
+  }
+  for (const button of $("list").querySelectorAll(".shelf")) {
+    button.onclick = () => {
+      const name = button.dataset.shelf;
+      if (openShelves.has(name)) openShelves.delete(name); else openShelves.add(name);
+      loadList();
+    };
   }
 
   if (!jobs.length) {
@@ -318,12 +407,13 @@ function reasonLabel(value) {
 async function show(id) {
   if (view !== "jobs") return;
   current = id;
-  for (const button of $("list").querySelectorAll("button")) {
+  for (const button of $("list").querySelectorAll(".row")) {
     button.setAttribute("aria-current", button.dataset.id === id);
   }
 
   const job = jobs.find((j) => j.id === id);
   if (!job) return;
+  $("detail").className = `detail ${BUCKET[job.status] || ""}`;
 
   if (!job.app_dir) {
     // Capturing starts the pipeline; this state normally lasts seconds. A
@@ -359,24 +449,28 @@ async function show(id) {
   // grace the restart button comes back, gated behind a confirm.
   const working = fillWorking(data);
 
+  // The two PDFs are the review. Side by side, first; the letter falls back
+  // to its text when the PDF did not compile.
+  const resumeDoc = data.artifacts.includes("resume.pdf")
+    ? `<div><h3>Tailored resume</h3>
+        <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe></div>` : "";
+  const letterDoc = data.artifacts.includes("cover_letter.pdf")
+    ? `<div><h3>Cover letter</h3>
+        <iframe src="/review/${id}/file/cover_letter.pdf" title="Cover letter"></iframe></div>`
+    : data.cover_letter
+      ? `<div><h3>Cover letter</h3><div class="card prose letter">${letter(data.cover_letter)}</div></div>`
+      : data.cover_letter_error
+        ? `<div><h3>Cover letter</h3>
+            <div class="card"><pre class="posting">${escape(data.cover_letter_error)}</pre>
+            <p class="note">The resume is unaffected. Re-tailor to try the letter again.</p></div></div>`
+        : "";
+
   $("detail").innerHTML = `
     ${head(job, data)}
     ${banners(data)}
-    ${reviewable ? `
-      <div class="actions">
-        <button class="act primary" id="approve">Approve</button>
-        <button class="act danger" id="reject">Reject…</button>
-        <span class="hint">Nothing moves until you pick one.</span>
-      </div>` : ""}
-    ${filled ? `
-      <div class="actions">
-        <button class="act primary" id="submitted">I submitted it</button>
-        <button class="act" id="fillNow">Fill it again</button>
-        <button class="act danger" id="reject">Reject…</button>
-      </div>` : ""}
     ${working ? `
       <div class="actions">
-        <span class="state wait">Agent is working (pid ${data.fill.pid})</span>
+        <span class="state agent">Agent is working (pid ${data.fill.pid})</span>
         <span class="hint">Leave the browser alone. Options return in ${working}s.</span>
       </div>` : ""}
     ${!reviewable && !filled && !working ? `
@@ -392,22 +486,13 @@ async function show(id) {
           ? `<button class="act danger" id="reject">Reject…</button>` : ""}
       </div>` : ""}
 
+    ${resumeDoc || letterDoc ? `<div class="docs">${resumeDoc}${letterDoc}</div>` : ""}
+
     ${data.suggestions ? `<h3>What changed, and why</h3>
       <div class="card prose">${markdown(data.suggestions)}</div>` : ""}
 
     ${data.diff ? `<h3>Diff against your master resume</h3>
       <div class="card diff">${renderDiff(data.diff)}</div>` : ""}
-
-    ${data.artifacts.includes("resume.pdf") ? `<h3>Tailored resume</h3>
-      <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe>` : ""}
-
-    ${data.cover_letter ? `<h3>Cover letter</h3>
-      <div class="card prose letter">${letter(data.cover_letter)}</div>` : ""}
-    ${data.artifacts.includes("cover_letter.pdf") ? `
-      <iframe class="letter" src="/review/${id}/file/cover_letter.pdf" title="Cover letter"></iframe>` : ""}
-    ${data.cover_letter_error ? `<h3>Cover letter</h3>
-      <div class="card"><pre class="posting">${escape(data.cover_letter_error)}</pre>
-      <p class="note">The resume is unaffected. Re-tailor to try the letter again.</p></div>` : ""}
 
     ${data.fill_notes ? `<h3>What the browser did</h3>
       <div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
@@ -449,6 +534,18 @@ async function show(id) {
            <span class="hint">${escape((h.at || "").replace("T", " ").replace("+00:00", " UTC"))}</span>
            ${h.note ? "<br>" + escape(h.note) : ""}</li>`).join("")}</ul></div>
       </details>` : ""}
+
+    ${reviewable ? `
+      <div class="fab">
+        <button class="small danger act" id="reject">Reject</button>
+        <button class="big act" id="approve">Approve</button>
+      </div>` : ""}
+    ${filled ? `
+      <div class="fab">
+        <button class="small danger act" id="reject">Reject</button>
+        <button class="small act" id="fillNow">Fill again</button>
+        <button class="big act" id="submitted">I submitted it</button>
+      </div>` : ""}
   `;
 
   if ($("approve")) $("approve").onclick = () => approve(id);
