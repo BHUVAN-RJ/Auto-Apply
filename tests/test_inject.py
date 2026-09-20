@@ -183,7 +183,26 @@ def test_open_review_creates_an_autopilot_tab_when_none_exists():
     ok, status, body = asyncio.run(go())
 
     assert ok and status == 200 and body["reused"] is False
-    assert ("Target.createTarget", {"url": f"{inject.SERVER_ORIGIN}/#new"}, None) in r.calls
+    assert ("Target.createTarget", {"url": f"{inject.SERVER_ORIGIN}/#new", "background": False}, None) in r.calls
+
+
+def test_open_review_without_focus_leaves_the_active_tab_alone():
+    """A job added from the posting points the review tab at it but
+    never takes the person off the page; the fill's own tab does that,
+    on approve."""
+    r = Recorder()
+    r.urls = {"job": EMPLOYER, "dashboard": f"{inject.SERVER_ORIGIN}/#old"}
+    r.sessions = {"job-session": "job", "dashboard-session": "dashboard"}
+    ok, status, body = asyncio.run(r.open_tab(f"{inject.SERVER_ORIGIN}/#new", focus=False))
+    assert ok and body["reused"] is True
+    assert ("Page.navigate", {"url": f"{inject.SERVER_ORIGIN}/#new"}, "dashboard-session") in r.calls
+    assert not any(method == "Target.activateTarget" for method, _, _ in r.calls)
+
+    r = Recorder()
+    r.urls = {"job": EMPLOYER}
+    ok, status, body = asyncio.run(r.open_tab(f"{inject.SERVER_ORIGIN}/#new", focus=False))
+    assert body["reused"] is False
+    assert ("Target.createTarget", {"url": f"{inject.SERVER_ORIGIN}/#new", "background": True}, None) in r.calls
 
 
 def test_open_review_refuses_a_lookalike_origin():

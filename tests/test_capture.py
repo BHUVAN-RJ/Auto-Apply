@@ -95,8 +95,13 @@ def test_failed_screen_still_offers_add_to_autopilot():
 def test_add_opens_the_captured_job_in_autopilot():
     script = (runner.ROOT / "capture" / "content.js").read_text()
     assert 'return { label: data.created ? "Added" : "Already in autopilot", id: data.id || null, created: !!data.created }' in script
-    assert "openReview(queuedId)" in script
-    assert 'chrome.runtime.sendMessage({ type: "open-autopilot", url })' in script
+    # Pointed at the job, never brought to the front: the fill's own tab
+    # is what changes the active tab, on approve.
+    assert "openReview(queuedId, { focus: false })" in script
+    assert 'chrome.runtime.sendMessage({ type: "open-autopilot", url, focus })' in script
+    assert "if (focus) window.open(url" in script
+    background = (runner.ROOT / "capture" / "background.js").read_text()
+    assert "chrome.tabs.create({ url, active: focus })" in background
 
 
 def test_a_newly_queued_employer_tab_closes_itself_and_nothing_else_does():

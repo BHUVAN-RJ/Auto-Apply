@@ -12,16 +12,18 @@ function isAutopilotTab(url) {
   return url === `${SERVER}/` || url.startsWith(`${SERVER}/#`);
 }
 
-async function openAutopilot(url) {
+// `focus` false: the review tab is pointed at the job but the active tab
+// stays; a queued job is not a reason to leave the posting.
+async function openAutopilot(url, focus = true) {
   if (!url.startsWith(`${SERVER}/`)) throw new Error("invalid Autopilot URL");
   const tabs = await chrome.tabs.query({});
   const existing = tabs.find((tab) => isAutopilotTab(tab.url || tab.pendingUrl || ""));
   if (existing?.id != null) {
-    await chrome.tabs.update(existing.id, { url, active: true });
-    if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true });
+    await chrome.tabs.update(existing.id, focus ? { url, active: true } : { url });
+    if (focus && existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true });
     return { reused: true };
   }
-  await chrome.tabs.create({ url, active: true });
+  await chrome.tabs.create({ url, active: focus });
   return { reused: false };
 }
 
@@ -36,7 +38,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type !== "open-autopilot") return undefined;
-  openAutopilot(String(message.url || ""))
+  openAutopilot(String(message.url || ""), message.focus !== false)
     .then((result) => sendResponse({ ok: true, ...result }))
     .catch((error) => sendResponse({ ok: false, error: error.message }));
   return true;

@@ -313,8 +313,8 @@ class Injector:
             # Not a server call: the page asks for a tab. window.open from a
             # script evaluated into a page is at the mercy of the site's
             # popup handling; the browser itself is not.
-            url = str((request.get("body") or {}).get("url", ""))
-            ok, status, body = await self.open_tab(url)
+            body = request.get("body") or {}
+            ok, status, body = await self.open_tab(str(body.get("url", "")), body.get("focus", True) is not False)
         else:
             ok, status, body = await asyncio.to_thread(post, path, request.get("body"))
         await self.reply(session, request_id, ok, status, body)
@@ -347,7 +347,11 @@ class Injector:
         except Exception as error:  # noqa: BLE001 - a tab left open is harmless
             log.warning("close failed: %s", error)
 
-    async def open_tab(self, url: str) -> tuple[bool, int, object]:
+    async def open_tab(self, url: str, focus: bool = True) -> tuple[bool, int, object]:
+        """The review page, reused when open. `focus` False points it at
+        the job and leaves the active tab alone (a new one is created in
+        the background): a queued job is not a reason to leave the posting;
+        the fill's own tab is what comes to the front, on approve."""
         if not (is_web(url) and (url == SERVER_ORIGIN or url.startswith(f"{SERVER_ORIGIN}/"))):
             return True, 403, {"detail": "only the review page may be opened this way"}
         try:
@@ -364,9 +368,10 @@ class Injector:
                 )
                 if session is not None:
                     await self.send("Page.navigate", {"url": url}, session)
-                await self.send("Target.activateTarget", {"targetId": existing})
+                if focus:
+                    await self.send("Target.activateTarget", {"targetId": existing})
                 return True, 200, {"ok": True, "reused": True}
-            await self.send("Target.createTarget", {"url": url})
+            await self.send("Target.createTarget", {"url": url, "background": not focus})
             return True, 200, {"ok": True, "reused": False}
         except Exception as error:  # noqa: BLE001 - reported to the page
             return True, 502, {"detail": str(error)}

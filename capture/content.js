@@ -425,7 +425,10 @@ function render(result, { pending = false } = {}) {
     }
     add.classList.add("done");
     if (queuedId) {
-      await openReview(queuedId);
+      // The review tab is pointed at the job but stays where it is: the
+      // person is reading the posting, and the fill opens its own tab
+      // when the tailoring is done. Only "Open in autopilot" focuses.
+      await openReview(queuedId, { focus: false });
       autoCollapse();
     }
     // This tab has done its job once the pipeline has it: the fill opens
@@ -594,22 +597,24 @@ async function closeSelf() {
 // Focus the existing Autopilot tab and show this job, or create the tab when
 // none exists. The injector and extension background own tabs; window.open is
 // only the fallback when neither bridge is available.
-async function openReview(id) {
+async function openReview(id, { focus = true } = {}) {
   const url = `${SERVER}/#${id}`;
   if (typeof window.__autopilotRequest === "function") {
     try {
-      const result = await post("/__open", { url });
+      const result = await post("/__open", { url, focus });
       if (result.ok) return;
     }
     catch { /* fall through */ }
   }
   if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
     try {
-      const result = await chrome.runtime.sendMessage({ type: "open-autopilot", url });
+      const result = await chrome.runtime.sendMessage({ type: "open-autopilot", url, focus });
       if (result?.ok) return;
     } catch { /* extension background unavailable */ }
   }
-  window.open(url, "_blank");
+  // window.open cannot open behind the current tab; when the tab must not
+  // change and neither bridge is there, the review page is left alone.
+  if (focus) window.open(url, "_blank");
 }
 
 // Talks to the local server. When browser/inject.py put this script here it
