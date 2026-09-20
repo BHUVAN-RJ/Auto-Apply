@@ -63,6 +63,11 @@ def script(tmp_path, monkeypatch):
     started = []
     monkeypatch.setattr(interview, "start_children", lambda slug: started.append(slug))
     s.started = started
+    # The facts interview comes first; its resume lookups are stubbed so
+    # the scripted replies stay the stories', and `begin` skips past it.
+    monkeypatch.setattr(interview.facts_module, "derived_lines", lambda: {"Location": "Austin, TX"})
+    monkeypatch.setattr(interview.facts_module, "contacts", lambda: {"Phone": "+1 555"})
+    monkeypatch.setattr(profile, "APPLICANT", tmp_path / "applicant.md")
     return s
 
 
@@ -76,7 +81,8 @@ def shown(evs):
 
 def begin(script):
     script.replies.append("```json\n" + EXTRACTION + "\n```")
-    result = interview.start("")
+    interview.start("")
+    result = interview.skip_facts()
     script.replies.append("EXPERIENCES: []\nSTART: yes\n---\nGood, let's start.")
     script.replies.append("COVERED:\nDONE: no\n---\nTell me the story of the billing service.")
     return result, events("Looks right.")
@@ -101,6 +107,7 @@ def test_start_twice_is_refused(script):
 def test_seed_text_is_used_once_and_discarded(script):
     script.replies.append("```json\n" + EXTRACTION + "\n```")
     interview.start("I also built a Discord bot")
+    interview.skip_facts()
     assert "Discord bot" in script.completes[0][1]
     assert interview.State.load().seed == "I also built a Discord bot"
     script.replies.append("EXPERIENCES: []\nSTART: yes\n---\nStarting.")
@@ -125,6 +132,7 @@ def test_setup_turn_starts_with_roles_first(script):
 def test_setup_turn_can_add_an_experience(script):
     script.replies.append("```json\n" + EXTRACTION + "\n```")
     interview.start("")
+    interview.skip_facts()
     added = json.loads(EXTRACTION)["experiences"] + [
         {"title": "Discord bot", "kind": "project", "resume_entry": "a bot"}]
     script.replies.append(f"EXPERIENCES: {json.dumps(added)}\nSTART: no\n---\nAdded. Anything else?")
@@ -399,3 +407,70 @@ def test_reply_without_labels_carries_no_part_so_the_page_decides():
     assert parts.feed("as") == []
     assert parts.feed("k: Why?\nno") == [("Why?\n", "ask")]
     assert parts.feed("t a label") == [("not a label", "ask")]
+
+
+# ------------------------------------------------------------- the facts --
+
+def facts_reply(line, ask=""):
+    return json.dumps({"line": line, "ask": ask})
+
+
+def test_start_asks_the_facts_first_and_offers_the_resumes_answer(script):
+    script.replies.append("```json\n" + EXTRACTION + "\n```")
+    result = interview.start("")
+    assert result["status"]["phase"] == "facts"
+    assert "work authorisation" in result["message"].lower()
+    assert result["status"]["facts"] == {"phase": "asking", "asked": 0, "total": len(interview.facts_module.QUESTIONS)}
+    assert result["status"]["has_facts"] is False
+
+
+def test_facts_answers_become_applicant_md_then_the_stories_begin(script, tmp_path):
+    script.replies.append("```json\n" + EXTRACTION + "\n```")
+    interview.start("")
+    answers = ["authorised to work in the United States on OPT; will need H-1B sponsorship",
+               "none, not eligible", "entry level (new grad / junior). Senior and above out of scope",
+               "Los Angeles, CA", "acceptable anywhere in the US; remote and hybrid fine",
+               "immediately", "December 2026, in the future",
+               '{"Portfolio": "https://me.dev"}']
+    for i, answer in enumerate(answers):
+        script.replies.append(facts_reply(answer))
+        evs = events(f"answer {i}")
+        if i < len(answers) - 1:
+            assert interview.State.load().phase == "facts"
+            assert interview.facts_module.QUESTIONS[i + 1]["ask"][:20] in shown(evs)
+    # The last answer writes the file and opens the stories.
+    assert interview.State.load().phase == "setup"
+    assert "Roles:" in shown(evs) and "Backend Intern" in shown(evs)
+    text = (tmp_path / "applicant.md").read_text()
+    assert "- Work authorisation: authorised to work in the United States on OPT" in text
+    assert "- Location: Los Angeles, CA" in text
+    assert "- Phone: +1 555" in text and "- Portfolio: https://me.dev" in text
+    assert interview.status()["has_facts"] is True
+
+
+def test_a_vague_answer_gets_one_follow_up_and_skip_leaves_unknown(script, tmp_path):
+    script.replies.append("```json\n" + EXTRACTION + "\n```")
+    interview.start("")
+    script.replies.append(facts_reply("", ask="On a visa, or a citizen?"))
+    evs = events("it's complicated")
+    assert shown(evs) == "On a visa, or a citizen?"
+    assert interview.facts_module.Facts.load().index == 0
+    evs = events("skip")
+    assert interview.facts_module.Facts.load().index == 1
+    assert interview.facts_module.Facts.load().answers["authorisation"]["line"] == "unknown"
+    assert "clearance" in shown(evs).lower()
+
+
+def test_facts_can_be_skipped_and_redone_from_the_stories(script, tmp_path):
+    begin(script)
+    assert interview.State.load().phase == "interviewing"
+    assert not (tmp_path / "applicant.md").exists()
+    result = interview.restart_facts()
+    assert interview.State.load().phase == "facts"
+    assert "work authorisation" in result["message"].lower()
+    for i in range(len(interview.facts_module.QUESTIONS)):
+        script.replies.append(facts_reply(f"fact {i}"))
+        evs = events("x")
+    assert interview.State.load().phase == "interviewing"
+    assert "Back to the stories" in shown(evs)
+    assert (tmp_path / "applicant.md").exists()

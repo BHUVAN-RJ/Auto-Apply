@@ -29,6 +29,12 @@ def isolated(tmp_path, monkeypatch):
     import server.review as review_module
     monkeypatch.setattr(review_module.chrome, "close",
                         lambda port_number=None: pytest.fail("a test closed Chrome"))
+    monkeypatch.setattr(review_module.chrome, "close_tab", lambda target_id, port_number=None: False)
+    from browser import forms
+    monkeypatch.setattr(forms, "find_target", lambda cdp, url, target_id="": "")
+    # ...nor look at its tabs: the correction loop's snapshot lists them.
+    from server import corrections
+    monkeypatch.setattr(corrections, "capture", lambda job_url, app_dir: {"captured": False, "reason": "test"})
 
 
 @pytest.fixture
@@ -215,6 +221,17 @@ def test_revise_rejects_an_empty_instruction(client):
 
 def test_index_page_is_served(client):
     assert "Job Autopilot" in client.get("/").text
+
+
+def test_the_page_opens_on_the_first_job_in_flight_or_says_nothing_is():
+    """Never a job from a closed shelf by default; the URL's #<id> (the
+    capture's "Open in autopilot") wins when it names one."""
+    script = (runner.ROOT / "review" / "index.html").read_text()
+    assert "if (inflight.length) show(inflight[0].id);" in script
+    assert "Nothing in flight." in script
+    assert "show((waiting[0] || jobs[0]).id)" not in script
+    assert 'let current = location.hash.length > 1 ? location.hash.slice(1) : null;' in script
+    assert 'window.addEventListener("hashchange"' in script
 
 
 def filled_job() -> tuple[str, object]:
@@ -409,41 +426,35 @@ def test_detail_reports_the_running_fill(client, monkeypatch):
     assert fill == {"pid": 4242, "started_at": 990.0, "age": 10}
 
 
-def test_submitting_the_last_form_closes_the_browser(client, monkeypatch):
+def test_submitting_closes_only_the_jobs_tab_never_the_browser(client, monkeypatch):
+    """The browser is the person's working set (the Jobright list, the next
+    form, the logins); only the submitted form's tab goes. Closing the
+    whole browser read as a crash."""
+    import json
     import server.review as review_module
     closed = []
-    monkeypatch.setattr(review_module.chrome, "close",
-                        lambda port_number=None: closed.append(True) or True)
-    job_id, _ = filled_job()
+    monkeypatch.setattr(review_module.chrome, "close_tab",
+                        lambda target_id, port_number=None: closed.append(target_id) or True)
+    job_id, app_dir = filled_job()
+    store.write(app_dir, "form_fill.json", json.dumps({"target_id": "TAB1234", "after_agent": {}}))
+    from browser import forms
+    monkeypatch.setattr(forms, "find_target", lambda cdp, url, target_id="": target_id)
 
     result = client.post(f"/review/{job_id}/submitted", json={}).json()
 
-    assert result["status"] == "submitted"
-    assert result["browser"] == "closed"
-    assert closed == [True]
+    assert result["status"] == "submitted" and result["tab"] == "closed"
+    assert closed == ["TAB1234"]
+    assert "Browser.close" not in open(review_module.__file__).read()
 
 
-def test_submitting_keeps_the_browser_while_another_form_is_open(client, monkeypatch):
-    """The window is shared; another job's half-filled form must survive."""
+def test_submitting_with_the_tab_already_gone_still_marks_it(client, monkeypatch):
     import server.review as review_module
-    monkeypatch.setattr(review_module.chrome, "close",
-                        lambda port_number=None: pytest.fail("must not close"))
+    monkeypatch.setattr(review_module.chrome, "close_tab", lambda target_id, port_number=None: False)
+    from browser import forms
+    monkeypatch.setattr(forms, "find_target", lambda cdp, url, target_id="": "")
     job_id, _ = filled_job()
-    other, _ = queue.add(Job(url="https://example.com/jobs/2", title="Other Role"))
-    queue.update(other.id, status=Status.FILLING)
-
     result = client.post(f"/review/{job_id}/submitted", json={}).json()
-
-    assert result["browser"] == "kept"
-    assert result["in_progress"] == [
-        {"id": other.id, "title": "Other Role", "status": "filling", "running": False}]
-
-
-def test_submitting_reports_when_no_browser_was_running(client, monkeypatch):
-    import server.review as review_module
-    monkeypatch.setattr(review_module.chrome, "close", lambda port_number=None: False)
-    job_id, _ = filled_job()
-    assert client.post(f"/review/{job_id}/submitted", json={}).json()["browser"] == "not_running"
+    assert result["status"] == "submitted" and result["tab"] == "not_open"
 
 
 def test_submitting_while_filling_stops_the_agent(client, monkeypatch):
@@ -465,3 +476,145 @@ def test_submitting_while_filling_stops_the_agent(client, monkeypatch):
 def test_submitting_needs_a_form_in_the_browser(client):
     job_id, _ = reviewable_job()
     assert client.post(f"/review/{job_id}/submitted", json={}).status_code == 409
+
+
+
+def test_confirmation_seen_marks_submitted_without_closing_the_browser(client, monkeypatch):
+    import server.review as review_module
+    closed = []
+    monkeypatch.setattr(review_module.chrome, "close", lambda port_number=None: closed.append(1) or True)
+    job_id, app_dir = filled_job()
+    body = client.post(f"/review/{job_id}/submitted-seen",
+                       json={"url": "https://x.com/thanks", "quote": "Thank you for applying"}).json()
+    assert body["marked"] and body["status"] == "submitted"
+    assert queue.get(job_id).status == Status.SUBMITTED
+    assert closed == []
+    assert "confirmation seen on the page" in (app_dir / "status.json").read_text()
+
+
+def test_confirmation_seen_ignores_jobs_not_in_the_browser(client):
+    job_id, _ = reviewable_job()
+    body = client.post(f"/review/{job_id}/submitted-seen", json={"quote": "Thank you for applying"}).json()
+    assert body["marked"] is False
+    assert queue.get(job_id).status == Status.AWAITING_REVIEW
+
+
+def test_the_page_can_fetch_the_tailored_files_under_their_upload_names(client, monkeypatch):
+    import base64
+    monkeypatch.setenv("AUTOPILOT_RESUME_FILENAME", "Jane Doe Resume")
+    monkeypatch.setenv("AUTOPILOT_COVER_LETTER_FILENAME", "Jane Doe Cover Letter")
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "cover_letter.pdf", b"%PDF-letter")
+    body = client.post(f"/review/{job_id}/files").json()
+    assert body["resume"]["name"] == "Jane_Doe_Resume.pdf"
+    assert body["cover_letter"]["name"] == "Jane_Doe_Cover_Letter.pdf"
+    assert base64.b64decode(body["cover_letter"]["b64"]) == b"%PDF-letter"
+    assert body["resume"]["type"] == "application/pdf"
+
+
+# -- /autofilled: the trigger after Jobright's autofill --------------------
+
+def autofilled_setup(monkeypatch, tmp_path):
+    from server import settings
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    settings.save(auto_fill=True)
+    launched = []
+    monkeypatch.setattr(runner, "launch", lambda script, job_id, log_dir=None: launched.append((script, job_id)) or 777)
+    monkeypatch.setattr(runner, "start_pipeline", lambda job_id, log_dir=None: launched.append(("pipeline.py", job_id)) or 778)
+    return launched
+
+
+def test_autofilled_restarts_the_fill_of_a_job_that_failed_mid_fill(client, monkeypatch, tmp_path):
+    launched = autofilled_setup(monkeypatch, tmp_path)
+    job_id, app_dir = reviewable_job()
+    queue.update(job_id, status=Status.FAILED, error="agent died")
+    result = client.post("/autofilled", json={"url": "https://example.com/jobs/1?utm=x", "note": "9/10"}).json()
+    assert result == {"action": "fill", "id": job_id, "pid": 777}
+    assert launched == [("apply.py", job_id)]
+    assert queue.get(job_id).status == Status.APPROVED and queue.get(job_id).error is None
+
+
+def test_autofilled_never_doubles_a_running_fill(client, monkeypatch, tmp_path):
+    launched = autofilled_setup(monkeypatch, tmp_path)
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FILLING)
+    monkeypatch.setattr(runner, "fill_pid", lambda jid: 4242)
+    result = client.post("/autofilled", json={"url": "https://example.com/jobs/1"}).json()
+    assert result["action"] == "running" and launched == []
+
+
+def test_autofilled_waits_for_the_pipeline_and_ignores_unknown_and_closed_jobs(client, monkeypatch, tmp_path):
+    launched = autofilled_setup(monkeypatch, tmp_path)
+    job_id, _ = reviewable_job()   # awaiting review: the pipeline's, or the human's
+    assert client.post("/autofilled", json={"url": "https://example.com/jobs/1"}).json()["action"] == "waiting"
+    queue.update(job_id, status=Status.SUBMITTED)
+    assert client.post("/autofilled", json={"url": "https://example.com/jobs/1"}).json()["action"] == "waiting"
+    assert client.post("/autofilled", json={"url": "https://example.com/jobs/other"}).json()["action"] == "none"
+    assert launched == []
+
+
+def test_autofilled_starts_the_pipeline_for_a_job_that_never_got_a_resume(client, monkeypatch, tmp_path):
+    launched = autofilled_setup(monkeypatch, tmp_path)
+    job, _ = queue.add(Job(url="https://example.com/jobs/9", title="X"))
+    queue.update(job.id, status=Status.FAILED, error="fetch failed")
+    result = client.post("/autofilled", json={"url": "https://example.com/jobs/9"}).json()
+    assert result["action"] == "pipeline" and launched == [("pipeline.py", job.id)]
+
+
+def test_autofilled_does_nothing_with_the_switch_off(client, monkeypatch, tmp_path):
+    from server import settings
+    launched = autofilled_setup(monkeypatch, tmp_path)
+    settings.save(auto_fill=False)
+    job_id, _ = reviewable_job()
+    queue.update(job_id, status=Status.FAILED)
+    assert client.post("/autofilled", json={"url": "https://example.com/jobs/1"}).json()["action"] == "waiting"
+    assert launched == []
+
+
+def test_ask_answers_from_the_application_and_keeps_it(client, monkeypatch):
+    """A free-form question pasted on the review page is answered from this
+    application's own material and appended to answers.md; nothing is typed
+    into any form."""
+    import json
+    from server import review as review_module
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "posting.md", "Perplexity builds an answer engine.")
+    store.write(app_dir, "resume.tex", "\\documentclass{article} built search at Acme")
+    store.write(app_dir, "cover_letter.md", "Dear team, search.")
+    store.write(app_dir, "form_fill.json", json.dumps({"after_agent": {
+        "First name": "Jane",
+        "What are the most interesting aspects of Perplexity that you are excited to work on?": "",
+        "Will you now or in the future require sponsorship?": ""}}))
+    seen = {}
+
+    def fake(question, context, model=None):
+        seen["question"], seen["context"] = question, context
+        return review_module.answers.Answer(question, "Search ranking, because I built it at Acme.", "test/model")
+    monkeypatch.setattr(review_module.answers, "answer", fake)
+    monkeypatch.setattr(review_module.tailor, "load_profile", lambda stories=None: "profile text")
+    monkeypatch.setattr(review_module.profile, "applicant_facts", lambda: "facts text")
+
+    detail = client.get(f"/review/{job_id}").json()
+    assert detail["questions"] == ["What are the most interesting aspects of Perplexity that you are excited to work on?"]
+
+    r = client.post(f"/review/{job_id}/ask", json={"question": "  What excites you\nabout Perplexity? "})
+    assert r.status_code == 200 and r.json()["answer"].startswith("Search ranking")
+    assert seen["question"] == "What excites you about Perplexity?"
+    for piece in ("Perplexity builds", "built search at Acme", "Dear team", "profile text", "facts text"):
+        assert piece in seen["context"].as_message()
+    kept = (app_dir / "answers.md").read_text()
+    assert "What excites you about Perplexity?" in kept and "Search ranking" in kept
+    assert "Search ranking" in client.get(f"/review/{job_id}").json()["answers"]
+
+    assert client.post(f"/review/{job_id}/ask", json={"question": "  "}).status_code == 400
+
+
+def test_ask_refuses_a_visa_question(client, monkeypatch):
+    from server import review as review_module
+    job_id, _ = reviewable_job()
+    monkeypatch.setattr(review_module.answers.llm, "complete",
+                        lambda *a, **k: pytest.fail("a visa question reached the model"))
+    monkeypatch.setattr(review_module.tailor, "load_profile", lambda stories=None: "")
+    monkeypatch.setattr(review_module.profile, "applicant_facts", lambda: "")
+    r = client.post(f"/review/{job_id}/ask", json={"question": "Do you require visa sponsorship?"})
+    assert r.status_code == 422

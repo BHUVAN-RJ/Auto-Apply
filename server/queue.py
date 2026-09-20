@@ -74,11 +74,15 @@ def all_jobs() -> list[Job]:
 
 
 def add(job: Job) -> tuple[Job, bool]:
-    """Append a job. Returns (job, created); an existing URL is never duplicated."""
+    """Append a job. Returns (job, created); a posting already here is never
+    duplicated, whether it arrives by the same URL, the same Jobright id, or
+    the same job id at the employer's tracking system (`seen.same_job`)."""
+    from . import seen  # seen reads the queue; imported here to avoid the cycle
+
     with _locked():
         jobs = _read_unlocked()
         for existing in jobs:
-            if existing.url == job.url:
+            if seen.same_job(existing, job):
                 return existing, False
         jobs.append(job)
         _write_unlocked(jobs)

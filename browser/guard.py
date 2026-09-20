@@ -132,6 +132,20 @@ COVER_LETTER_PATTERNS = [r"\bcover\s*letter\b", r"\bcover\b", r"\bletter\b"]
 _COVER_LETTER = [re.compile(pattern, re.I) for pattern in COVER_LETTER_PATTERNS]
 
 
+_RESUME = [re.compile(p, re.I) for p in (r"\bresume\b", r"\bcv\b", r"\bcurriculum\b")]
+
+
+def describes_resume(*fields: str | None) -> bool:
+    """True when a file input is the resume's own slot."""
+    for field in fields:
+        if not field:
+            continue
+        text = " ".join(re.sub(r"[_\-./]+", " ", str(field)).split())
+        if text and len(text) <= 200 and any(p.search(text) for p in _RESUME):
+            return True
+    return False
+
+
 def describes_cover_letter(*fields: str | None) -> bool:
     """True when a file input belongs to a cover letter rather than a resume."""
     for field in fields:

@@ -41,6 +41,9 @@ class Posting:
     title: str = ""
     company: str = ""
     location: str = ""
+    # Which copy of the text this is: the fetched page, what the browser
+    # saw, or Jobright's copy. Set by the pipeline when it picked.
+    text_source: str = ""
 
     def to_markdown(self) -> str:
         header = [f"# {self.title or 'Job posting'}"]
@@ -49,6 +52,8 @@ class Posting:
         if self.location:
             header.append(f"**Location:** {self.location}")
         header.append(f"**Source:** {self.url}")
+        if self.text_source:
+            header.append(f"**Text from:** {self.text_source}")
         return "\n\n".join(header) + "\n\n---\n\n" + self.text + "\n"
 
 

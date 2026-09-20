@@ -28,12 +28,16 @@ click, pausing twice for your approval.
 **Checkpoint 1 — the resume.** After tailoring, a local web page shows a
 unified diff against your master resume, a preview of the compiled PDF, and the
 model's written rationale for each change. Approve it, reject it, or chat to
-revise it.
+revise it. By default this checkpoint passes itself: the banner on the job
+page has an **auto-approve** box, ticked, next to "Add to autopilot"; leave
+it and a clean screen plus a clean tailor go straight on to the form. Untick
+it during the two-second countdown and that job waits here for you. A
+poor-fit verdict or a `reject` screen always waits.
 
-**Checkpoint 2 — the form.** After the browser fills the application, you get a
-screenshot of the completed form. The agent halts there.
+**Checkpoint 2 — the form.** After the form is filled, you get a screenshot
+of it and the window left open on it. Everything halts there.
 
-Both checkpoints block. Nothing advances without an explicit click.
+Checkpoint 2 always blocks. Nothing is ever submitted by anything but you.
 
 ## The agent never submits
 
@@ -69,8 +73,8 @@ job you ever considered.
 
 | Component | Role |
 |---|---|
-| `capture/` | MV3 Chrome extension. Screens every job page as it opens and paints the verdict; right-click any posting → "Add this job to autopilot" |
-| `server/` | FastAPI on `localhost:8787`. Owns the queue, serves the review UI, holds checkpoint state |
+| `capture/` | `content.js`: the on-page banner (screen verdict, countdown, queue, already-seen, file chips, submission watch). Injected by `browser/inject.py` into the app's own Chrome; also loadable as an MV3 extension for an everyday Chrome |
+| `server/` | FastAPI on `localhost:8787` by default. Owns the queue, serves the review UI, holds checkpoint state |
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
 | `browser/` | `browser-use` fill loop driving your real Chrome profile |
@@ -98,15 +102,18 @@ your resume, asks about each role and project the way an interviewer would,
 and writes one story per experience that the tailor, the cover letter, and
 the form answers draw on, plus a STAR write-up for you. Type, or switch to
 voice mode and talk to the orb hands-free; speech runs on this machine
-(whisper.cpp in, Kokoro out) and the models download on first use. Next is hardening — retries,
-resume-after-crash, a per-ATS recipe cache. See [PLAN.md](PLAN.md) for the
-design and what is deliberately deferred.
+(whisper.cpp in, Kokoro out) and the models download on first use. Ashby,
+Greenhouse and Lever forms are filled by code from the preliminary
+interview's answers, and what you correct before submitting is learned for
+the next form. Next: the same code fill for Workday, Oracle, iCIMS and
+SmartRecruiters, where Jobright's autofill is still step one. See
+[PLAN.md](PLAN.md) for the design and what is deliberately deferred.
 
 ```sh
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 307 tests
+pytest                        # 467 tests
 ```
 
 ## Setup
@@ -115,23 +122,43 @@ pytest                        # 307 tests
 brew install --cask basictex        # needs sudo
 uv venv && uv pip install -e .
 cp .env.example .env                # add your OpenRouter key
-cp base/applicant.example.md base/applicant.md   # fill in the Facts section
 ```
 
-The capture needs no extension in the app's own Chrome: `python -m
-browser.inject` puts the screen into its Jobright tabs and whatever Apply
-opens. To use it in your everyday Chrome instead, load `capture/` as an
-unpacked extension (`chrome://extensions` → Developer mode → Load unpacked).
+`base/applicant.md` (visa status, relocation, start date, the facts the
+screen and the fill need) is written by the Profile tab's first
+interview, eight spoken questions; `base/applicant.example.md` shows the
+shape if you would rather type it.
 
 ## Run
 
+Two processes, one browser:
+
 ```sh
 .venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 8787
+.venv/bin/python -m browser.inject --open https://jobright.ai/jobs/recommend
 ```
 
-Open <http://127.0.0.1:8787> for the queue. Right-click any job posting in
-Chrome and choose "Add this job to autopilot" to queue it, then run
-`python pipeline.py` to tailor and compile everything queued.
+If 8787 is occupied, start uvicorn on another port and give the injector the
+same origin, for example `AUTOPILOT_SERVER_URL=http://127.0.0.1:8788`. The
+injector rewrites the injected banner's local-server URL to match; the unpacked
+extension keeps its manifest-pinned 8787 origin.
+
+The second launches (or reuses) the app's own Chrome on port 9333, with
+your Jobright login and Jobright's extension in its profile, and puts the
+screen into every Jobright tab and every tab Jobright's Apply opens. It
+reattaches by itself if the connection drops and exits when Chrome quits.
+No extension of ours is installed; to use your everyday Chrome instead,
+load `capture/` as an unpacked extension (`chrome://extensions` →
+Developer mode → Load unpacked).
+
+Open <http://127.0.0.1:8787> for the queue. In the Chrome that opened,
+browse Jobright: a posting page is screened as it opens; an OK or caution
+verdict counts down and presses Apply; the employer's page is screened
+again and queues itself; the pipeline runs; the job appears on the review
+page. A posting already in autopilot is not queued again: the banner says
+where it stands and opens it on the review page. Add, Add anyway, and Open in
+autopilot focus the existing Autopilot tab and select that job; if there is no
+Autopilot tab, exactly one is opened.
 
 Put your master resume at `base/resume.tex`, along with any `.cls` or `.sty`
 it needs. `base/resume.example.tex` shows the shape and is what the test suite
@@ -151,7 +178,9 @@ history.
 Three ways out:
 
 - **Approve** — the only path onward. The fill loop refuses any job that is not
-  approved, so this gate cannot be skipped.
+  approved. With auto-approve (the banner's box, or `auto_fill` in
+  `data/settings.json`) the pipeline presses this for you on a clean job;
+  a poor fit or a rejecting screen still lands here.
 - **Reject** — the job is dropped. The folder stays as a record of what was
   tried and why it was not sent.
 - **Re-tailor with a note** — a second pass with your instruction appended to
@@ -174,7 +203,17 @@ You can reject at any stage, including after approving or filling.
 
 Approving starts the fill (`AUTOPILOT_AUTOFILL=1`, the default in `.env`;
 unset it to start fills by hand with "Fill the form now" or `python
-apply.py`). For the first 30 seconds the page shows only "Agent is working"
+apply.py`). The fill works in the tab Jobright's Apply opened, where the
+injector has already pressed Jobright's Autofill and waited for its panel
+to stop saying "Autofilling". Then, in code and without a model, it removes
+the resume Jobright attached, puts the tailored one on the slot, and the
+cover letter where there is one, reading each name back off the form.
+
+With `AUTOPILOT_AGENT=0` (the current setting in `.env`) that is the whole
+fill: a screenshot, and the form is yours to finish and submit; the job is
+`filled` only if the resume read back, `failed` otherwise. With
+`AUTOPILOT_AGENT=1` the browser agent takes over from there for the
+location and the open questions. For the first 30 seconds the page shows only "Agent is working"
 with no buttons. After that "Fill it again" and "Reject…" come back.
 
 One fill per job at a time. Two `apply.py` runs on the same job drive the
@@ -189,6 +228,53 @@ Capturing a job starts the pipeline on its own: by the time the review tab
 is open the posting is scraped and the resume and letter are ready, or a few
 seconds away. A job captured while the server was down shows a "Tailor it
 now" button instead.
+
+Before the agent starts, the code fills what it can. On Ashby, Greenhouse
+and Lever the form is filled without a model at all (`browser/forms/`):
+every field is read with its label, matched to `base/form.json`, set the
+way the widget expects (typed keys and a click on the suggestion for a
+location picker, `DOM.setFileInputFiles` for the resume, read back to be
+sure), and the agent gets the list of what is still empty. Elsewhere the
+code presses Jobright's Autofill and waits for it to finish: Jobright's
+own "done" message, or its panel going from "Autofilling ···" to "N/M
+required fields filled", whatever N is (`browser/autofill.py`;
+`AUTOPILOT_AUTOFILL_BY_CODE=0` leaves it to the agent,
+`AUTOPILOT_FORM_FILL=0` skips the code fill, and that is the current
+setting: Jobright first, always). The press does not wait for the
+pipeline: the injector makes it the moment the employer's tab has loaded,
+before the job is even queued, and the fill later works in that same tab.
+Once Jobright is done, the documents go on in code: Jobright's resume is
+removed from its slot, the tailored one set, the cover letter where there
+is a slot (`AUTOPILOT_DOCS_BY_CODE=0` leaves that to the agent). From Add
+until the fill ends, the corner badge's core stays purple and pulses,
+with a line in the bar saying what is happening; green when the documents
+are on, red when the resume did not attach. With `AUTOPILOT_AGENT=1` the
+agent then works in that tab with per-system notes for Greenhouse, Ashby,
+Workday, Oracle, and Lever (`browser/ats_rules.md`).
+
+`base/form.json` comes from the **preliminary interview** on the Profile
+tab: the fixed questions every application asks (contact, location, work,
+education, self-identification, work authorisation), one per screen, no
+voice, contact details prefilled from the resume. "How did you hear about
+us" is always "Other". The authorisation answers are kept for you and the
+screen; the filler never types them onto a form, that stays yours.
+
+**What you correct is learned.** The form as the agent left it is kept;
+while you check it the tab reports back, and when you mark the job
+submitted the difference — anything you filled in or changed — goes into
+`base/form.json` under `answers`, keyed by the question as the form showed
+it, and fills that question next time before any guess. The Form details
+page on the Profile tab lists them; delete a wrong one there. Visa
+questions are never recorded.
+
+If you would rather do it yourself, or the agent is slow: the banner on
+the form's page shows the tailored resume and cover letter as chips. Drag
+one onto the form's upload slot, click it to download, or press "put" to
+set the matching file input directly.
+
+When you submit, the page that follows is read by the same banner and the
+job is marked submitted on its own; "I submitted it" still works and is
+what closes that form's tab. The browser stays.
 
 The file is uploaded as `<AUTOPILOT_RESUME_FILENAME>.pdf` (spaces become
 underscores; default `Resume.pdf`). Set it in `.env` to whatever you want the
@@ -234,12 +320,9 @@ open on the completed form. That is the point of checkpoint 2: you read the
 form in the browser, submit it yourself, and press "I submitted it". The
 agent's session ends without touching the browser process.
 
-The window is shared between fills, so closing it is the server's call, not
-the agent's. Marking a job submitted closes the Auto-Apply Chrome (CDP
-`Browser.close`, the same as Quit, so logins are saved) only when no other
-job is approved, filling, or filled and waiting for its own check. Otherwise
-the page says "Application filling in progress" and lists what is holding
-the window. "I submitted it" is also available while a job is still
+The window is shared between fills and is never closed by the app. Marking
+a job submitted closes that job's form tab only; the Jobright list, the
+next form and the logins stay. "I submitted it" is also available while a job is still
 `filling`: your submission wins, and the agent still poking at the form is
 killed.
 
@@ -269,7 +352,8 @@ python tools/open_profile.py --attach   # prints the exact commands
 export AUTOPILOT_CDP_URL=http://127.0.0.1:9222
 ```
 
-This works with Brave, or any Chromium browser. The flag only applies to a
+Use Google Chrome for this workflow. `AUTOPILOT_BROWSER` can pin its executable
+when more than one Chromium browser is installed. The flag only applies to a
 fresh launch, so the browser has to be fully quit first. It refuses any job that is not approved, so checkpoint 1 cannot be
 bypassed by running it directly.
 
@@ -320,7 +404,7 @@ retry is informed rather than a reroll.
 
 Open a posting on Jobright, or click its Apply button, and the page it
 lands on gets a bar across the top within a couple of seconds: red NOT OK
-for an auto-reject, amber CAUTION for a soft one, green OK for clear, grey
+for an auto-reject, purple CAUTION for a soft one, green OK for clear, grey
 when the page holds no posting (a login wall, a redirect still loading).
 Each line is one requirement in the posting's own words — years of
 experience, no sponsorship, ITAR, clearance or citizenship, a start date or
@@ -328,9 +412,11 @@ graduation window, a role outside the country, a required degree, a senior
 title, a PERM advertisement — and why it applies to the facts in
 `base/applicant.md`. Without that file the facts are derived from the
 resume once and the bar says so, since a resume knows nothing about visas
-or start dates. A stretch is not a reject: another city in the same
-country, a cohort a year off, one year short on experience, a missing
-skill are at most a soft line.
+or start dates. Location anywhere in the United States is always green.
+A graduation requirement phrased as a latest-date cutoff is also green when
+the applicant graduates earlier (December 2026 satisfies "earned or expected
+by Summer 2027"). Those two rules are enforced after the model response, not
+left to prompt wording.
 
 Off Jobright, an OK or CAUTION verdict queues the job by itself after a
 two-second countdown drawn across the button; a click during it cancels.
@@ -338,7 +424,34 @@ NOT OK waits for the click. On Jobright's own posting pages the bar only
 advises, because the Apply button leads to the employer's page, and that is
 the URL worth queueing. The verdict is cached per URL, reused by the
 pipeline, and shown again on the review page. It is advice; nothing is
-skipped by it. Any other page still queues by hand from the context menu.
+skipped by it. A bare ATS shell or corporate footer reuses the cached
+Jobright verdict; if no verdict exists yet, the saved Jobright description
+and employer text are screened together in one model call. Jobright's visible
+"Original Job Post" header supplies the role and company when its document
+title is the generic recommendations title. Any other page still queues by
+hand from the context menu.
+
+Five seconds after a successful add, the bar minimizes to the assistant-circle
+badge in the top-left corner. The badge stays for the life of that page and is
+coloured for the cached verdict; clicking it restores the same banner without
+screening again or spending another model call. Failed and no-posting screens
+still offer both Again and Add.
+
+A posting already in autopilot is never queued again. Provably the same
+posting (same URL, same Jobright id, same job id at the tracking system)
+is refused by the server; the same employer and role or description is a
+"looks like" line with "Add anyway". Either way the bar shows the job's
+status and an "Open in autopilot" button; the countdown does not run.
+Successful Add and Add anyway actions carry the captured job id into that same
+tab-routing path, so they always leave the matching Autopilot job visible.
+
+## Form details
+
+`base/form.json` (gitignored; template `base/form.example.json`) is what
+the code filler types: one key per field, and `answers`, the question
+label to the answer, grown from your corrections. Fill it in from the
+Profile tab ("Preliminary interview" / "Form details") or by hand. Without
+it the code fill stands aside and Jobright's Autofill is pressed as before.
 
 ## Use profile
 

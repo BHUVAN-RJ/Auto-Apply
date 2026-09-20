@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from server import screen as server_screen
+from server import postings, screen as server_screen
 from server import settings
 from server.app import app
 from tailor import profile, screen
@@ -27,6 +27,7 @@ FACTS = """# Applicant
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(server_screen, "CACHE_PATH", tmp_path / "screens.json")
+    monkeypatch.setenv(postings.DIR_ENV, str(tmp_path / "postings"))
     monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
     applicant = tmp_path / "applicant.md"
     applicant.write_text(FACTS)
@@ -130,6 +131,75 @@ def test_verdict_follows_flags_not_the_model():
     assert screen.parse_reply(reply(verdict="reject", flags=[])).verdict == "ok"
 
 
+def test_us_location_is_green_even_when_model_calls_it_soft():
+    posting = "San Jose, California, United States of America"
+    result = screen.parse_reply(reply(verdict="caution", flags=[{
+        "category": "location",
+        "severity": "soft",
+        "quote": posting,
+        "reason": "Onsite in San Jose; applicant is in Los Angeles and relocation is acceptable.",
+    }]), text=posting)
+
+    assert result.flags == []
+    assert result.verdict == "ok"
+
+
+def test_us_location_is_green_even_when_model_calls_it_hard():
+    posting = "This position is based in New York, New York."
+    result = screen.parse_reply(reply(flags=[{
+        "category": "location", "severity": "hard",
+        "quote": "New York, New York", "reason": "Applicant is in Los Angeles.",
+    }]), text=posting)
+
+    assert result.flags == []
+    assert result.verdict == "ok"
+
+
+def test_non_us_location_flag_is_preserved():
+    posting = "This position is based in Toronto, Ontario, Canada."
+    result = screen.parse_reply(reply(flags=[{
+        "category": "location", "severity": "hard",
+        "quote": "Toronto, Ontario, Canada", "reason": "Role is restricted to Canada.",
+    }]), text=posting)
+
+    assert [(flag.category, flag.severity) for flag in result.flags] == [("location", "hard")]
+    assert result.verdict == "reject"
+
+
+def test_graduating_before_latest_date_is_green(monkeypatch):
+    posting = "Bachelor's or Master's degree earned or expected by Summer 2027"
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: reply(
+        verdict="caution",
+        flags=[{
+            "category": "timeline",
+            "severity": "soft",
+            "quote": "earned or expected by Summer 2027",
+            "reason": "Applicant expects to graduate in December 2026.",
+        }],
+    ))
+
+    result = screen.screen(
+        posting,
+        facts="- Degrees held: MS Computer Science (expected December 2026)",
+    )
+
+    assert result.flags == []
+    assert result.verdict == "ok"
+
+
+def test_graduating_after_latest_date_keeps_timeline_flag():
+    posting = "Bachelor's or Master's degree earned or expected by Summer 2027"
+    result = screen.parse_reply(reply(verdict="caution", flags=[{
+        "category": "timeline",
+        "severity": "soft",
+        "quote": "earned or expected by Summer 2027",
+        "reason": "Applicant expects to graduate in December 2027.",
+    }]), text=posting, facts="- Graduation: expected December 2027")
+
+    assert [(flag.category, flag.severity) for flag in result.flags] == [("timeline", "soft")]
+    assert result.verdict == "caution"
+
+
 def test_not_a_job_survives():
     assert screen.parse_reply(reply(verdict="not_a_job")).verdict == "not_a_job"
 
@@ -184,6 +254,70 @@ def test_endpoint_caches_by_url(monkeypatch):
     assert first["verdict"] == "reject" and first["cached"] is False
     assert second["cached"] is True and second["flags"] == first["flags"]
     assert len(calls) == 1
+
+
+def test_cached_us_location_caution_is_normalized_without_model_call(monkeypatch):
+    url = "https://jobs.example.com/san-jose-role"
+    server_screen.remember(url, screen.Screen(verdict="caution", flags=[
+        screen.Flag(
+            "location", "soft", "San Jose, California, United States of America",
+            "Applicant is in Los Angeles and relocation is acceptable.",
+        )
+    ]))
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("called"))
+
+    data = TestClient(app).post("/screen", json={
+        "url": url,
+        "title": "Engineer",
+        "text": "San Jose, California, United States of America",
+    }).json()
+
+    assert data["cached"] is True
+    assert data["flags"] == []
+    assert data["verdict"] == "ok"
+
+
+def test_employer_page_reuses_jobright_verdict_without_a_model_call(monkeypatch):
+    source_url = "https://jobright.ai/jobs/info/abc123"
+    employer_url = "https://jobs.example.com/apply?jr_id=abc123"
+    postings.save_source("abc123", postings.Saved(
+        url=source_url, title="Engineer @ Acme | Jobright.ai",
+        text="Responsibilities\nBuild distributed systems. " * 30,
+    ))
+    server_screen.remember(source_url, screen.Screen(verdict="ok", summary="Good fit"))
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("called"))
+
+    data = TestClient(app).post("/screen", json={
+        "url": employer_url, "title": "Careers", "text": "Corporate footer and privacy links",
+    }).json()
+
+    assert data["verdict"] == "ok" and data["cached"] is True
+    assert server_screen.cached(employer_url).summary == "Good fit"
+
+
+def test_bare_employer_page_is_screened_with_saved_posting_in_one_call(monkeypatch):
+    employer_url = "https://jobs.example.com/apply?jr_id=abc123"
+    description = "Responsibilities\nBuild distributed systems in Python and Go. " * 30
+    postings.save_source("abc123", postings.Saved(
+        url="https://jobright.ai/jobs/info/abc123", title="Engineer @ Acme | Jobright.ai",
+        text=description,
+    ))
+    messages = []
+
+    def fake(system, user, **kwargs):
+        messages.append(user)
+        return reply(verdict="ok")
+
+    monkeypatch.setattr(screen.llm, "complete", fake)
+    data = TestClient(app).post("/screen", json={
+        "url": employer_url, "title": "Careers", "text": "Corporate footer and privacy links",
+    }).json()
+
+    assert data["verdict"] == "ok"
+    assert len(messages) == 1
+    assert "## Jobright posting copy" in messages[0]
+    assert "Build distributed systems in Python and Go." in messages[0]
+    assert "Corporate footer" in messages[0]
 
 
 def test_not_a_job_is_not_cached(monkeypatch):

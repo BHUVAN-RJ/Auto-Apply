@@ -108,13 +108,14 @@ def test_the_real_click_action_is_wrapped_not_replaced():
 
 def test_fill_requires_an_api_key(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv(fill.AGENT_ENV, "1")  # .env may have the agent off; the key is only needed with it on
     with pytest.raises(fill.FillError, match="OPENROUTER_API_KEY"):
         asyncio.run(fill.fill_async("https://example.com", tmp_path / "r.pdf",
                                     tmp_path / "shot.png"))
 
 
 def test_task_prompt_forbids_submitting_and_names_the_resume(tmp_path):
-    task = fill.TASK.format(resume=tmp_path / "resume.pdf", resume_name="resume.pdf",
+    task = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "resume.pdf", resume_name="resume.pdf"), ats_notes="", resume=tmp_path / "resume.pdf", resume_name="resume.pdf",
                             cover_letter_step="", location="LA", applicant="Jane")
     assert "Do not submit" in task
     assert "resume.pdf" in task
@@ -122,7 +123,7 @@ def test_task_prompt_forbids_submitting_and_names_the_resume(tmp_path):
 
 
 def test_task_prompt_replaces_the_autofilled_resume_after_autofill_finishes(tmp_path):
-    task = fill.TASK.format(resume=tmp_path / "resume.pdf", resume_name="resume.pdf",
+    task = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "resume.pdf", resume_name="resume.pdf"), ats_notes="", resume=tmp_path / "resume.pdf", resume_name="resume.pdf",
                             cover_letter_step="", location="LA", applicant="Jane")
     assert task.index("autofill has finished") < task.index("remove it first")
     assert task.index("remove it first") < task.index("upload_file")
@@ -382,7 +383,7 @@ def test_context_stops_at_the_root_and_drops_long_text():
 
 
 def test_task_prompt_tells_the_agent_to_leave_visa_questions_alone(tmp_path):
-    task = fill.TASK.format(resume=tmp_path / "r.pdf", resume_name="r.pdf",
+    task = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "r.pdf", resume_name="r.pdf"), ats_notes="", resume=tmp_path / "r.pdf", resume_name="r.pdf",
                             cover_letter_step="", location="LA", applicant="Jane")
     assert "visa" in task and "Never touch" in task
 
@@ -419,12 +420,12 @@ def test_the_real_upload_action_is_wrapped_not_replaced():
 
 
 def test_the_cover_letter_step_only_appears_when_there_is_a_letter(tmp_path):
-    with_letter = fill.TASK.format(
+    with_letter = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "r.pdf", resume_name="r.pdf"), ats_notes="", 
         resume=tmp_path / "r.pdf", resume_name="r.pdf", applicant="Jane", location="LA",
         cover_letter_step=fill.COVER_LETTER_STEP.format(cover_letter=tmp_path / "cl.pdf"))
     assert "cl.pdf" in with_letter and "cover letter upload" in with_letter
     assert "leave it empty" in with_letter, "a text-box cover letter is never typed"
-    without = fill.TASK.format(resume=tmp_path / "r.pdf", resume_name="r.pdf",
+    without = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "r.pdf", resume_name="r.pdf"), ats_notes="", resume=tmp_path / "r.pdf", resume_name="r.pdf",
                                applicant="Jane", location="LA", cover_letter_step="")
     assert "cover letter upload" not in without
 
@@ -441,7 +442,7 @@ def test_the_cover_letter_goes_only_on_a_cover_letter_input(tmp_path):
     resume_input = FakeNode("", {"id": "resume", "type": "file"})
     cover_input = FakeNode("", {"id": "cover_letter", "type": "file"})
 
-    with pytest.raises(fill.UploadMisdirected, match="not a cover letter input"):
+    with pytest.raises(fill.UploadMisdirected, match="is the resume input"):
         call_pinned_upload_with(FakeUploadSession(FakeNode("Attach"), resume_input),
                                 cover.resolve(), resume, cover)
     with pytest.raises(fill.UploadMisdirected, match="cover letter input"):
@@ -456,6 +457,18 @@ def test_the_cover_letter_goes_only_on_a_cover_letter_input(tmp_path):
             pass
 
 
+def test_a_general_attachment_slot_takes_the_cover_letter(tmp_path):
+    """Oracle: one "Upload Attachment" control for every document."""
+    resume, cover = tmp_path / "R.pdf", tmp_path / "CL.pdf"
+    generic = FakeNode("Upload Attachment", {"id": "attachment-upload-161", "name": "attachment-upload", "type": "file"})
+    try:
+        call_pinned_upload_with(FakeUploadSession(FakeNode("Upload Attachment"), generic), cover.resolve(), resume, cover)
+    except fill.UploadMisdirected:
+        pytest.fail("the cover letter must be allowed on a general attachment slot")
+    except Exception:
+        pass
+
+
 def test_summary_reports_the_cover_letter():
     result = fill.FillResult(ok=True, steps=3, screenshot=None, notes="",
                              resume_uploaded=True, cover_letter_uploaded=True)
@@ -466,7 +479,7 @@ def test_summary_reports_the_cover_letter():
 
 def test_the_task_pins_every_location_field_to_the_applicants_city(monkeypatch, tmp_path):
     monkeypatch.delenv(fill.LOCATION_ENV, raising=False)
-    task = fill.TASK.format(resume=tmp_path / "r.pdf", resume_name="r.pdf", applicant="Jane",
+    task = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "r.pdf", resume_name="r.pdf"), ats_notes="", resume=tmp_path / "r.pdf", resume_name="r.pdf", applicant="Jane",
                             location=fill.location(), cover_letter_step="")
     assert "Los Angeles, California, United States" in task
     assert task.index("autofill has finished") < task.index("Los Angeles")
@@ -490,6 +503,86 @@ def test_answer_question_returns_the_answerers_text():
 
 
 def test_task_sends_open_questions_to_answer_question(tmp_path):
-    task = fill.TASK.format(resume=tmp_path / "r.pdf", resume_name="r.pdf", applicant="Jane",
+    task = fill.TASK.format(autofill_step=fill.AUTOFILL_STEP, resume_step=fill.RESUME_STEP.format(resume=tmp_path / "r.pdf", resume_name="r.pdf"), ats_notes="", resume=tmp_path / "r.pdf", resume_name="r.pdf", applicant="Jane",
                             location="LA", cover_letter_step="")
     assert "answer_question" in task and "Never compose such an answer yourself" in task
+
+
+def test_without_the_agent_the_fill_is_the_documents_and_nothing_else(monkeypatch, tmp_path):
+    """AUTOPILOT_AGENT=0: Jobright's autofill, the documents by code, a
+    screenshot, stop. No model, no key needed, ok only with the resume on."""
+    monkeypatch.setenv(fill.AGENT_ENV, "0")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv(fill.CDP_URL, "http://127.0.0.1:1")
+    monkeypatch.setenv(fill.FORM_FILL_ENV, "0")
+    monkeypatch.setattr(fill, "build_browser", lambda cls, headless=False: object())
+
+    async def reuse(cdp_url, url):
+        return fill.autofill.AutofillResult(target_id="TAB1", clicked=True, finished=True,
+                                            missing=["Salary question"])
+    monkeypatch.setattr(fill.autofill, "reuse", reuse)
+
+    async def upload_documents(cdp_url, target_id, adapter, resume=None, cover_letter=None, answerer=None):
+        return fill.forms.Report(target_id=target_id, resume_uploaded=True, resume_name=resume.name,
+                                 cover_letter_uploaded=cover_letter is not None,
+                                 answered=["Why us?"] if answerer else [])
+    monkeypatch.setattr(fill.forms, "upload_documents", upload_documents)
+    shots, notified = [], []
+
+    async def screenshot(cdp_url, target_id, path):
+        shots.append(target_id)
+        return path
+    monkeypatch.setattr(fill, "_screenshot_cdp", screenshot)
+
+    async def report(*args):
+        pass
+    monkeypatch.setattr(fill, "_write_report", report)
+
+    async def notify(cdp_url, target_id, state, note=""):
+        notified.append(state)
+    monkeypatch.setattr(fill.autofill, "notify", notify)
+
+    class NoAgent:
+        def __init__(self, *a, **k):
+            raise AssertionError("the agent must not be built")
+    import browser_use
+    monkeypatch.setattr(browser_use, "Agent", NoAgent)
+
+    resume = tmp_path / "Jane_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    letter = tmp_path / "Jane_cover_letter.pdf"
+    letter.write_bytes(b"%PDF")
+    result = asyncio.run(fill.fill_async("https://example.com/apply", resume, tmp_path / "shot.png",
+                                         cover_letter_pdf=letter, answerer=lambda q: "an answer"))
+    assert result.ok and result.steps == 0 and result.resume_uploaded and result.cover_letter_uploaded
+    assert shots == ["TAB1"] and notified[-1] == "done"
+    assert "resume: replaced" in result.notes and "Salary question" in result.notes
+    assert "answered: Why us?" in result.notes
+    assert "no browser model ran" in result.notes
+
+
+def test_without_the_agent_a_missing_resume_upload_is_a_failed_fill(monkeypatch, tmp_path):
+    monkeypatch.setenv(fill.AGENT_ENV, "0")
+    monkeypatch.setenv(fill.CDP_URL, "http://127.0.0.1:1")
+    monkeypatch.setenv(fill.FORM_FILL_ENV, "0")
+    monkeypatch.setattr(fill, "build_browser", lambda cls, headless=False: object())
+
+    async def reuse(cdp_url, url):
+        return fill.autofill.AutofillResult(target_id="TAB1", clicked=True, finished=True)
+    monkeypatch.setattr(fill.autofill, "reuse", reuse)
+
+    async def upload_documents(cdp_url, target_id, adapter, resume=None, cover_letter=None, answerer=None):
+        return fill.forms.Report(target_id=target_id, errors=["resume upload: no resume file input found"])
+    monkeypatch.setattr(fill.forms, "upload_documents", upload_documents)
+
+    async def nothing(*args, **kwargs):
+        return None
+    monkeypatch.setattr(fill, "_screenshot_cdp", nothing)
+    monkeypatch.setattr(fill, "_write_report", nothing)
+    monkeypatch.setattr(fill.autofill, "notify", nothing)
+
+    resume = tmp_path / "Jane_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    result = asyncio.run(fill.fill_async("https://example.com/apply", resume, tmp_path / "shot.png"))
+    assert not result.ok and not result.resume_uploaded
+    assert result.errors[0].startswith("the tailored resume was never uploaded")

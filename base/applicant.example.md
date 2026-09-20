@@ -34,4 +34,4 @@ left blank. Plain facts, no prose.
 - GitHub: https://github.com/example
 - Portfolio: https://example.com
 - Pronouns: leave blank
-- How did you hear about us: Jobright
+- How did you hear about us: Other (always "Other", never the job board)

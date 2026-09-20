@@ -20,13 +20,18 @@ SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", ROOT / "data" / "setti
 # use_profile: feed the applicant's facts and story documents to the models.
 # Off, or on with nothing written yet, means the resume alone, which is how
 # the pipeline ran before the profile existed.
-DEFAULTS = {"use_profile": True}
+# auto_fill: once the tailoring is done and the screen did not reject, mark
+# the job approved and start the browser fill without waiting at checkpoint
+# 1. The clean verdict already queued the job by itself; the human's decision
+# moves to checkpoint 2, the filled form. A poor-fit verdict still waits.
+DEFAULTS = {"use_profile": True, "auto_fill": True}
 
 router = APIRouter()
 
 
 class Settings(BaseModel):
     use_profile: bool = True
+    auto_fill: bool = True
 
 
 def load() -> dict:
@@ -48,6 +53,10 @@ def save(**changes) -> dict:
 
 def use_profile() -> bool:
     return bool(load().get("use_profile", True))
+
+
+def auto_fill() -> bool:
+    return bool(load().get("auto_fill", True))
 
 
 @router.get("/settings")

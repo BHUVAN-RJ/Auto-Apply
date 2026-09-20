@@ -85,6 +85,9 @@ class Job(BaseModel):
     error: Optional[str] = None
     reject_reason: Optional[RejectReason] = None
     reject_note: Optional[str] = None
+    # Per-job answer to "pass checkpoint 1 without me?": the banner's
+    # auto-approve box at capture time. None = the global auto_fill switch.
+    auto_fill: Optional[bool] = None
 
     @property
     def id(self) -> str:

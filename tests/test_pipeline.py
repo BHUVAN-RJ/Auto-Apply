@@ -6,7 +6,7 @@ import pytest
 
 import pipeline
 from archive import store
-from server import queue
+from server import queue, settings
 from server.models import Job, Status
 from tailor.fetch import Posting
 from tailor.cover import CoverLetter
@@ -29,6 +29,12 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(queue, "LOCK_PATH", qpath.with_suffix(".lock"))
     monkeypatch.setattr(store, "APPLICATIONS", tmp_path / "applications")
     monkeypatch.setattr(store, "INDEX_PATH", tmp_path / "applications" / "index.csv")
+    # Checkpoint 1 waits by default here; the auto_fill tests switch it on.
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    settings.save(auto_fill=False)
+    # Never a real apply.py, never a real browser.
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: None)
+    monkeypatch.setattr(pipeline, "tell_tab", lambda job, state, note: None)
 
 
 def stub_success(monkeypatch):
@@ -121,6 +127,48 @@ def test_pipeline_never_advances_past_review(monkeypatch):
     assert queue.get(job.id).status not in (Status.FILLED, Status.SUBMITTED, Status.APPROVED)
 
 
+def test_auto_fill_approves_a_clean_job_and_starts_the_fill(monkeypatch):
+    """With the switch on, checkpoint 1 is the clean verdict that queued the
+    job: the fill starts as soon as the documents exist. Still never past
+    APPROVED here; apply.py owns FILLING and stops at checkpoint 2."""
+    stub_success(monkeypatch)
+    settings.save(auto_fill=True)
+    started, told = [], []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: started.append(job_id) or 4242)
+    monkeypatch.setattr(pipeline, "tell_tab", lambda job, state, note: told.append(state))
+    job, _ = queue.add(Job(url="https://example.com/jobs/1"))
+    app_dir = pipeline.process(job)
+    assert started == [job.id]
+    assert queue.get(job.id).status == Status.APPROVED
+    assert store.read_status(app_dir) == Status.APPROVED.value
+    assert told[-1] == "working"
+
+
+def test_auto_fill_leaves_a_rejected_screen_at_checkpoint_one(monkeypatch):
+    stub_success(monkeypatch)
+    settings.save(auto_fill=True)
+    monkeypatch.setattr(pipeline.screen_server, "screen_url",
+                        lambda url, text, title="", force=False: (Screen(verdict="reject", flags=[
+                            Flag(category="clearance", severity="hard", quote="TS/SCI required", reason="clearance")]), True))
+    started = []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: started.append(job_id) or 1)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1"))
+    pipeline.process(job)
+    assert not started and queue.get(job.id).status == Status.AWAITING_REVIEW
+
+
+def test_auto_fill_leaves_a_poor_fit_at_checkpoint_one(monkeypatch):
+    stub_success(monkeypatch)
+    settings.save(auto_fill=True)
+    monkeypatch.setattr(pipeline.tailor, "tailor",
+                        lambda posting, **kwargs: (_ for _ in ()).throw(pipeline.tailor.Mismatch("wrong field")))
+    started = []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: started.append(job_id) or 1)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1"))
+    pipeline.process(job)
+    assert not started and queue.get(job.id).status == Status.AWAITING_REVIEW
+
+
 def test_fetch_failure_marks_the_job_failed(monkeypatch):
     stub_success(monkeypatch)
 
@@ -207,3 +255,17 @@ def test_the_folder_is_named_after_the_posting_company(monkeypatch):
     assert "_cherry-technologies-inc_" in app_dir.name
     assert "unknown-company" not in app_dir.name
     assert queue.get(job.id).company == "Cherry Technologies, Inc."
+
+
+def test_the_jobs_own_auto_approve_answer_beats_the_switch(monkeypatch):
+    stub_success(monkeypatch)
+    settings.save(auto_fill=True)
+    started = []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: started.append(job_id) or 1)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1", auto_fill=False))
+    pipeline.process(job)
+    assert not started and queue.get(job.id).status == Status.AWAITING_REVIEW
+    settings.save(auto_fill=False)
+    job, _ = queue.add(Job(url="https://example.com/jobs/2", auto_fill=True))
+    pipeline.process(job)
+    assert started == [job.id] and queue.get(job.id).status == Status.APPROVED

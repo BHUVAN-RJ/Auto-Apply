@@ -18,7 +18,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from tailor import quality
 from tailor import screen as screener
+
+from . import postings, seen
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_PATH = Path(os.environ.get("AUTOPILOT_SCREENS", ROOT / "data" / "screens.json"))
@@ -79,11 +82,35 @@ def screen_url(url: str, text: str, title: str = "", force: bool = False) -> tup
     A `not_a_job` is not cached: it usually means the page had not finished
     rendering when the text was taken, and the next open should try again.
     """
+    source = postings.source_for(url)
     if not force:
         hit = cached(url)
         if hit is not None:
             return hit, True
-    result = screener.screen(text, title=title, url=url)
+        # Jobright and the employer page are two URLs for the same job.  The
+        # former is normally screened first and carries the full description;
+        # reuse that verdict instead of paying to classify a bare ATS shell.
+        if source is not None:
+            hit = cached(source.url)
+            if hit is not None:
+                remember(url, hit)
+                return hit, True
+
+    screen_text = text
+    screen_title = title
+    if source is not None:
+        page_score = quality.score(text)
+        source_score = quality.score(source.text)
+        if source_score and page_score < source_score * quality.GOOD_ENOUGH:
+            # Keep both representations in the single model request.  Put the
+            # known posting first so the screener's input cap cannot discard it.
+            screen_text = (
+                "## Jobright posting copy\n\n" + source.text.strip()
+                + ("\n\n## Employer page copy\n\n" + text.strip() if text.strip() else "")
+            )
+            screen_title = source.title or title
+
+    result = screener.screen(screen_text, title=screen_title, url=url)
     if result.verdict != "not_a_job":
         remember(url, result)
     return result, False
@@ -97,4 +124,10 @@ def screen_endpoint(req: ScreenRequest) -> dict:
         raise HTTPException(422, str(exc))
     except Exception as exc:  # model or network; the banner shows the message
         raise HTTPException(502, f"screen failed: {exc}")
-    return result.to_dict() | {"cached": was_cached}
+    # Already in autopilot? Asked after the verdict so a failed lookup can
+    # never cost the screen; string work only, no model.
+    try:
+        match = seen.find(req.url, title=req.title, text=req.text)
+    except Exception:  # noqa: BLE001 - advice on the page, never an error
+        match = None
+    return result.to_dict() | {"cached": was_cached, "seen": match.to_dict() if match else None}

@@ -14,12 +14,14 @@ Nothing here can reach a submit button.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from . import chrome, guard
+from . import ats, autofill, chrome, forms, guard
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -28,22 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TASK = """Fill in this job application form. Do not submit it.
 
 Steps:
-1. If a Jobright autofill button or panel is offered, click it and let it
-   populate the form. That is the fastest path and it is already configured.
-   Wait until the panel reports that autofill has finished before going on;
-   it is still changing fields, and may attach its own resume, until then.
-2. Replace the resume. Autofill attaches a generic resume; this application
-   needs the tailored one. In the resume / CV section:
-   a. If a file is already attached, remove it first: click its X, remove,
-      delete, or replace control. That control is allowed.
-   b. Then upload the file at this exact path with the upload_file action,
-      pointing it at the resume upload control: {resume}
-   c. Check the section now shows a file named {resume_name}. If it does not,
-      the upload did not take: try again on the file input itself.
-   Do the same for any other field that asks for a resume or CV. Do not
-   attach it as a cover letter; if {resume_name} appears under a cover letter
-   field, remove it there with that field's X.
-{cover_letter_step}3. Location. Autofill sometimes writes the wrong city or country (it has
+{autofill_step}{resume_step}{cover_letter_step}3. Location. Autofill sometimes writes the wrong city or country (it has
    entered "Delhi, India"). Every location, city, address, state, or country
    field must read: {location}
    Check each one after autofill finishes. If it shows anything else, clear
@@ -77,8 +64,28 @@ Absolute rules:
 - Never report the resume as attached unless you uploaded it yourself in this
   session and saw its name appear.
 
+{ats_notes}
 Applicant details:
 {applicant}
+"""
+
+RESUME_STEP = """2. Replace the resume. Autofill attaches a generic resume; this application
+   needs the tailored one. In the resume / CV section:
+   a. If a file is already attached, remove it first: click its X, remove,
+      delete, or replace control. That control is allowed.
+   b. Then upload the file at this exact path with the upload_file action,
+      pointing it at the resume upload control: {resume}
+   c. Check the section now shows a file named {resume_name}. If it does not,
+      the upload did not take: try again on the file input itself.
+   Do the same for any other field that asks for a resume or CV. Do not
+   attach it as a cover letter; if {resume_name} appears under a cover letter
+   field, remove it there with that field's X.
+"""
+
+RESUME_DONE_STEP = """2. The tailored resume is already attached: the resume field holds
+   {resume_name}. Check that name shows there. Only if it does not, upload
+   the file at this exact path with upload_file on the resume upload
+   control: {resume}
 """
 
 COVER_LETTER_STEP = """   Then the cover letter. If the form has a cover letter upload, attach the
@@ -100,9 +107,48 @@ DEFAULT_PROFILE = Path.home() / "Library" / "Application Support" / "job-autopil
 # Without it, browser/chrome.py launches Chrome on the profile above and hands
 # over a CDP URL the same way, so browser-use never owns the process either
 # way. See that module for why ownership is the whole problem.
+log = logging.getLogger("fill")
+
 CDP_URL = "AUTOPILOT_CDP_URL"
+# Set to 0 to leave Jobright's Autofill button to the agent.
+AUTOFILL_BY_CODE = "AUTOPILOT_AUTOFILL_BY_CODE"
+# Set to 0 to leave the resume and cover letter uploads to the agent.
+DOCS_BY_CODE = "AUTOPILOT_DOCS_BY_CODE"
+# Set to 0 and no model touches the form: Jobright's autofill, the
+# documents by code, a screenshot, and the tab is the human's. The fill
+# counts as done when the tailored resume is on the form.
+AGENT_ENV = "AUTOPILOT_AGENT"
 
 # Where the applicant is, as every location field on every form must read.
+AUTOFILL_STEP = """1. If a Jobright autofill button or panel is offered, click it and let it
+   populate the form. That is the fastest path and it is already configured.
+   Wait until the panel reports that autofill has finished before going on;
+   it is still changing fields, and may attach its own resume, until then.
+   If its progress reads the same on two checks in a row, it has stalled:
+   treat it as finished and go on. Never wait on it more than three times.
+"""
+
+AUTOFILL_DONE_STEP = """1. Jobright's autofill has already been pressed in this tab and has
+   finished ({autofill_note}). Do not press it again. Start from step 2.
+{missing}"""
+
+AUTOFILL_MISSING = """   Jobright itself reported these fields as left empty; check each one:
+{lines}
+"""
+
+# The form was filled by code (browser/forms): the agent gets the list of
+# what is still empty and does not press Jobright's button at all.
+FORM_FILLED_STEP = """1. The form in this tab has already been filled by code ({summary}).
+   Do not press any Autofill button. The fields it filled are correct;
+   do not retype them. These are still empty, and are yours:
+{missing}
+   Fill the required ones from the applicant details below; fill an
+   optional one only when the details answer it. Start from step 2.
+"""
+
+# Set to 0 to skip the code fill and use Jobright's Autofill everywhere.
+FORM_FILL_ENV = "AUTOPILOT_FORM_FILL"
+
 # Autofill has written the wrong country before; the agent corrects to this.
 LOCATION_ENV = "AUTOPILOT_LOCATION"
 DEFAULT_LOCATION = "Los Angeles, California, United States"
@@ -189,7 +235,17 @@ def applicant_details() -> str:
     file stays safe to publish.
     """
     path = ROOT / "base" / "applicant.md"
-    return path.read_text().strip() if path.exists() else "(none provided)"
+    text = path.read_text().strip() if path.exists() else ""
+    # base/form.json, from the preliminary interview: the same details in
+    # one line each, so the agent has a phone number even when the prose
+    # file was never written. The authorisation block is left out: the
+    # agent never answers those questions, so it never sees the answers.
+    profile = forms.load()
+    if profile:
+        lines = [f"- {key.replace('_', ' ')}: {profile.get(key)}" for key in forms.profile.KEYS if profile.get(key)]
+        if lines:
+            text = f"{text}\n\n## Form details\n\n" + "\n".join(lines) if text else "## Form details\n\n" + "\n".join(lines)
+    return text or "(none provided)"
 
 
 def _build_tools(resume_pdf: Optional[Path] = None, cover_letter_pdf: Optional[Path] = None,
@@ -262,12 +318,16 @@ def _build_tools(resume_pdf: Optional[Path] = None, cover_letter_pdf: Optional[P
         # form with only a resume slot never receives the letter.
         fields = describe(file_input)
         is_cover_input = guard.describes_cover_letter(*fields.values())
+        is_resume_input = guard.describes_resume(*fields.values())
         path = str(getattr(params, "path", "") or "")
         is_cover_file = bool(cover_letter_pdf) and path == str(cover_letter_pdf.resolve())
-        if is_cover_file and not is_cover_input:
+        # Oracle has one "Upload Attachment" control for every document. A
+        # slot that names neither file takes the letter; a resume slot never
+        # does.
+        if is_cover_file and not is_cover_input and is_resume_input:
             raise UploadMisdirected(
-                f"element {index} is not a cover letter input ({guard._describe(fields)}); "
-                "the cover letter goes only on a cover letter upload, or nowhere"
+                f"element {index} is the resume input ({guard._describe(fields)}); "
+                "the cover letter goes on a cover letter upload or a general attachment slot"
             )
         if not is_cover_file and is_cover_input:
             raise UploadMisdirected(
@@ -402,10 +462,13 @@ def build_browser(browser_class, headless: bool = False):
     completed form. Handing it a CDP URL makes the browser remote from its
     point of view, and remote browsers are only ever disconnected from.
     """
-    cdp_url = os.environ.get(CDP_URL, "").strip()
-    if not cdp_url:
-        cdp_url = chrome.ensure(profile_dir(), headless=headless)
-    return browser_class(cdp_url=cdp_url, keep_alive=True)
+    return browser_class(cdp_url=resolve_cdp_url(headless), keep_alive=True)
+
+
+def resolve_cdp_url(headless: bool = False) -> str:
+    """The browser to attach to: the one named in the environment, else ours
+    on port 9333, started if it is not running."""
+    return os.environ.get(CDP_URL, "").strip() or chrome.ensure(profile_dir(), headless=headless)
 
 
 async def fill_async(
@@ -419,9 +482,73 @@ async def fill_async(
 ) -> FillResult:
     from browser_use import Agent, Browser, ChatOpenAI
 
+    agent_on = os.environ.get(AGENT_ENV, "1") != "0"
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    if agent_on and not api_key:
         raise FillError("OPENROUTER_API_KEY is unset")
+
+    cdp_url = resolve_cdp_url(headless)
+    browser = build_browser(Browser, headless=headless)
+
+    # Step one in code, two ways. On a system with an adapter and a
+    # base/form.json, the form is filled here without a model and the
+    # agent gets the list of what is still empty. Otherwise Jobright's
+    # Autofill is pressed before the model sees the page. On any failure
+    # the agent does it as before.
+    filled = forms.Report(note="skipped")
+    pressed = autofill.AutofillResult(note="skipped")
+    adapter = forms.adapter_for(url)
+    profile = forms.load() if adapter else None
+    if adapter and profile and os.environ.get(FORM_FILL_ENV, "1") != "0":
+        try:
+            filled = await forms.fill(cdp_url, url, adapter, profile, resume_pdf, cover_letter_pdf)
+        except Exception as error:  # noqa: BLE001 - the agent is the fallback
+            filled = forms.Report(note=f"failed: {error}")
+        log.info(filled.summary())
+    elif adapter and not profile:
+        filled.note = "base/form.json is missing"
+    if not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
+        # The injector presses Autofill when the human opens the form; when
+        # that tab is still open the fill works there, no second tab and no
+        # second press.
+        try:
+            pressed = await autofill.reuse(cdp_url, url)
+        except Exception as error:  # noqa: BLE001 - then press afresh
+            log.info("could not reuse the opened tab: %s", error)
+            pressed = None
+        if pressed is None:
+            try:
+                pressed = await autofill.press(cdp_url, url)
+            except Exception as error:  # noqa: BLE001 - the agent is the fallback
+                pressed = autofill.AutofillResult(note=f"failed: {error}")
+        log.info(pressed.summary())
+        # The documents, in code, once Jobright is done: the tailored resume
+        # over whatever it attached, the cover letter where there is a slot.
+        # Read back off the inputs; a miss leaves the step to the agent.
+        if pressed.target_id and os.environ.get(DOCS_BY_CODE, "1") != "0":
+            await autofill.notify(cdp_url, pressed.target_id, "working", "Attaching the tailored resume")
+            try:
+                docs = await forms.upload_documents(cdp_url, pressed.target_id, adapter or forms.Adapter(),
+                                                    resume_pdf, cover_letter_pdf, answerer)
+            except Exception as error:  # noqa: BLE001 - the agent is the fallback
+                docs = forms.Report(note=f"failed: {error}")
+            filled.resume_uploaded = docs.resume_uploaded
+            filled.resume_name = docs.resume_name
+            filled.cover_letter_uploaded = docs.cover_letter_uploaded
+            filled.answered = docs.answered
+            filled.errors.extend(docs.errors)
+            log.info("documents by code: resume %s, cover letter %s, %d question(s) answered%s",
+                     "attached" if docs.resume_uploaded else "NOT attached",
+                     "attached" if docs.cover_letter_uploaded else "not attached",
+                     len(docs.answered),
+                     f"; {'; '.join(docs.errors)}" if docs.errors else "")
+    target_id = filled.target_id or pressed.target_id
+    tab_id = filled.tab_id if filled.target_id else pressed.tab_id
+    if not agent_on:
+        # Code only: Jobright's autofill, then the documents. No model
+        # touches the form; whatever is left is the human's, on the tab.
+        return await _finish_without_agent(cdp_url, url, target_id, filled, pressed, screenshot_to,
+                                           bool(cover_letter_pdf))
 
     model = os.environ.get("OPENROUTER_BROWSER_MODEL", DEFAULT_BROWSER_MODEL)
     llm = ChatOpenAI(
@@ -430,19 +557,29 @@ async def fill_async(
         api_key=api_key,
         temperature=0.0,
     )
-
-    browser = build_browser(Browser, headless=headless)
+    if filled.attempted:
+        autofill_step = FORM_FILLED_STEP.format(summary=filled.summary(), missing=filled.task_lines())
+    elif pressed.clicked:
+        missing = AUTOFILL_MISSING.format(lines="\n".join(f"   - {m}" for m in pressed.missing)) if pressed.missing else ""
+        autofill_step = AUTOFILL_DONE_STEP.format(autofill_note=pressed.summary(), missing=missing)
+    else:
+        autofill_step = AUTOFILL_STEP
+    resume_step = (RESUME_DONE_STEP if filled.resume_uploaded else RESUME_STEP).format(
+        resume=resume_pdf.resolve(), resume_name=resume_pdf.name)
 
     agent = Agent(
         task=TASK.format(
+            autofill_step=autofill_step,
+            resume_step=resume_step,
             resume=resume_pdf.resolve(),
             resume_name=resume_pdf.name,
             location=location(),
             cover_letter_step=(
                 COVER_LETTER_STEP.format(cover_letter=cover_letter_pdf.resolve())
-                if cover_letter_pdf else ""
+                if cover_letter_pdf and not filled.cover_letter_uploaded else ""
             ),
             applicant=applicant_details(),
+            ats_notes=ats.task_block(url),
         ),
         llm=llm,
         browser=browser,
@@ -453,7 +590,10 @@ async def fill_async(
         available_file_paths=[str(p.resolve()) for p in (resume_pdf, cover_letter_pdf) if p],
         # A new tab each time: the browser is shared across runs, and the
         # previous fill may still be sitting in the tab the human is reading.
-        initial_actions=[{"navigate": {"url": url, "new_tab": True}}],
+        # When the code step opened the form, that tab already exists, whether
+        # or not it found the button; switch to it rather than open a second.
+        initial_actions=[{"switch": {"tab_id": tab_id}}] if target_id
+                        else [{"navigate": {"url": url, "new_tab": True}}],
         # Screenshots are sent to the model on every step. A text-only model
         # 404s on all of them and the whole run fails without filling
         # anything, so vision is only enabled for a model that can accept it.
@@ -463,6 +603,8 @@ async def fill_async(
     blocked, steps, done, uploaded, cover_uploaded = 0, 0, False, False, False
     errors: list[str] = []
     notes = ""
+    if target_id:
+        await autofill.notify(cdp_url, target_id, "working", "Browser agent is filling the form")
     try:
         history = await agent.run(max_steps=max_steps)
         notes = str(history.final_result() or "").strip()
@@ -470,8 +612,11 @@ async def fill_async(
         errors = [str(e) for e in (history.errors() or []) if e]
         blocked = sum(1 for e in errors if "submit control" in e)
         done = bool(history.is_done())
-        uploaded = resume_uploaded(history, resume_pdf)
-        cover_uploaded = bool(cover_letter_pdf) and resume_uploaded(history, cover_letter_pdf)
+        # Either upload counts, and both are read back from a log or the
+        # input's own file list, never from what the model says.
+        uploaded = filled.resume_uploaded or resume_uploaded(history, resume_pdf)
+        cover_uploaded = filled.cover_letter_uploaded or (
+            bool(cover_letter_pdf) and resume_uploaded(history, cover_letter_pdf))
     except guard.SubmitBlocked as exc:
         # Reaching here means the model kept pushing at the gate. That is a
         # refusal working, not a crash, so the run still ends in a screenshot.
@@ -482,6 +627,11 @@ async def fill_async(
         # form and pressing submit themselves, which cannot happen if the
         # browser is closed the moment the agent stops.
         await _detach(browser)
+        # The form as the agent left it, for the correction loop: what the
+        # human changes between now and submitting is what was wrong.
+        await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, url, target_id)
+        if target_id:
+            await autofill.notify(cdp_url, target_id, "done", "Browser agent finished; review the form")
 
     # A screenshot proves the browser was alive, not that the form was filled.
     # A run that never reached done, or that errored on every step other than
@@ -498,13 +648,33 @@ async def fill_async(
         ok=ok,
         steps=steps,
         screenshot=shot,
-        notes=notes or "(no notes returned)",
+        notes=(notes or "(no notes returned)") + "\n" + (filled.summary() if filled.attempted else pressed.summary()),
         blocked_attempts=blocked,
         errors=real_errors,
         done=done,
         resume_uploaded=uploaded,
         cover_letter_uploaded=cover_uploaded,
     )
+
+
+async def _write_report(report: forms.Report, path: Path, cdp_url: str, url: str, target_id: str) -> None:
+    """The code fill's report and the form as the agent left it, next to
+    the screenshot. `after_agent` is the baseline the correction loop
+    diffs the submitted form against. Best effort: a missing snapshot
+    means no corrections learned, never a failed fill."""
+    body: dict = {"report": report.to_json(), "target_id": target_id, "after_agent": {}}
+    try:
+        tab = forms.find_target(cdp_url, url, target_id)
+        body["target_id"] = tab or target_id
+        if tab:
+            body["after_agent"] = await forms.snapshot(cdp_url, tab)
+    except Exception as error:  # noqa: BLE001
+        body["snapshot_error"] = str(error)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(body, indent=1))
+    except OSError:
+        pass
 
 
 async def _detach(browser) -> None:
@@ -522,6 +692,61 @@ async def _detach(browser) -> None:
         await browser.stop()
     except Exception:  # noqa: BLE001 - a lingering connection beats a closed window
         pass
+
+
+async def _finish_without_agent(cdp_url: str, url: str, target_id: str, filled: forms.Report,
+                                pressed: autofill.AutofillResult, screenshot_to: Path,
+                                wanted_cover_letter: bool) -> FillResult:
+    """The fill with the model switched off: a screenshot, the report for
+    the correction loop, the banner, and a result that is `ok` only when
+    the tailored resume is on the form. Touches nothing itself; the
+    documents and the answers went on in `run_documents`."""
+    shot = await _screenshot_cdp(cdp_url, target_id, screenshot_to) if target_id else None
+    await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, url, target_id)
+    errors = list(filled.errors)
+    if not filled.resume_uploaded:
+        errors.insert(0, "the tailored resume was never uploaded; the form still has whatever autofill attached")
+    if wanted_cover_letter and not filled.cover_letter_uploaded:
+        errors.append("no cover letter slot found, or the upload did not take")
+    left = pressed.missing
+    notes = "\n".join(filter(None, [
+        "resume: replaced" if filled.resume_uploaded else "resume: NOT replaced",
+        "cover letter: " + ("attached" if filled.cover_letter_uploaded else "skipped" if wanted_cover_letter else "not needed"),
+        "answered: " + (", ".join(q[:50] for q in filled.answered) if filled.answered else "no open question found"),
+        "left blank: " + (", ".join(left) if left else "none reported by Jobright"),
+        "(no browser model ran on this form; whatever else it needs is yours)",
+        filled.summary() if filled.attempted else pressed.summary(),
+    ]))
+    if target_id:
+        await autofill.notify(cdp_url, target_id, "done" if filled.resume_uploaded else "error",
+                              "Documents attached; review the form" if filled.resume_uploaded
+                              else "The tailored resume did not attach; attach it by hand")
+    return FillResult(
+        ok=filled.resume_uploaded,
+        steps=0,
+        screenshot=shot,
+        notes=notes,
+        errors=errors,
+        done=True,
+        resume_uploaded=filled.resume_uploaded,
+        cover_letter_uploaded=filled.cover_letter_uploaded,
+    )
+
+
+async def _screenshot_cdp(cdp_url: str, target_id: str, path: Path) -> Optional[Path]:
+    """A screenshot of the tab over raw CDP, for the run with no agent."""
+    import base64
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        async with autofill.attached(cdp_url, target_id=target_id) as (page, _):
+            data = await page.send("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": True})
+    except Exception:  # noqa: BLE001 - a screenshot never fails the run
+        return None
+    if not data.get("data"):
+        return None
+    path.write_bytes(base64.b64decode(data["data"]))
+    return path
 
 
 async def _screenshot(browser, path: Path) -> Optional[Path]:

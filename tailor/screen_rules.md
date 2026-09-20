@@ -52,13 +52,12 @@ flag.
 - hard: the role is in a country the applicant will not work in. A remote
   role restricted to a country or region the applicant is not in and will
   not move to.
-- soft: hybrid or onsite in another city in the applicant's country when
-  the Facts say relocation is acceptable; "relocation assistance not
-  provided"; remote restricted to a set of states the applicant is not in.
-- never: an onsite or hybrid role in another city when the Facts do not
-  rule it out (the applicant relocates unless the Facts say otherwise); a
+- soft: none.
+- never: any location in the United States. Every US city and state is green,
+  including onsite, hybrid, no relocation assistance, and state-restricted
+  remote roles. Do not compare one US city with another. Also never: a
   posting that lists several offices or remote among them; a headquarters
-  city in the header of a remote role.
+  city in the header of a remote role; a street address.
 
 ### `timeline`
 
@@ -70,9 +69,11 @@ flag.
   still fit; "flexible start" when the start date is unknown.
 - never: a graduation window the applicant's most recent degree falls in
   ("2026 or 2027" for a 2026 graduate, "within the past 12 months" for a
-  degree finished this year); a cohort year in the title alone when the
-  body sets no window. Judge graduation by the most recent degree, not the
-  first.
+  degree finished this year); an "earned or expected by" or other latest-date
+  cutoff when the applicant graduates on or before it (December 2026 meets
+  "by Summer 2027"); a cohort year in the title alone when the body sets no
+  window. Earlier than a latest-date cutoff is a match, not a caution. Judge
+  graduation by the most recent degree, not the first.
 
 ### `experience`
 

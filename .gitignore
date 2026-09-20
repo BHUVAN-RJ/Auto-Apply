@@ -15,3 +15,5 @@ __pycache__/
 base/applicant.md
 base/stories*/
 .DS_Store
+base/form.json
+:memory:.ses

@@ -38,6 +38,29 @@ def test_source_title_yields_company_and_role():
     assert saved.title == "EDA Software Developer"
 
 
+def test_generic_jobright_title_uses_the_visible_posting_header():
+    postings.save_source("abc123", postings.Saved(
+        url="https://jobright.ai/jobs/info/abc123",
+        title="Job Recommendations | Jobright AI",
+        text="""Jobs
+Original Job Post
+H&R Block
+·
+40 minutes ago
+Machine Learning Engineer
+United States
+Full-time
+Responsibilities
+Build and deploy machine learning models.
+""",
+    ))
+
+    assert postings.source_meta(EMPLOYER) == ("Machine Learning Engineer", "H&R Block")
+    [saved] = postings.fallbacks("nojob", EMPLOYER)
+    assert saved.title == "Machine Learning Engineer"
+    assert saved.company == "H&R Block"
+
+
 def test_employer_page_text_beats_jobrights_and_borrows_its_company():
     postings.save_source("abc123", postings.Saved(
         url="https://jobright.ai/jobs/info/abc123", title="Role @ Acme | Jobright.ai",
@@ -107,4 +130,33 @@ def test_a_fetched_posting_is_preferred(monkeypatch):
     fetched = fetch.Posting(url=EMPLOYER, text="from the page " * 40, company="Real")
     monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: fetched)
     postings.save_captured(Job(url=EMPLOYER).id, postings.Saved(url=EMPLOYER, text=DESCRIPTION))
+    assert pipeline.fetch_posting(Job(url=EMPLOYER)) is fetched
+
+
+FORM_PAGE = "\n".join(["Apply for this job", "First name", "Last name", "Email address here please",
+                       "Upload your resume", "Submit application", "Privacy policy and cookies"] * 12)
+REAL_POSTING = "About the role\n" + "\n".join(
+    f"- Build and operate distributed services handling {i} million requests a day" for i in range(12)
+) + "\nRequirements\n- 3+ years of Python\n- Kubernetes and Postgres in production"
+
+
+def test_a_fetched_form_loses_to_jobrights_description(monkeypatch):
+    fetched = fetch.Posting(url=EMPLOYER, text=FORM_PAGE, title="Apply")
+    monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: fetched)
+    postings.save_source("abc123", postings.Saved(
+        url="https://jobright.ai/jobs/info/abc123", title="Role @ Acme | Jobright.ai", text=REAL_POSTING))
+
+    posting = pipeline.fetch_posting(Job(url=EMPLOYER))
+
+    assert posting.text == REAL_POSTING
+    assert posting.text_source == "Jobright's copy"
+    assert posting.company == "Acme"
+    assert "**Text from:** Jobright's copy" in posting.to_markdown()
+
+
+def test_a_shorter_real_posting_still_wins_the_fetch(monkeypatch):
+    fetched = fetch.Posting(url=EMPLOYER, text=REAL_POSTING, title="Role")
+    monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: fetched)
+    postings.save_source("abc123", postings.Saved(
+        url="https://jobright.ai/jobs/info/abc123", text=REAL_POSTING + "\n- One more bullet about the team"))
     assert pipeline.fetch_posting(Job(url=EMPLOYER)) is fetched

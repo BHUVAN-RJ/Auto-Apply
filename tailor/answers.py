@@ -11,6 +11,7 @@ well as at the input guard, so no answer to one is ever produced.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,28 @@ label, no quotation marks around it.
 
 MIN_WORDS, MAX_WORDS = 15, 130
 ATTEMPTS = 2
+# The answering model, when it should differ from the tailor's.
+MODEL_ENV = "OPENROUTER_ANSWER_MODEL"
+# A label this long, or with a question mark, is a question, not a field.
+QUESTION_CHARS = 60
+
+
+def answer_model() -> str:
+    return os.environ.get(MODEL_ENV, "").strip() or llm.tailor_model()
+
+
+def open_questions(snapshot: dict) -> list[str]:
+    """The free-form questions a form snapshot (question -> value) left
+    empty: what the review page offers to answer. Short labels are fields
+    (name, phone), and visa questions are never offered."""
+    found = []
+    for label, value in (snapshot or {}).items():
+        text = " ".join(str(label).split())
+        if value or not text or guard.describes_protected(text):
+            continue
+        if "?" in text or len(text) > QUESTION_CHARS:
+            found.append(text)
+    return found
 
 
 @dataclass
@@ -118,7 +141,7 @@ def answer(question: str, context: Context, model: Optional[str] = None) -> Answ
             f"refusing to answer a visa / work-authorisation question ({question[:80]!r}). "
             "Leave it blank and mention it when you call done."
         )
-    model = model or llm.tailor_model()
+    model = model or answer_model()
     system = system_prompt()
     user = context.as_message() + f"\n\n## The question on the form\n\n{question}"
     last, last_problems = "", []

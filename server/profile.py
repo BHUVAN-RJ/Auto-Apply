@@ -41,6 +41,32 @@ def start(req: StartRequest) -> dict:
         raise HTTPException(409 if "already exists" in str(exc) else 502, str(exc))
 
 
+@router.post("/facts/skip")
+def facts_skip() -> dict:
+    """Leave the facts questions and go on to the stories."""
+    try:
+        return interview.skip_facts()
+    except interview.InterviewError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/facts/restart")
+def facts_restart() -> dict:
+    """Ask the facts again; the stories pick up where they were after."""
+    try:
+        return interview.restart_facts()
+    except (interview.InterviewError, llm.LLMError) as exc:
+        raise HTTPException(409 if "Start first" in str(exc) else 502, str(exc))
+
+
+@router.get("/facts")
+def facts_file() -> PlainTextResponse:
+    """The written applicant.md, for the page to show."""
+    from tailor import profile as profile_module
+    path = profile_module.APPLICANT
+    return PlainTextResponse(path.read_text() if path.exists() else "")
+
+
 # An old resume is a few hundred KB at most; a scanned one is images and
 # has no text to extract anyway.
 MAX_SEED_FILE_BYTES = 20 * 1024 * 1024

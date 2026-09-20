@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator, Optional
 
+from . import facts as facts_module
 from . import llm, profile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -138,12 +139,13 @@ class Experience:
 
 @dataclass
 class State:
-    phase: str = "new"  # new | setup | interviewing | open
+    phase: str = "new"  # new | facts | setup | interviewing | open
     experiences: list[dict] = field(default_factory=list)  # {slug, title, kind, resume_entry}
     current: Optional[str] = None
     experienced: bool = False
     seed: str = ""  # extra text handed over at start; discarded after setup
     transcript: list[dict] = field(default_factory=list)  # setup and open-phase chat
+    resume_phase: str = ""  # where the stories were when the facts were redone
 
     @classmethod
     def load(cls) -> "State":
@@ -181,6 +183,9 @@ def status() -> dict:
                                 "covered": 0, "total": 0, "asked": 0, "closed": False,
                                 "children": "none", "children_error": "", "documents": []})
     transcript = list(state.transcript)
+    facts = facts_module.Facts.load()
+    if state.phase == "facts":
+        transcript = list(facts.transcript)
     if state.phase == "interviewing" and state.current:
         try:
             transcript = state.transcript + Experience.load(state.current).transcript
@@ -192,6 +197,9 @@ def status() -> dict:
         "experiences": experiences,
         "transcript": [m for m in transcript if m["role"] in ("user", "assistant")],
         "has_resume": profile.BASE_RESUME.exists(),
+        "has_facts": facts_module.has_applicant(),
+        "facts": {"phase": facts.phase, "asked": min(facts.index, len(facts_module.QUESTIONS)),
+                  "total": len(facts_module.QUESTIONS)},
         "model": interview_model(),
     }
 
@@ -420,12 +428,79 @@ def start(seed: str = "") -> dict:
         raise InterviewError("the model found no experiences on the resume")
     state.experienced = bool(data.get("experienced"))
     state.experiences = _with_slugs(found, set())
-    state.phase = "setup"
     state.seed = seed.strip()[:SEED_CHAR_CAP]
+    state.transcript = []
+    # The facts come first: they are what the screen and the fill need,
+    # and they take two minutes. The stories follow.
+    facts = facts_module.start()
+    state.phase = "facts"
+    state.save()
+    return {"message": facts.transcript[0]["content"], "status": status()}
+
+
+def _begin_setup(state: State) -> Iterator[dict]:
+    """Facts done or skipped: show the experiences found and ask what is
+    missing, the way the interview used to open."""
+    state.phase = "setup"
     opening = _opening_message(state)
     state.transcript = [{"role": "assistant", "content": opening}]
     state.save()
-    return {"message": opening, "status": status()}
+    yield {"type": "break"}
+    yield {"type": "delta", "text": opening, "part": "ask", "spoken": True}
+    yield {"type": "phase", "phase": state.phase, "experiences": status()["experiences"]}
+
+
+def _facts_turn(state: State, message: str) -> Iterator[dict]:
+    facts = facts_module.Facts.load()
+    if facts.phase != "asking":
+        yield from _begin_setup(state)
+        return
+    done = False
+    for event in facts_module.turn(facts, message):
+        if event["type"] == "facts":
+            done = event["phase"] == "done"
+        else:
+            yield event
+    if done and state.resume_phase:
+        # The facts were redone mid-way through the stories; go back.
+        state.phase, state.resume_phase = state.resume_phase, ""
+        state.save()
+        closing = "Facts file updated. Back to the stories where we left off."
+        yield {"type": "break"}
+        yield {"type": "delta", "text": closing, "part": "ack", "spoken": True}
+        yield {"type": "phase", "phase": state.phase, "current": state.current,
+               "experiences": status()["experiences"]}
+    elif done:
+        closing = "That is the facts file written. Now the stories."
+        yield {"type": "break"}
+        yield {"type": "delta", "text": closing, "part": "ack", "spoken": True}
+        yield from _begin_setup(state)
+
+
+def skip_facts() -> dict:
+    """Leave the facts for later and go on to the stories. The file is not
+    written; the screen keeps using facts derived from the resume."""
+    state = State.load()
+    if state.phase != "facts":
+        raise InterviewError("the facts interview is not running")
+    facts = facts_module.Facts.load()
+    facts.phase = "skipped"
+    facts.save()
+    events = list(_begin_setup(state))
+    return {"message": next(e["text"] for e in events if e["type"] == "delta"), "status": status()}
+
+
+def restart_facts() -> dict:
+    """Ask the facts again, from the top, whatever phase the stories are
+    in. The stories interview resumes where it was once the facts are done."""
+    state = State.load()
+    if state.phase == "new":
+        raise InterviewError("press Start first; nothing has been read from the resume yet")
+    facts = facts_module.start()
+    state.resume_phase = state.phase if state.phase != "facts" else state.resume_phase
+    state.phase = "facts"
+    state.save()
+    return {"message": facts.transcript[0]["content"], "status": status()}
 
 
 def _with_slugs(entries: list[dict], taken: set[str]) -> list[dict]:
@@ -471,7 +546,9 @@ def turn(message: str) -> Iterator[dict]:
     try:
         if state.phase == "new":
             raise InterviewError("press Start first; nothing has been read from the resume yet")
-        if state.phase == "setup":
+        if state.phase == "facts":
+            yield from _facts_turn(state, message)
+        elif state.phase == "setup":
             yield from _setup_turn(state, message)
         elif state.phase == "interviewing":
             yield from _interview_turn(state, message)

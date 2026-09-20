@@ -38,6 +38,65 @@ Specifically:
   failed screen never stops the pipeline (`screen_error.txt` instead).
 - A poor-fit verdict is a *recommendation*. It stops at checkpoint 1 for the
   human; it does not set `skipped`.
+- **Checkpoint 1 passes itself when `auto_fill` is on** (`data/settings.json`,
+  default on, 2026-09-18). `pipeline.auto_approve`: clean tailor and a screen
+  that is not `reject` → `approved` and `runner.start_fill`, no click. A
+  poor fit or a `reject` screen still waits. The human's decision is
+  checkpoint 2, the filled form; the fill never submits regardless.
+  **Per job:** the banner has an `auto-approve` box next to "Add to
+  autopilot", checked by default; unticked during the 2 s countdown the
+  job waits at checkpoint 1 (`Job.auto_fill`, sent with `/capture`; on
+  Jobright's posting page it goes ahead by `jr_id` through `POST /prefs`,
+  in memory, used once, because the employer tab does the queueing).
+  `None` on the row = the global switch. Nothing about it presses Submit.
+- **The flow, end to end (2026-09-18):** Jobright posting page → banner
+  screens → countdown presses Jobright's Apply → employer tab opens →
+  banner screens it → `/capture` queues it → the employer tab closes
+  itself (`closeSelf` in `content.js`, `/__close` on the injector,
+  `close-me` on the extension) → pipeline tailors → checkpoint 1 (auto
+  when `auto_fill`) → `apply.py` opens a **new** tab on the posting,
+  presses Autofill, puts the tailored resume on, stops. The Jobright tab
+  stays; only the tab Apply opened goes, and only when the job was
+  created by that capture.
+- **`find_tab` / `find_target` match the form, not the path**
+  (`autofill.same_page`: host + path + query minus `jr_id` / `utm_*` /
+  `gh_src` and the like). Greenhouse's embed is one path for every job;
+  matching on it put pallet's resume and cover letter on Amira's form,
+  three times, before Amira's own fill ran. `run_documents` clears an
+  occupied cover-letter slot too, so a stray file never stays behind.
+- **`AUTOPILOT_AGENT=0` (set in `.env`, 2026-09-18): no model on the
+  form.** Jobright's autofill, the documents by code, a CDP screenshot,
+  `form_fill.json`, stop; `filled` iff the resume read back on the slot,
+  else `failed` and a red banner. `_finish_without_agent` in `fill.py`.
+  `1` brings the browser agent back for the rest, unchanged.
+- **The documents go on in code before the agent** (`forms.upload_documents`
+  in `fill.py`, `AUTOPILOT_DOCS_BY_CODE=0` turns it off): once Jobright is
+  done in the reused tab, the tailored resume over whatever it attached and
+  the cover letter where there is a slot, `DOM.setFileInputFiles`, read back.
+  **Then the free-form questions** (2026-09-18): `Engine.answer_questions`
+  sends every textarea, and every text box whose label has a `?` or is
+  over 60 chars, to the tailor model (`answers.Answerer`, same context as
+  the resume and letter) and writes the reply into the box (`SET_TEXT_FN`,
+  typed as fallback), **over whatever Jobright wrote there**: its autofill
+  fills these with generic prose (Perplexity, 9/10 fields, first run), and
+  ours goes over it the way the tailored resume goes over its resume.
+  Short labels are fields, not questions; visa questions are skipped before
+  anything. `Report.answered`; the notes say `answered: …`; the answers
+  land in `answers.md`.
+- **Every field the automation set carries the assistant's logo** in
+  front of its label (`MARK_FN` + `LOGO_SVG`, `Engine.mark`,
+  `data-autopilot-mark=<ref>`, `title="Filled by Autopilot: …"`): the
+  review page's orb at rest, ink ring, hard offset shadow, purple core,
+  drawn static at 18px with fixed colours. The resume slot, the cover
+  letter slot, each answered question, each profile field the code filler
+  set. Jobright's own autofill gets no logo; those are theirs. Not a plain
+  dot: the logo is the point.
+  Greenhouse drops the resume input once a file is on the slot;
+  `Engine.remove_attached` presses the slot's "Remove file" (label through
+  `guard.describes_submit` first) so the input comes back. A miss leaves the
+  step to the agent's task as before. Jobright uploads the user's resume
+  under the same filename, so a name match alone never proves it is ours;
+  ours is the one set after theirs.
 - `filled` requires the agent to have actually finished **and** a successful
   `upload_file` of the tailored resume in the action log. The model has
   claimed "resume attached" when its upload was refused; the claim is never
@@ -47,10 +106,28 @@ Specifically:
   `/fill` answers 409 `fill_running` and needs `force`, which the page sends
   only after "This will kill the current job and restart" is confirmed.
   Approve plus "Fill the form" once produced two agents on one tab.
-- **Only the server closes the browser**, on `/submitted`, and only when no
-  other job is approved / filling / filled. `browser/chrome.py: close()` is
-  CDP `Browser.close` on port 9333, never the user's own Chrome. The agent
-  still never closes anything.
+- **The filler never answers a visa question, even from `base/form.json`.**
+  The preliminary interview collects authorisation (status, sponsorship,
+  dates) because every form asks and the screen wants it, but those keys
+  are not in `forms.profile.KEYS` and `describes_protected` skips the
+  field before matching. Flipping that is a decision, not a bug fix.
+- **A submission is marked two ways, both human.** The "I submitted it"
+  button, and `POST /review/{id}/submitted-seen` from `capture/content.js`
+  when the filled form's tab shows a confirmation (`CONFIRMED` regex, job
+  id kept in `sessionStorage` across the navigation). The latter marks
+  only a `filled` / `filling` job and never closes the browser. The agent
+  reaches neither.
+- **Jobright's panel stalls on Oracle** at ~85% and never reports done;
+  the agent waited 15 s a step for seven steps. The task now says two
+  identical readings = finished, and `browser/autofill.py` waits on the
+  field count, not the panel.
+- **Nothing closes the browser any more** (2026-09-19). `/submitted` closes
+  only that job's form tab (`chrome.close_tab`, `/json/close/<id>`, the id
+  from `form_fill.json` else the tab on the same form). The browser is the
+  person's working set: the Jobright list, the next form, the logins;
+  quitting it on every submission read as "the whole browser crashes".
+  `chrome.close()` (CDP `Browser.close`) still exists, unused by the server.
+  The agent still never closes anything.
 
 ## Layout
 
@@ -62,23 +139,31 @@ Specifically:
 | `tailor/rules.md` | the tailoring prompt, sent verbatim — edit this, not the Python |
 | `tailor/cover_rules.md` | the cover letter prompt, same rule |
 | `tailor/cover.py` | letter from the tailored resume; plain pdflatex template; failure is non-fatal |
-| `tailor/answers.py` + `answer_rules.md` | free-form form questions, answered by the tailor model via the agent's `answer_question` action; archived to `answers.md` |
-| `tailor/screen.py` + `screen_rules.md` | on-page auto-reject screen: posting vs `base/applicant.md` Facts, fixed category enum, verdict recomputed from flags in code |
-| `server/screen.py` | `POST /screen`, URL-keyed cache in `data/screens.json`; the pipeline reuses it |
+| `tailor/answers.py` + `answer_rules.md` | free-form form questions, answered by the tailor model (`OPENROUTER_ANSWER_MODEL` overrides) via the agent's `answer_question` action, and **by the human from the review page** (2026-09-18): `POST /review/{id}/ask` builds the same `Context` the fill would (posting, tailored resume, letter, profile with the picked stories, facts), the "Ask for an answer" card shows the reply with Copy, and `detail.questions` (`answers.open_questions` over `form_state.json` / `form_fill.json`: empty, `?` or > 60 chars, never visa) are one-tap prompts. Everything lands in `answers.md`; the page shows the whole file. Nothing is typed into the form by this path |
+| `tailor/screen.py` + `screen_rules.md` | on-page auto-reject screen: posting vs `base/applicant.md` Facts, fixed category enum, verdict recomputed from flags in code. Validator drops every soft location flag and explicitly-US hard location flags; it parses graduation and "by" cutoffs so an earlier graduation cannot become a timeline caution |
+| `server/screen.py` | `POST /screen`, URL-keyed cache in `data/screens.json`; the pipeline reuses it. Employer URLs reuse a cached Jobright verdict; without one, low-quality ATS text is combined with the saved Jobright copy in one model call |
 | `server/settings.py` | `use_profile` in `data/settings.json`; the page pins it on, the header only reports whether a story exists |
 | `tailor/profile.py` | what the models are told about the applicant. `context(slugs)` = profile.md + applicant facts + `base/stories/index.md` + the picked stories' `tailor.md` when the switch is on, profile.md alone otherwise. `pick(posting)` chooses the slugs (one cheap call); the pipeline records them in `stories_used.txt` and the cover letter and answers reuse them. `screen_facts()` falls back to facts derived from the resume, cached in `data/derived_facts.md` |
 | `tailor/interview.py` + `interview_rules.md` | the profile interviewer: state machine on disk under `base/stories/` (`_interview.json`, `<slug>/state.json`), one streamed turn per candidate message, header (`COVERED` / `DONE`, then `---`) parsed in code; the body is labelled by line (`ack:` and `ask:` spoken, `note:` text only; `_Parts` strips labels mid-stream and tags each delta `spoken`), and the page speaks only tagged parts, falling back to first sentence plus questions when a reply has no labels. Writes `main.md` on close; `story_rules.md` is the prompt for `tailor.md` and `star.md`, written by the heavy model in a thread |
+| `tailor/facts.py` | the facts interview, first thing after Start: eight fixed questions in code (authorisation, clearance, level, location, relocation, start date, graduation, form details), resume-derived facts and contacts offered as hints, each answer normalised to one literal line by the cheap model (`NORMALISE_PROMPT`, one follow-up max, "skip" = unknown), then `base/applicant.md` written. State in `base/stories/_facts.json`. `interview.skip_facts` / `restart_facts` (`/profile/facts/skip`, `/restart`); a redo mid-stories returns to `State.resume_phase`. The header pill shows Facts and Stories separately |
 | `server/profile.py` | `/profile` status, `/profile/start`, `/profile/turn` (SSE, one JSON event per line), documents, regenerate |
 | `voice/` + `server/voice.py` | speech: whisper.cpp in (`stt.clean` drops whisper's `[BLANK_AUDIO]`-style markers, standalone um/uh/erm/hmm and immediate word repeats); Fish Audio out when `AUTOPILOT_FISH_API_KEY` is set (`fish.py`, hosted, one request per sentence, `s2.1-pro-free` by default, voice pinned by `reference_id` because the API otherwise picks a new voice per request; delivery tuned by ear: `(cheerful)` tag, temperature 0.9, speed 1.08, all overridable in `.env`); Kokoro (ONNX, `kokoro.py`, needs brew `espeak-ng`) out, `say` when Kokoro is not ready, Piper via `AUTOPILOT_PIPER_BIN`. `assets.py` finds binaries and downloads models into the app data dir; `/voice/status`, `/setup`, `/transcribe`, `/speak` |
-| `capture/content.js` | reads the page, calls `/screen`, paints the banner. Runs on Jobright posting pages (`/jobs/info/`) and on any tab opened from Jobright, either as the extension's content script or evaluated by `browser/inject.py` (then it talks to the server through the `__autopilotRequest` binding, not `fetch`). An `ok` or `caution` verdict counts down 2 s and acts by itself: off Jobright it queues the job, on Jobright's posting page it presses Jobright's Apply so the employer tab queues itself; a `reject` waits for the click. Once done, a red 6 s countdown on the ✕ closes the bar. Facts derived from the resume add an "Unchecked: visa and dates" line under the summary. A page with no text after 20 s, or a screen error, gets an Again button |
-| `browser/inject.py` | the capture without an extension: attaches to our Chrome on 9333, evaluates `capture/content.js` in Jobright tabs and the tabs its Apply opens (by opener, or by the `?jr_id=` tag Jobright's extension puts on the URL), and answers the page's `__autopilotRequest` binding by making the HTTP call itself. Run by hand: `python -m browser.inject`. Never launches through browser-use, never closes anything |
-| `server/postings.py` | posting text the browser saw, for when the fetch gets a shell: `POST /posting` keeps Jobright's copy by posting id, `/capture` keeps the employer page's text; `pipeline.fetch_posting` falls back in that order |
+| `capture/content.js` | reads the page, calls `/screen`, paints the banner. Runs on Jobright posting pages (`/jobs/info/`) and on any tab opened from Jobright, either as the extension's content script or evaluated by `browser/inject.py` (then it talks to the server through the `__autopilotRequest` binding, not `fetch`). An `ok` or `caution` verdict counts down 2 s and acts by itself: off Jobright it queues the job, on Jobright's posting page it presses Jobright's Apply so the employer tab queues itself; a `reject` waits for the click. Successful Add carries the job id into `openReview`; Add / Add anyway / Open focus the existing Autopilot tab or create one. After 5 s the bar collapses into a persistent, verdict-coloured assistant badge; expanding it reuses the same DOM/result and never screens again. Failed and `not_a_job` banners still offer Again and Add |
+| `browser/inject.py` | the capture without an extension: attaches to our Chrome on 9333, evaluates `capture/content.js` in Jobright tabs and the tabs its Apply opens (by opener, or by the `?jr_id=` tag Jobright's extension puts on the URL), and answers the page's `__autopilotRequest` binding by making the HTTP call itself; the `/__open` path focuses/navigates an existing review-page tab or creates one over CDP (sites swallow `window.open`). `AUTOPILOT_SERVER_URL` changes the local origin and the injected script together when 8787 is occupied. Reconnects with backoff while 9333 answers, exits when Chrome is gone. Run by hand: `python -m browser.inject --open <url>` (lives in a Herdr pane). Never launches through browser-use, never closes the browser. **The one tab it closes** is the employer tab Apply opened, at that page's own `/__close` request once `/capture` has *created* the job (`Injector.closable`: a marked tab, never Jobright, never the review page; an "already in autopilot" page never asks, since a fill may be on it). The extension does the same with `chrome.tabs.remove` on `close-me` |
+| `server/seen.py` | is this posting already in autopilot: `high` (same canonical URL, same `jr_id`, same ATS job id) or `confident` (same company and either title similarity ≥ 0.8 or posting simhash within 6 bits; rejections stop matching here after 90 days). `/screen` carries it as `seen`, the banner then never counts down and offers "Open in autopilot" (plus "Add anyway" at `confident`); `queue.add` dedupes by `same_job`; `/capture` refuses `jobright.ai` URLs outright |
+| `tailor/quality.py` | posting text without a model: strips boilerplate lines, scores words + section headings + bullets; `pipeline.fetch_posting` picks the best of the fetched page, the browser's text, and Jobright's copy (fetched wins at ≥ 60% of the best) and records `**Text from:**` in `posting.md`; `simhash` for the seen check |
+| `server/postings.py` | posting text the browser saw, for when the fetch gets a shell: `POST /posting` keeps Jobright's copy by posting id, `/capture` keeps the employer page's text; `pipeline.fetch_posting` falls back in that order. Metadata comes from `<role> @ <company> | Jobright.ai`, or the visible company / age / role header after "Original Job Post" when Jobright leaves `document.title` generic |
+| `browser/autofill.py` | step one of the fill in code, no model: opens the form in a tab on our Chrome over raw CDP, finds the one control whose text starts with "Autofill" (page and every shadow root; Jobright's panel is a custom element), checks it against the submit deny-list, clicks it once, waits for Jobright's own word (`LISTEN_JS`: their extension posts `updateResultFromIframe` / `autoFillResultFromIframe` / `autoFillCompleteFromIframe` to `window.top` with `filledFields` / `missingFields` / `currentField`; read out of their bundle in `~/Library/Application Support/job-autopilot/chrome/Default/Extensions/odcnpip…/helper-app.*.js`), else its panel, read out of the `plasmo-csui#jobright-helper-plugin` shadow root (page `innerText` never sees it): `Autofilling` with three dots while it runs, then `N/M required fields filled` once it stops, so `panel.done` after `panel.busy` (or a count sitting untouched `SETTLE_POLLS`) is the deterministic finish; the filled-field count holding still is the last resort and never while the panel is busy. `from_status` reuses a tab on the panel count too, and never while it is busy. `missing` goes into the agent's task as "Jobright itself reported these empty". **Pressed by the fill, in its own fresh tab, on approve** (2026-09-18): the employer tab Apply opened is screened, queued and closed, so there is nothing to reuse. `inject.maybe_autofill` (press on load, `AUTOPILOT_AUTOFILL_ON_OPEN=1` brings it back) is off by default; when it is on, the fill `reuse`s that tab (`find_tab` by URL, Jobright's messages read back off `window.__autopilotJR`) instead of opening a second one, and only presses itself when no such tab exists. Jobright's panel has two steps on some pages ("Autofill my application" opens it, "Autofill" inside starts the fill), so a differently worded control gets one more press while nothing has happened (`MAX_PRESSES`). `Page.setInterceptFileChooserDialog` is on for the duration of the press: a native chooser froze a tab and every script in it. `signal_js` / `notify` tell the page's banner what automation is doing (`window.__autopilotAutomation(state, note)`): `working` = purple pulsing core + note line, `done`, `error`. The agent then `switch`es to that tab and its task says step one is done. Any failure = `clicked=False` and the agent does it as before. `AUTOPILOT_AUTOFILL_BY_CODE=0` turns it off |
+| `browser/forms/` | the fill without a model, for Ashby, Greenhouse and Lever (`adapter_for(url)`, one module per system, `ADAPTERS` in `__init__`). `engine.py` scans every control over raw CDP (label resolved like a screen reader, `data-autopilot-ref` tags), matches by the adapter's id/name selectors, then `base/form.json` `answers` by exact label, then generic label patterns (never on a textarea or a label over 60 chars: those are questions), sets text through the native setter with real typing as fallback, `<select>` by option text, radios and Ashby's `button[aria-pressed]` by click, comboboxes by click + keys + clicking the suggestion, files by `DOM.setFileInputFiles` read back off the input or its block. Visa fields are skipped before matching whatever the profile says; no option or radio is clicked without `guard.describes_submit`. The report (`form_fill.json` next to the screenshot) is the agent's task: "these are still empty". `base/form.json` is gitignored, template `base/form.example.json`; missing = Jobright path as before. `AUTOPILOT_FORM_FILL=0` turns it off, and **it is off in `.env`** (2026-09-18): Jobright's autofill is always step one, this stays as the fallback |
+| `server/corrections.py` | the correction loop. `browser/fill.py` writes `form_fill.json` with `after_agent` (the form as the agent left it, `forms.snapshot` over CDP, visa questions dropped); the filled tab's `content.js` pings `POST /review/{id}/form-state` every 5 s, on submit clicks and on `pagehide`, and the server looks at the form itself (`capture`: same tab by id or URL, only while it is still on the job's host, ≥ 3 fields) into `form_state.json`; `/submitted` takes one more look then `learn` diffs, `/submitted-seen` only `learn`s. Changed or newly filled values land in `base/form.json` `answers` by exact label (`corrections.md` in the app folder says what). Never blocks marking submitted |
+| `server/form.py` | the preliminary interview: `GET/POST /profile/form`, fixed `QUESTIONS` (contact, location, work, education, source pinned to Other, EEO, work authorisation), `/profile/form/hints` = contacts from the resume cached in `data/contacts.json`. The Profile tab's `Form` module walks them one per screen (Enter next, Skip, Save and stop), then shows the file and the learned answers with delete. Authorisation keys are on file but not in `forms.profile.KEYS`: collected, never auto-filled |
+| `browser/ats.py` + `ats_rules.md` | per-system notes for the browser model, picked by URL (oracle, greenhouse, ashby, workday, lever), sent verbatim under "Notes for this application system". Edit the markdown, not the Python. Oracle: one "Upload Attachment" control for every document, so the upload guard lets the cover letter onto a generic attachment slot (never onto a resume-named one) |
 | `browser/guard.py` | the never-submit deny-list |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
 | `archive/store.py` | immutable per-application folders |
-| `review/index.html` | the whole UI, one file, no build step. Terminal look (mono, square, purple = agent, green = you, red = rejected); `BUCKET` / `VERB` / `ORDER` at the top drive the in-flight list and the two closed shelves; the floating `.fab` is the decision; nothing internal (models, pids, folders, commands) is shown. Holds the profile state pill in the header, the Profile tab (chat, seed files, documents) and the floating voice orb, always on: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is SVG: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; colours inside are green only while listening, orbit plus figure-eights while speaking, a spinner while thinking; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
-| `capture/background.js` | context menu, and follows tabs off Jobright to inject the screen wherever Apply lands |
+| `review/index.html` | the whole UI, one file, no build step. **Opens on the first job in flight** (`loadList`: `inflight[0]`, list order needs-you first, then the agent's), never one from a closed shelf; nothing in flight = "Nothing in flight." in the pane. `/#<id>` (the banner's "Open in autopilot") is read at boot and on `hashchange`; it was ignored until 2026-09-19. Terminal look (mono, square, purple = agent, green = you, red = rejected); `BUCKET` / `VERB` / `ORDER` at the top drive the in-flight list and the two closed shelves; the floating `.fab` is the decision; nothing internal (models, pids, folders, commands) is shown. Holds the profile state pill in the header, the Profile tab (chat, seed files, documents) and the floating voice orb, always on: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is a flat SVG ring in the page's ink, page-colour fill, hard offset shadow: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; one flat core inside grows with the level, green only while listening, purple while speaking; thinking is an arc sweeping the rim with a bulge under it (peak at the head, fading to the tail, `ARC`/`BULGE`/`SOFT` in `Bubble`); paused is a red dashed ring with the word, error a red ring; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
+| `capture/background.js` | context menu, follows tabs off Jobright to inject the screen wherever Apply lands, and focuses/reuses the unpacked extension's existing Autopilot tab after capture |
 | `tools/sweep_failed.py` | moves `failed` application folders under `applications/failed/` and repoints queue rows; nothing deleted |
 
 Config lives in `.env` (gitignored). `AUTOPILOT_RESUME_FILENAME` and
@@ -118,6 +203,31 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 - **A stale uvicorn holds port 8787** and serves old code. If behaviour makes
   no sense, `pgrep -fl uvicorn` first. Scripts it launches run current code
   regardless, so "the pipeline works but the page is wrong" means this.
+- **Something else can hold 8787 too.** Caveman Cloud's `caveman-proxy`
+  (`~/.caveman/bin`, started by `caveman codex`, detached under launchd,
+  no plist) listens on 127.0.0.1:8787 and answers everything with
+  `cave_route_not_found`. `lsof -nP -iTCP:8787 -sTCP:LISTEN` names the
+  holder. `AUTOPILOT_SERVER_URL` moves the injector and its injected
+  script together when the server has to live elsewhere.
+- **The injector runs the code it was started with.** Edits to
+  `browser/inject.py` or `browser/autofill.py` do nothing until
+  `browser.inject` is restarted; a tab already open gets the script on
+  attach but no load event, so the press happens on the next tab or a
+  reload.
+- **Importing AppKit in a process with no window-server session aborts
+  it.** `browser_use/browser/profile.py` and `screeninfo` import AppKit;
+  under macOS 27 a Python started by an agent harness (Codex) died with
+  `_RegisterApplication ... abort()` five times in twenty minutes. Our
+  scripts started from Herdr or uvicorn are fine. Not ours to fix; know
+  the signature.
+- **Rejecting a `filling` job does not stop its fill.** `apply.py` keeps
+  running on a rejected job and, with no form to work on, wandered into
+  another job's tab. `pgrep -fl apply.py` and kill it by hand for now.
+- **`el.click()` on Jobright's opener does not fill.** "Autofill my
+  application" opens the panel; the control inside starts the fill. The
+  press now takes the second step. A tab froze hard once during this
+  (renderer stopped answering `Runtime.evaluate`, even `Page.navigate`
+  was accepted and ignored); only closing the tab helps.
 - **The model covers for a refused action.** It reported the resume as
   attached after every upload was refused. Read outcomes from the action log
   (`resume_uploaded`), never from the done text.
@@ -142,6 +252,30 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   cohorts a year off, and 1.5 years against "0-1". `screen_rules.md` lists
   hard / soft / never per category; add a new false positive to the
   "never" line of its category, not to the prose.
+- **Two screen rules are also code invariants now.** Every US location is
+  green, not caution; a degree earned before an "earned or expected by"
+  deadline satisfies it. `enforce_location_policy` and
+  `enforce_timeline_policy` correct model output before `verdict_for` runs.
+  Update their regression tests as well as `screen_rules.md` when changing
+  either policy. Cached US location flags are normalized on read; the known
+  timeline cache entry was repaired when the date validator shipped.
+- **The injector's browser socket drops without a close frame** (once,
+  30 s after a new tab). It used to die there and every tab lost its
+  banner silently. `Injector.run` reconnects; if the banner is missing,
+  `pgrep -fl browser.inject` and read its pane first.
+- **`window.open` from an evaluated script is at the site's mercy.**
+  Ashby swallowed it. Tabs the page wants are opened by the injector. The
+  bridge reuses and focuses an existing Autopilot tab before creating one;
+  do not regress `/__open` to unconditional `Target.createTarget`.
+- **Port 8787 may belong to another local service.** Run uvicorn elsewhere
+  and set `AUTOPILOT_SERVER_URL` for the injector; it rewrites the injected
+  content script to the same origin. A mismatched origin splits screens and
+  captures across two servers and looks like stale state.
+- **Chrome keeps the extension's old `content.js` until you reload it** at
+  `chrome://extensions`. The Jobright-only guard was in the file and the
+  Jobright URL still got queued 40 minutes later. The server now refuses
+  `jobright.ai` at `/capture`; client-side guards are convenience only.
+- **Greenhouse's embedded board has one path for every job.** `/embed/job_app?for=<company>&token=<id>`: `seen.canonical` dropped the query, every embed was "the same page" as the last one, the banner said "already in autopilot", and the new job was never queued. That looked like "autofill finished and nothing started". `for` and `token` are kept and the token is the ATS id.
 - **Auto-queue is off on Jobright's own pages** so one job is not queued
   under the Jobright URL and the employer URL; there the countdown presses
   Apply instead. If a job shows up twice, look there first.
@@ -205,6 +339,37 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 - **`whisper` on PATH is not whisper.cpp.** It is the openai-whisper
   Python CLI with different flags. `voice/assets.py` looks for
   `whisper-cli` / `whisper-cpp` only.
+- **Jobright's "done" never reaches the page as a DOM event off
+  jobright.ai.** Their `CustomEvent("FromExtension")` is gated on
+  `agentDomains`; the only signal on an employer page is the
+  `window.top.postMessage` progress protocol. The listener has to be
+  installed before the click or the final message is missed.
+- **A snapshot pinged on submit can arrive after the navigation.** The
+  tab id still resolves, the page is the confirmation, and a scan of it
+  would overwrite the last good form state with a search box. `capture`
+  checks the tab's host and wants ≥ 3 fields.
+- **`scrollIntoView` lies under `scroll-behavior: smooth`.** It returns
+  before the scroll, and the rectangle read next is where the element
+  *was*: every click landed 600px off on Greenhouse. `behavior: "instant"`.
+- **react-select ignores a scripted value.** Setting `.value` and firing
+  `input` shows the text and opens nothing; only a real pointer or key
+  event opens the menu. `Input.dispatchMouseEvent` on the control box,
+  then `Input.dispatchKeyEvent` per character. The chosen value lives in a
+  sibling `single-value` div and the input goes empty; read that, not
+  `.value`, or the audit lists the field as still empty.
+- **Greenhouse removes the file input once a file is chosen** and shows a
+  filename row instead. `input.files` read back empty after a successful
+  upload; the name is read off the input's block (`MARK_UPLOAD_FN`).
+- **Lever's location box drops a typed value on blur** unless a suggestion
+  from its own list (`.dropdown-results`, no roles) is clicked. The
+  adapter's `COMBOBOX` marks it; the engine clicks "Austin, TX, USA".
+- **A select-all keystroke with no input focused selects the page.** Lever's
+  university picker took the click without focusing anything, `Cmd+A` went
+  to the body. `type_into` checks `document.activeElement` first.
+- **A generic label pattern will match a word inside a question.** "Why
+  are you considering leaving your most recent or current position?" got a
+  job title typed into it. Textareas and labels over 60 characters are
+  answered only from `answers`.
 - **The preamble check is byte-exact** (`_check_frozen_sections`; only
   whitespace runs are collapsed). The model burned two of four attempts on a
   commented-out font line and a dropped space in a macro. `rules.md` now says
@@ -212,10 +377,20 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest`, 368 tests, no network and no browser. The suite stubs the model, the
-browser, lualatex, and the speech binaries, so **passing tests do not mean it works** — every real
-bug so far survived a green suite and appeared on the first real run. Run
-something end to end before claiming a fix.
+`pytest` collects 512 tests. The suite stubs the model, browser, lualatex, and
+speech binaries, so **passing tests do not mean it works** — every real bug so
+far survived a green suite and appeared on the first real run. On the current
+macOS / Python 3.13 environment, the full process aborts inside browser-use's
+native display detection at `test_forbidden_actions_are_absent_from_the_agent`;
+run the focused files plus `pytest --ignore=tests/test_fill.py` until that
+dependency issue is fixed, and still exercise the changed path live.
+
+## Next up (2026-09-20)
+
+Agreed with the human, not built yet. Each is a flow change, so read the
+invariants first.
+
+- Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
 
@@ -228,8 +403,9 @@ page reads like prose again, one of those slipped.
 ## Personal settings, all in .env
 
 `AUTOPILOT_RESUME_FILENAME`, `AUTOPILOT_COVER_LETTER_FILENAME`,
-`AUTOPILOT_LOCATION`, `AUTOPILOT_AUTOFILL`. Never hardcode a name, a city, or
-a phone number in the repo; it is public.
+`AUTOPILOT_LOCATION`, `AUTOPILOT_AUTOFILL`, `AUTOPILOT_SERVER_URL`,
+`AUTOPILOT_BROWSER`. Never hardcode a name, a city, or a phone number in the
+repo; it is public.
 
 ## Style
 

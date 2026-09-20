@@ -109,15 +109,27 @@ archive/   Application folder writer plus index.csv.
 you click Apply on Jobright        -> landing page screened, OK / NOT OK bar
 OK or CAUTION queues itself in 2 s ->  queue.json, and pipeline.py starts
 (NOT OK waits for the button; any page still queues from the context menu)
+(the injector presses Jobright's Autofill in the new tab meanwhile)
     fetch posting -> tailor -> compile -> cover letter
     CHECKPOINT 1   web page: rationale, diff, PDF, letter; approve, reject, or revise
-    approve starts apply.py (AUTOPILOT_AUTOFILL=1)
-    browser fills the form, replaces the resume, attaches the letter,
-      answers open questions, screenshots, leaves the window open
+                   passed by itself when the banner's auto-approve box was
+                   left ticked and the screen did not reject
+    approve starts apply.py (AUTOPILOT_AUTOFILL=1) in the tab Jobright filled
+    code removes Jobright's resume, attaches the tailored one and the letter
+    (AUTOPILOT_AGENT=1: the browser agent then fixes the location, answers
+      open questions; =0, the default in .env: it stops here)
+    screenshot, window left open
     CHECKPOINT 2   web page: screenshot + answers; you submit by hand
 ```
 
-Both checkpoints block. Nothing proceeds past checkpoint 1 without a click.
+Both checkpoints block. Nothing proceeds past checkpoint 1 without a click,
+unless auto-approve says so (the default since 2026-09-18): the box on the
+banner, per job, decided during the two-second countdown, falling back to
+the `auto_fill` switch. Then a clean screen and a clean tailor pass it by
+themselves, because the clean verdict is what queued the job in the first
+place, and the one decision the human makes is on the filled form. A poor
+fit or a `reject` screen still waits at checkpoint 1. Checkpoint 2 always
+blocks; nothing ever submits.
 
 ## Archive layout
 
@@ -170,17 +182,36 @@ leak; a deny-list in code does not.
   filled or still filling (the human's own submission wins over the agent).
 - One fill per job. `runner.launch("apply.py")` refuses while one is alive,
   and `/fill` needs `force` — sent only after the human confirmed the kill.
-- Only the server closes the browser, and only on a submission that leaves no
-  other job approved, filling, or filled. The agent never closes it.
+- Nothing closes the browser. A submission closes that job's form tab and
+  nothing else; the Jobright list, the next form and the logins stay. The
+  agent never closes anything.
+- Checkpoint 1 passes itself only for a clean tailor and a screen that is
+  not `reject`, and only when the job's own auto-approve answer (the box on
+  the banner at capture) or, failing one, the `auto_fill` switch says so.
+  A poor fit or a `reject` screen always waits for the click. Nothing in
+  that path can reach `filled`, let alone `submitted`.
+- A fill with the agent switched off (`AUTOPILOT_AGENT=0`) touches no
+  field. It removes the file on the resume slot (and on the cover letter
+  slot when one is occupied) and sets ours; the one click it makes is a
+  "Remove file" whose label has gone through `describes_submit`.
+- A fill works in one tab per job, found by the whole URL minus visitor
+  tags (`autofill.same_page`), never by host and path alone.
+- The code filler (`browser/forms/`) clicks no option, radio or button
+  without `describes_submit` refusing first, fills no field that reads as
+  a visa question whatever the profile holds, and records nothing about
+  such a field in a snapshot.
 - No file under `applications/` is ever deleted or overwritten. Reviewer
   decisions are the exception and append, since changing your mind is part of
   the record.
 - The agent never closes a job. A poor-fit verdict is a recommendation that
   still stops at checkpoint 1; only the human sets `skipped`.
-- A fill is only reported as filled if the agent actually finished and its
-  own `upload_file` of the tailored resume succeeded, read from the action
-  log. A screenshot proves the browser was alive; the model's claim that
-  the resume is attached proves nothing.
+- A fill is only reported as filled if the tailored resume is on the form:
+  read back off the input or its block after the code upload, or from the
+  agent's own `upload_file` in the action log. A screenshot proves the
+  browser was alive; the model's claim that the resume is attached proves
+  nothing. Jobright uploads the applicant's resume under the same filename,
+  so a name match alone never proves it is ours; ours is set after theirs
+  is removed.
 - browser-use never launches the browser. `browser/chrome.py` starts Chrome
   detached on port 9333 and hands over a CDP URL; a remote browser is only
   ever disconnected from, so the window with the filled form stays open.
@@ -394,10 +425,12 @@ opens, before any decision to capture.
 2. The server answers from cache if the URL was screened already, otherwise
    asks a fast, cheap model for a verdict against the applicant's facts.
 3. The extension paints a banner across the top of the page: red for a hard
-   auto-reject, amber for a caution, green for clear, nothing if the page is
-   not a posting. Each flag is one line: category, the posting's own words,
-   why it applies. A dismiss button, and an "Add to autopilot" button that
-   calls the existing `/capture`.
+   auto-reject, purple for a caution, green for clear, grey if the page is not
+   a posting. Each flag is one line: category, the posting's own words, why it
+   applies. Add calls the existing `/capture`, then focuses the existing
+   Autopilot tab on that job or opens one if none exists. After five seconds
+   the banner minimizes to a verdict-coloured assistant badge; restoring it
+   reuses the rendered result and makes no model call.
 4. The pipeline reuses the same verdict: `pipeline.py` screens the fetched
    posting (cache hit when the extension already did), archives it as
    `screen.json`, and the review page shows the flags above the rationale.
@@ -418,16 +451,18 @@ is one `soft` line (apply anyway, but know), and what is never a flag.
 | `visa` | Sponsorship refused now and in future, and needed | The form question; "sponsorship available"; E-Verify text |
 | `export_control` | ITAR / EAR / "US persons only" for this role | Company-wide "some roles may" notes |
 | `clearance` | Active clearance, citizenship, or residency required | The form question; "or" clauses with a path |
-| `timeline` | Enrolment after graduation; a start date or term the facts rule out | A window the latest degree falls in; a cohort year in the title alone |
-| `location` | Outside the applicant's country; remote restricted to a region they will not move to | Another city in the same country (relocation is the default); several offices listed; HQ in a remote header |
+| `timeline` | Enrolment after graduation; a start date or term the facts rule out | A window the latest degree falls in; graduation on or before an "earned or expected by" cutoff; a cohort year in the title alone |
+| `location` | Outside the applicant's country; remote restricted to a region they will not move to | Any location in the United States, including onsite/hybrid, no relocation assistance, and state-restricted remote; several offices listed; HQ in a remote header |
 | `degree` | PhD or a licence required, no equivalent | "CS or related" when held; "MS preferred" when held |
 | `seniority` | Staff, principal, director, manager with scope stated | Level names (II, L4); a company's own levelling vocabulary |
 | `perm` | Two or more PERM tells: mail-in resume, job code, single exact salary, "labor certification", a named HR contact | A plain salary range |
 | `other` | A human language; a physical requirement; "internal only" | Skills, domains, salary, posting age |
 
 The verdict is `reject`, `caution`, `ok`, or `not_a_job`, recomputed from
-the flags in code. Derived facts now carry a relocation line so the model
-does not have to guess.
+the flags in code. US location flags are dropped at validation, and a parsed
+graduation date on or before a parsed latest-date cutoff drops that timeline
+flag. Derived facts carry relocation and graduation lines, so these checks do
+not depend on the model's prose reasoning.
 
 ### Where things go
 
@@ -436,8 +471,8 @@ does not have to guess.
 | `base/applicant.md` | The applicant's hard facts, one `## Facts` section the screen prompt reads verbatim. Gitignored; `base/applicant.example.md` is the template. Already read by `browser/fill.py` for form details. Phase 7 grows this file |
 | `tailor/screen.py` | `screen(posting_text, applicant) -> Screen`; JSON reply parsed and validated against the category enum, never trusted raw |
 | `tailor/screen_rules.md` | The prompt, sent verbatim, same convention as the other rules files |
-| `server/screen.py` | `POST /screen` and the URL-keyed cache in `data/screens.json` |
-| `capture/content.js` | Text extraction, banner, posts to the server. Runs on `jobright.ai/jobs/info/*` (verdict only) and, via `background.js`, in any tab opened from or navigated away from Jobright, wherever Apply lands (verdict, then a two-second countdown into `/capture` for `ok` and `caution`) |
+| `server/screen.py` | `POST /screen` and the URL-keyed cache in `data/screens.json`; employer pages reuse the Jobright URL's cached verdict, or combine saved Jobright text with a weak employer page in one call |
+| `capture/content.js` | Text extraction, banner, persistent badge, posts to the server, and Add/Open routing to the matching review job. Runs on `jobright.ai/jobs/info/*` (verdict only) and, via `background.js`, in any tab opened from or navigated away from Jobright, wherever Apply lands (verdict, then a two-second countdown into `/capture` for `ok` and `caution`) |
 | `applications/<job>/screen.json` | The verdict the pipeline archived |
 | `review/index.html` | Flags shown above the tailoring verdict; the profile state in the header |
 | `server/settings.py` | `data/settings.json`, read by the server and the scripts it launched. `use_profile` is pinned on by the page; the models fall back to the resume on their own |
@@ -484,6 +519,12 @@ All five steps built. What the first runs exposed:
   require sponsorship?" was flagged as a visa reject by two models running.
   The rule is in the prompt and, since prompts leak, in code: a quote
   ending in `?` is dropped.
+- **Prompt-only location and timeline rules leaked.** The model cautioned on
+  San Jose versus Los Angeles despite acceptable relocation, and cautioned on
+  December 2026 against an "earned or expected by Summer 2027" deadline. US
+  location flags and already-satisfied latest-date graduation flags are now
+  removed deterministically before the verdict is recomputed, including when
+  an older location result is read from cache.
 - **Reasoning tokens made a 32-second banner.** The screen runs with
   reasoning disabled (`llm.complete(reasoning={"enabled": False})`); the
   tailor model's provider refuses that, so derivation uses the screen model.
@@ -805,22 +846,303 @@ untouched and still loads the old way; the same `content.js` serves both.
   Jobright's copy of the posting (saved when its page is screened, keyed
   by posting id) and the employer page's rendered text (sent with the
   capture). `pipeline.fetch_posting` uses the fetch when it has a real
-  description, else the employer page's text, else Jobright's. Company
-  comes from Jobright's page title when the employer page has none.
+  description, else the employer page's text, else Jobright's. The screen
+  also reuses Jobright's cached verdict, or sends the saved Jobright copy and
+  the weak employer page together in one call. Role and company come from
+  Jobright's `<role> @ <company>` title when present, otherwise from the
+  visible company / age / role lines after "Original Job Post".
+
+### What the second day taught
+
+- **The injector's socket drops.** Thirty seconds after a new tab, no
+  close frame, cause unknown (the fill's own attach is the suspect). The
+  process died and every tab lost its banner until someone looked. It now
+  reconnects with backoff for as long as port 9333 answers and exits only
+  when Chrome is gone; keepalive pings are off.
+- **`window.open` from an evaluated script is at the site's mercy.**
+  Ashby swallowed the "Open in autopilot" click. The page now asks the
+  bridge (`/__open`); the injector focuses and navigates an existing
+  Autopilot tab or creates one over CDP when none exists. Add, Add anyway,
+  Open in autopilot, and the extension context-menu capture share that rule.
+  Only the configured local server origin is allowed through the bridge.
+- **Port 8787 is not guaranteed to be free.** `AUTOPILOT_SERVER_URL` selects
+  the injector's local server origin (8788 in the conflicting-service run)
+  and rewrites the injected content script to the same origin. The unpacked
+  extension remains pinned to its manifest's 8787 permission.
+- **The Jobright page still got queued once**, forty minutes after the
+  client-side guard shipped. The server now refuses `jobright.ai` at
+  `/capture`; client-side guards are convenience only.
+- **The close countdown started before the job existed.** On Jobright's
+  page the employer tab does the queueing; the bar now polls `/queued`
+  by `jr_id` and counts down only once the row is there.
 
 ### Status
 
-Prototype, run by hand with `python -m browser.inject`. Verified live:
-posting page → countdown → Apply → employer tab screened → queued with
-its text → pipeline reached review on a page the fetch could not read.
-Next, in order:
+Run by hand with `python -m browser.inject` (a Herdr pane). Verified
+live: posting page → countdown → Apply → employer tab screened → queued
+with its text → pipeline reached review on a page the fetch could not
+read; a filled form's tab reports the confirmation page and the job is
+marked submitted without the button. Next, in order:
 
 1. `server/runner.py` starts the injector with the server (one process,
    restarted if it dies; `Chrome quit` is the normal way it dies) so
-   nothing is run by hand.
+   nothing is run by hand. A `tools/up.py` that starts server, Chrome,
+   and injector and opens the review page is the interim.
 2. Retire the extension path once the injector has done a week of real
    captures: `capture/background.js` and the manifest go, `content.js`
    stays as the injected script, the `fetch` fallback in it goes.
-3. Facts are still derived from the resume on most screens; the
-   "Unchecked: visa and dates" line stays until `base/applicant.md` is
-   written from the profile interview.
+3. Facts are derived from the resume until the facts interview
+   (Phase 11) has been run once; the "Unchecked: visa and dates" line
+   stays until then.
+
+## Phase 11 — already seen, the facts interview, deterministic steps (built)
+
+Three things the second real day asked for, all in the direction of
+fewer model calls and fewer duplicate actions.
+
+### Already in autopilot (`server/seen.py`)
+
+One job was tailored twice: once under its Jobright URL, once under the
+employer's. The queue deduplicated on exact URL only. Now two levels,
+both string work, no model:
+
+- **high**: the same posting, provably. Same canonical URL (host
+  lowercased, `www.` and tracking dropped, ATS job params kept), same
+  `jr_id`, or the same job id at the same tracking system (Ashby,
+  Greenhouse, Lever, Workday, Oracle, iCIMS, SmartRecruiters, Workable,
+  Jobright). `queue.add` refuses these; `/capture` returns the existing
+  row.
+- **confident**: same employer, and either the title matches at ≥ 0.8
+  (noise like `[Remote]` and `(All Levels)` stripped) or the posting
+  text's simhash is within 6 bits. Shown, never blocks: "Add anyway"
+  stays. Rejections stop matching here after 90 days.
+
+`/screen` carries the match as `seen`; the banner then never counts
+down, says where the job stands ("Waiting for your review", "Applied
+2026-09-17", "Rejected …"), and offers "Open in autopilot". Rows swept
+out of the queue still count, via `applications/index.csv`.
+
+The same lookup keys the file chips: on a page that is a known job, the
+tailored resume and cover letter appear in the banner as chips to drag
+onto the form's slot, click to download, or "put" straight into the
+matching file input (`POST /review/{id}/files`, base64 over the bridge).
+
+### Which copy of the posting
+
+Three copies can reach the pipeline (fetched page, browser's text,
+Jobright's copy). The first to clear 400 characters used to win, which a
+bare form clears on cookie notices alone. `tailor/quality.py` strips
+boilerplate lines and scores words plus section headings plus bullets;
+the fetched page wins at ≥ 60% of the best, else the best copy does,
+and `posting.md` records `**Text from:**`. No model.
+
+### The facts interview (`tailor/facts.py`)
+
+`base/applicant.md` was a file to type by hand, which fails the
+one-click thesis, and its absence is why every screen said "Unchecked:
+visa and dates" and guessed at relocation. It is now the first thing the
+profile chat does after reading the resume: eight fixed questions in
+code (authorisation, clearance, level, location, relocation, start
+date, graduation, form details), the resume's own answers offered as
+hints, each answer turned into one literal line by the cheap model, one
+follow-up at most, "skip" leaves unknown. The file is written at the
+end and the stories interview opens. "Skip to the stories" and "Redo the
+facts" exist; a redo mid-stories comes back to the story it left. The
+header pill shows Facts and Stories separately.
+
+### Deterministic steps
+
+The browser agent's first three actions on every form were the same:
+find Autofill, click, wait. `browser/autofill.py` does that over raw CDP
+before the agent starts: opens the form in a tab on our Chrome, finds
+the one control whose text starts with "autofill" (page and every
+shadow root; Jobright's panel is a custom element), checks it against
+the submit deny-list, clicks once, waits for the panel to say done or
+the filled-field count to hold still. The agent `switch`es to that tab
+with step one marked done. Any failure = `clicked=False` and the agent
+does it as before. The first of what should become a harness: the agent
+does a thing, the code learns to do it, the agent is the fallback and
+the source of the next flow.
+
+`browser/ats_rules.md` is the other half: per-system notes for the
+agent, picked by URL, written from what the logs showed (Oracle: one
+"Upload Attachment" control for every document, Address prefilled with
+India, the Jobright panel stalls at 85%; Workday: never create the
+account). Edit the markdown, not the Python.
+
+### Status
+
+Built, 432 tests. Live: dedupe, chips, and the submission watch. Not
+yet seen live: `browser/autofill.py` on a real fill (the finder was
+fixed after a first run found nothing; `AUTOPILOT_AUTOFILL_BY_CODE=0`
+turns it off), and the facts interview end to end (the normaliser was
+tried against the real model).
+
+## Phase 12 — our own fill, and learning from corrections (built)
+
+The question that started it: Jobright's autofill gets most fields wrong
+on the systems that matter, and the agent then corrects someone else's
+work instead of doing its own. Is building the fill easier? A survey of
+open source (September 2026): six repos, 0–110 stars, one developer each,
+useful as selector crib sheets and nothing more. So: yes for the systems
+with a stable form, and the survey's MIT repos were read for their
+selectors.
+
+### What was built
+
+- `browser/forms/`: the fill without a model. One engine, one adapter
+  per system (Ashby, Greenhouse, Lever). Scan every control over raw
+  CDP with a label resolved the way a screen reader would; match by the
+  adapter's id/name selectors, then `base/form.json` `answers` by exact
+  label, then generic label patterns; set by kind (native setter with
+  typed keys as fallback, `<select>` by option text, radios and Ashby's
+  toggle buttons by click, comboboxes by click + keys + a mouse click on
+  the suggestion, files by `DOM.setFileInputFiles` read back); rescan and
+  hand the agent the list of what is still empty. Verified live on all
+  three the day it was written; six bugs were found only there
+  (CLAUDE.md, "Things that will bite you").
+- Jobright's completion signal. Their extension's bundle sits in our
+  Chrome profile; reading it showed the fill reports progress with
+  `window.top.postMessage` (`updateResultFromIframe` snapshots,
+  `autoFillResultFromIframe` with `missingFields`). `autofill.py` installs
+  a listener before the click and stops on Jobright's word; the missing
+  list goes to the agent.
+- The correction loop (`server/corrections.py`). The form as the agent
+  left it is snapshotted; the filled tab pings the server while the human
+  checks it and the server looks at the form itself; marking the job
+  submitted diffs the two and writes every changed or newly filled value
+  into `base/form.json` `answers`. The human's fix is the next fill's
+  first choice, whoever made the mistake.
+- The preliminary interview (`server/form.py`, `Form` in the page): the
+  fixed questions every form asks, click-through, contact details
+  prefilled from the resume, source pinned to "Other", authorisation
+  collected for the file and the screen.
+
+### Decisions
+
+- The filler never answers a visa question, even from the applicant's own
+  file. The invariant was written against a model inventing an answer;
+  code copying a human's declared answer is a different thing, but the
+  field is where a wrong value does the most harm, so it stays with the
+  human until decided otherwise. The keys are on file, outside
+  `forms.profile.KEYS`, and `describes_protected` runs before matching.
+- Jobright stays step one on Workday, Oracle, iCIMS and SmartRecruiters.
+  Those are where it is worst and where it is hardest to replace: Workday
+  is a multi-page wizard behind an account wall, Oracle a page of custom
+  elements. Each is one adapter module when its turn comes; the engine,
+  the snapshot and the correction loop are already there for it.
+- Snapshots are taken by the server over CDP, not by the page. One label
+  implementation; the page only says "look now".
+
+### Status
+
+Built, 467 tests. Live: the three adapters on real forms. Not yet seen
+live: Jobright's message on a real fill (the listener was checked with
+their message shapes in a real tab), the correction diff on a real
+submission.
+
+## Phase 13 — Jobright first, pressed on open, and a signal (built)
+
+Three complaints from one evening (2026-09-18): the autofill took too
+long to start, nothing on the page said whether automation was doing
+anything, and the minimise button on the banner did not minimise.
+
+- **Pressed on open.** The wait was the pipeline: queue, tailor,
+  approve, then `apply.py` opened a second tab and pressed. Now the
+  injector, which already watches every tab opened from Jobright, runs
+  `autofill.run` in the tab the moment it has loaded (`maybe_autofill`,
+  once per tab+URL). The fill then finds that tab by URL and reads
+  Jobright's own messages back off `window.__autopilotJR` (`reuse`); it
+  presses itself only when no such tab exists. `AUTOPILOT_FORM_FILL=0`
+  in `.env`: the in-house adapters step aside, Jobright is always step
+  one.
+- **Two-step panel.** The first live press found "Autofill my
+  application", clicked it, and nothing happened, twice: on Greenhouse
+  that control opens the panel and a control worded "Autofill" inside
+  it starts the fill. While no message has arrived and no field has
+  changed, a differently worded control gets one more press
+  (`MAX_PRESSES`).
+- **Frozen tab.** During that investigation a tab stopped answering
+  `Runtime.evaluate` for good (`Page.navigate` accepted, ignored; no
+  dialog). A native file chooser blocks the renderer the same way, so
+  `Page.setInterceptFileChooserDialog` is on for the duration of the
+  press. Whether that was the cause is not proven.
+- **The signal.** `window.__autopilotAutomation(state, note)` in
+  content.js; the injector and the fill evaluate it over CDP
+  (`signal_js`, `notify`). `working` = purple pulsing core on the badge
+  and a note line in the bar; `done`, `error`, `idle`.
+- **Minimise.** The close button's click bubbled to the host element,
+  whose own listener re-expands a collapsed bar on any click: collapse,
+  then expand, in one click. `stopPropagation` on close.
+- **Ports.** Caveman Cloud's proxy took 8787 under launchd and answered
+  the page with `cave_route_not_found`; uvicorn had died. Killed, server
+  back on 8787. `AUTOPILOT_SERVER_URL` exists for when it has to move.
+
+### Status
+
+Built, 475 tests. Live: the injector pressed within two seconds of load
+on a Greenhouse embed, and the second step is what it was missing. Not
+yet seen live: a fill reusing the opened tab end to end, the signal on a
+real form, whether the chooser intercept was the freeze.
+
+## Phase 14 — the trigger, the documents in code, no agent (built)
+
+One evening (2026-09-18), starting from "the autofill works and then
+nothing happens". Six findings, each a cycle.
+
+- **Nothing happened because nothing was queued.** `seen.canonical`
+  dropped the query, so every Greenhouse embed
+  (`/embed/job_app?for=<company>&token=<id>`, one path for every job)
+  was "the same page" as the last one and the banner said "already in
+  autopilot". `for` and `token` are kept and the token is the ATS id.
+- **The deterministic end of the autofill.** Jobright's panel lives in
+  the shadow root of `plasmo-csui#jobright-helper-plugin`, where the
+  page's `innerText` never looks. It shows "Autofilling" with three dots
+  while their fill runs and "N/M required fields filled" once it stops,
+  9/10 as often as 10/10. `STATUS_JS` walks shadow roots and reports
+  `panel.busy` / `panel.done`; `run` finishes on done-after-busy, or a
+  count untouched for `SETTLE_POLLS`; the field-count fallback never
+  fires while busy. The `postMessage` protocol stays as the first word.
+- **The trigger.** Two paths into the fill, both without a click. A job
+  not yet in autopilot: the banner queues it, the pipeline tailors,
+  `auto_approve` marks it approved and starts the fill. A job already
+  in autopilot (approved, filled, or failed mid-fill): the injector
+  reports every finished autofill to `POST /autofilled {url}`, and the
+  server restarts the fill in that tab; a running fill is never doubled,
+  the pipeline's own job is left to the pipeline, `submitted` and
+  `skipped` are left alone. The banner stays purple from Add to the end
+  of the fill; the injector's "autofill done" only moves the note.
+- **Per-job auto-approve.** A box next to "Add to autopilot", checked
+  by default, unticked during the countdown to make that job wait at
+  checkpoint 1. Travels with `/capture`; on Jobright's posting page it
+  goes ahead by `jr_id` (`POST /prefs`, in memory, used once) because
+  the employer tab does the queueing.
+- **The documents in code.** `forms.run_documents` on the reused tab
+  once Jobright is done: remove the file on the resume slot (Greenhouse
+  drops the input once a file is on it and shows "Remove file"; the
+  label goes through the submit guard), set ours with
+  `DOM.setFileInputFiles`, read the name back, then the cover letter
+  where there is a slot, clearing an occupied one first. Two bugs on
+  the way: the scan's ref counter restarted at 0 on every scan, so the
+  returning input got the first-name field's ref and the upload hit a
+  text input ("Node is not a file input element"); and `find_tab`
+  matched by host and path, so "Fill again" on pallet ran three times
+  on Amira's tab and left pallet's cover letter there. Refs now start
+  above the highest on the page; tabs match on the whole URL minus
+  visitor tags.
+- **No agent.** `AUTOPILOT_AGENT=0` in `.env`: autofill, documents, a
+  CDP screenshot, `form_fill.json`, stop, under a minute. `filled` iff
+  the resume read back on the slot. The browser model (`qwen3.7-flash`
+  in `.env`, ~50 s a step) had spent 30 steps on one dropdown; the form
+  is the human's from here, and the agent is one flag away when wanted.
+- **The browser closed under a fresh tab.** "I submitted it" on one job
+  closed Chrome because the other job was `failed`; the human had just
+  re-opened its form. `_in_progress` now also lists every other
+  employer tab open in our Chrome.
+
+### Status
+
+Built, 504 tests. Live: the whole path on two Greenhouse embeds, end to
+end, from Jobright's Apply to a green badge with the tailored resume and
+cover letter on the form, no model. Not yet seen live: the box unticked,
+a non-Greenhouse slot, `/autofilled` on a `failed` job with no resume.

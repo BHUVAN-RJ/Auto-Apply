@@ -144,6 +144,31 @@ def ensure(directory: Path, port_number: Optional[int] = None, headless: bool = 
 CLOSE_TIMEOUT = 10.0
 
 
+def open_pages(port_number: Optional[int] = None) -> list[str]:
+    """URLs of the tabs open on our Chrome; [] when it is not running."""
+    url = cdp_url(port() if port_number is None else port_number)
+    try:
+        with urllib.request.urlopen(f"{url}/json", timeout=2) as response:
+            pages = json.loads(response.read())
+    except Exception:  # noqa: BLE001 - no browser, no tabs
+        return []
+    return [p.get("url", "") for p in pages if p.get("type") == "page"]
+
+
+def close_tab(target_id: str, port_number: Optional[int] = None) -> bool:
+    """Close one tab on our Chrome by target id, over the /json/close
+    endpoint. The browser and every other tab stay. False when the browser
+    is not up or the tab is already gone."""
+    if not target_id:
+        return False
+    url = cdp_url(port() if port_number is None else port_number)
+    try:
+        with urllib.request.urlopen(f"{url}/json/close/{target_id}", timeout=2) as response:
+            return response.status == 200
+    except Exception:  # noqa: BLE001 - no browser, or no such tab
+        return False
+
+
 def close(port_number: Optional[int] = None) -> bool:
     """Quit the Auto-Apply Chrome. Returns whether one was running.
 

@@ -81,9 +81,13 @@ class Screen:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Screen":
+        flags = enforce_location_policy([Flag(**f) for f in data.get("flags", [])])
+        verdict = data["verdict"]
+        if verdict != "not_a_job":
+            verdict = verdict_for(flags)
         return cls(
-            verdict=data["verdict"],
-            flags=[Flag(**f) for f in data.get("flags", [])],
+            verdict=verdict,
+            flags=flags,
             summary=data.get("summary", ""),
             model=data.get("model", ""),
             facts_source=data.get("facts_source", ""),
@@ -141,6 +145,115 @@ def verdict_for(flags: list[Flag]) -> str:
     return "caution" if flags else "ok"
 
 
+US_STATE_NAMES = (
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west virginia", "wisconsin", "wyoming", "district of columbia",
+)
+US_STATE_CODES = (
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC",
+)
+
+
+def quote_names_us_location(quote: str) -> bool:
+    """Whether a location quote explicitly identifies the United States.
+
+    City-to-city distance inside the US is never a screen flag. State codes
+    stay case-sensitive here so ordinary words such as "in" and "or" do not
+    accidentally look like Indiana and Oregon.
+    """
+    lowered = quote.lower()
+    if re.search(r"\bunited states(?: of america)?\b", lowered):
+        return True
+    if re.search(r"\bU\.?S\.?(?:A\.?)?\b", quote) or re.search(r"\bUSA\b", quote):
+        return True
+    if any(re.search(rf"\b{re.escape(state)}\b", lowered) for state in US_STATE_NAMES):
+        return True
+    codes = "|".join(US_STATE_CODES)
+    return bool(re.search(rf"(?:,|\b(?:in|at))\s*(?:{codes})(?:\s+\d{{5}})?\b", quote))
+
+
+def enforce_location_policy(flags: list[Flag]) -> list[Flag]:
+    """Remove location flags that cannot represent a foreign-country block.
+
+    Under the screening policy, a US location is always green and a genuine
+    foreign-country restriction is hard. Consequently a soft location flag
+    is invalid regardless of the model's explanation.
+    """
+    return [
+        flag for flag in flags
+        if flag.category != "location"
+        or (flag.severity == "hard" and not quote_names_us_location(flag.quote))
+    ]
+
+
+MONTH_NUMBERS = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+    "spring": 5, "summer": 8, "fall": 11, "autumn": 11, "winter": 2,
+}
+DATE_WORDS = "|".join(MONTH_NUMBERS)
+
+
+def latest_graduation(facts: str) -> Optional[tuple[int, int]]:
+    """Most recent graduation as (year, month), from degree-related facts.
+
+    A year without a month is treated as December. That conservative choice
+    only suppresses a flag when even the latest date in that year meets the
+    posting's deadline.
+    """
+    dates: list[tuple[int, int]] = []
+    for line in facts.splitlines():
+        if not re.search(r"\b(?:degree|graduat)", line, re.I):
+            continue
+        specific = re.findall(rf"\b({DATE_WORDS})\s+(?:of\s+)?(20\d{{2}})\b", line, re.I)
+        if specific:
+            dates.extend((int(year), MONTH_NUMBERS[word.lower()]) for word, year in specific)
+        else:
+            dates.extend((int(year), 12) for year in re.findall(r"\b(20\d{2})\b", line))
+    return max(dates) if dates else None
+
+
+def graduation_deadline(quote: str) -> Optional[tuple[int, int]]:
+    """Latest allowed graduation from phrases such as "by Summer 2027"."""
+    match = re.search(
+        rf"\b(?:by|no later than|on or before)\s+(?:the end of\s+)?"
+        rf"(?:(?P<word>{DATE_WORDS})\s+(?:of\s+)?)?(?P<year>20\d{{2}})\b",
+        quote,
+        re.I,
+    )
+    if not match:
+        return None
+    word = match.group("word")
+    return int(match.group("year")), MONTH_NUMBERS[word.lower()] if word else 12
+
+
+def enforce_timeline_policy(flags: list[Flag], facts: str) -> list[Flag]:
+    """Drop deadline flags when the applicant graduates by the cutoff."""
+    graduation = latest_graduation(facts)
+    if graduation is None:
+        return flags
+    return [
+        flag for flag in flags
+        if flag.category != "timeline"
+        or (deadline := graduation_deadline(flag.quote)) is None
+        or graduation > deadline
+    ]
+
+
 # Facts derived from a resume say nothing about these. A posting-side line
 # ("unable to sponsor") is still worth showing, but it cannot be a hard
 # reject when the applicant's side is unknown.
@@ -157,7 +270,8 @@ def soften_unknowns(result: "Screen") -> "Screen":
     return result
 
 
-def parse_reply(reply: str, model: str = "", text: Optional[str] = None) -> Screen:
+def parse_reply(reply: str, model: str = "", text: Optional[str] = None,
+                facts: Optional[str] = None) -> Screen:
     """Validate the model's JSON into a Screen. Bad flags are dropped, not shown.
 
     With `text`, every flag's quote is checked against the posting.
@@ -189,6 +303,9 @@ def parse_reply(reply: str, model: str = "", text: Optional[str] = None) -> Scre
             continue
         flags.append(Flag(category, severity, quote, reason))
 
+    flags = enforce_location_policy(flags)
+    flags = enforce_timeline_policy(flags, facts or "")
+
     verdict = str(data.get("verdict", "")).strip().lower()
     if verdict != "not_a_job":
         verdict = verdict_for(flags)
@@ -216,6 +333,6 @@ def screen(text: str, title: str = "", url: str = "", facts: Optional[str] = Non
         # the latency of a banner that is meant to appear as the page opens.
         reasoning={"enabled": False},
     )
-    result = parse_reply(reply, model=model, text=text)
+    result = parse_reply(reply, model=model, text=text, facts=facts)
     result.facts_source = source
     return soften_unknowns(result)

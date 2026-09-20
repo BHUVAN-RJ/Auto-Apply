@@ -8,6 +8,40 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+function isAutopilotTab(url) {
+  return url === `${SERVER}/` || url.startsWith(`${SERVER}/#`);
+}
+
+async function openAutopilot(url) {
+  if (!url.startsWith(`${SERVER}/`)) throw new Error("invalid Autopilot URL");
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find((tab) => isAutopilotTab(tab.url || tab.pendingUrl || ""));
+  if (existing?.id != null) {
+    await chrome.tabs.update(existing.id, { url, active: true });
+    if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true });
+    return { reused: true };
+  }
+  await chrome.tabs.create({ url, active: true });
+  return { reused: false };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "close-me") {
+    // The employer tab, queued, asks to go; only the sender, only a tab.
+    const tabId = sender?.tab?.id;
+    if (tabId == null) { sendResponse({ ok: false }); return undefined; }
+    chrome.tabs.remove(tabId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.type !== "open-autopilot") return undefined;
+  openAutopilot(String(message.url || ""))
+    .then((result) => sendResponse({ ok: true, ...result }))
+    .catch((error) => sendResponse({ ok: false, error: error.message }));
+  return true;
+});
+
 // Runs in the page to guess the company name. Best effort only -- the tailor
 // step re-derives company and title from the scraped posting anyway.
 function scrapeMeta() {
@@ -64,6 +98,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       data.created ? "Added to queue" : "Already queued",
       `${data.queued} job${data.queued === 1 ? "" : "s"} pending`
     );
+    if (data.id) await openAutopilot(`${SERVER}/#${data.id}`);
   } catch (err) {
     notify("Capture failed", `Is the server running? ${err.message}`);
   }

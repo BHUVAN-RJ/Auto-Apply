@@ -32,6 +32,10 @@ DIR_ENV = "AUTOPILOT_POSTINGS"
 SOURCE_ID = re.compile(r"[?&]jr_id=([A-Za-z0-9_-]+)")
 # Jobright titles its posting pages "<role> @ <company> | Jobright.ai".
 SOURCE_TITLE = re.compile(r"^(?P<title>.+?)\s+@\s+(?P<company>.+?)\s*\|")
+SOURCE_POSTED = re.compile(
+    r"^(?:reposted\s+)?(?:\d+\s+)?(?:minutes?|hours?|days?|weeks?|months?)\s+ago$|^just now$",
+    re.I,
+)
 
 
 class Saved(BaseModel):
@@ -77,12 +81,54 @@ def source_id(url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def save_source(posting_id: str, saved: Saved) -> None:
+def _source_metadata(saved: Saved) -> tuple[str, str]:
+    """(role, company) from Jobright's title or its posting header.
+
+    Jobright currently leaves ``document.title`` at "Job Recommendations |\n+    Jobright AI".  Its visible posting still has a stable header immediately
+    after "Original Job Post": company, age, then role.
+    """
     match = SOURCE_TITLE.match(saved.title)
     if match:
-        saved = saved.model_copy(update={"title": match["title"],
-                                         "company": saved.company or match["company"]})
+        return match["title"], saved.company or match["company"]
+
+    lines = [line.strip() for line in saved.text.splitlines() if line.strip()]
+    marker = next((i for i, line in enumerate(lines) if line.casefold() == "original job post"), None)
+    if marker is not None:
+        after = lines[marker + 1:]
+        company = next((line for line in after if line != "·"), "")
+        posted = next((i for i, line in enumerate(after) if SOURCE_POSTED.match(line)), None)
+        if posted is not None:
+            title = next((line for line in after[posted + 1:] if line != "·"), "")
+            if title:
+                return title, saved.company or company
+    return saved.title, saved.company
+
+
+def save_source(posting_id: str, saved: Saved) -> None:
+    title, company = _source_metadata(saved)
+    if (title, company) != (saved.title, saved.company):
+        saved = saved.model_copy(update={"title": title, "company": company})
     _write("source", posting_id, saved)
+
+
+def source_meta(url: str) -> tuple[str, str]:
+    """(title, company) from Jobright's copy of the posting the URL was
+    opened for. Jobright's page title names the role and the employer
+    cleanly; the employer page's title is whatever its ATS put there."""
+    source = source_for(url)
+    if not source:
+        return "", ""
+    return source.title, source.company
+
+
+def source_for(url: str) -> Optional[Saved]:
+    """Jobright's saved copy for an employer URL carrying its posting id."""
+    posting_id = source_id(url)
+    source = _read("source", posting_id) if posting_id else None
+    if source is None:
+        return None
+    title, company = _source_metadata(source)
+    return source.model_copy(update={"title": title, "company": company})
 
 
 def save_captured(job_id: str, saved: Saved) -> None:
@@ -93,12 +139,14 @@ def fallbacks(job_id: str, url: str) -> list[Saved]:
     """Texts to try when the fetch has nothing, best first."""
     found = []
     captured = _read("captured", job_id)
-    posting_id = source_id(url)
-    source = _read("source", posting_id) if posting_id else None
+    source = source_for(url)
     if captured and captured.text.strip():
-        if source and not captured.company:
-            # The employer page rarely says who it is; Jobright's title does.
-            captured = captured.model_copy(update={"company": source.company})
+        if source:
+            # The employer page rarely says who it is, and titles itself
+            # however its ATS likes; Jobright's title names both cleanly.
+            captured = captured.model_copy(update={
+                "company": captured.company or source.company,
+                "title": source.title or captured.title})
         found.append(captured)
     if source and source.text.strip():
         found.append(source)

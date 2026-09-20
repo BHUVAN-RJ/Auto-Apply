@@ -81,3 +81,30 @@ def test_context_reads_the_application_folder(tmp_path):
     assert ctx.posting == "# Role" and ctx.resume_tex == "tex" and ctx.cover_letter == ""
     assert "## Candidate profile" in ctx.as_message() and "cover letter" not in ctx.as_message()
     assert answers.Context.from_app_dir(None).as_message() == ""
+
+
+def test_the_answer_model_can_differ_from_the_tailors(monkeypatch):
+    monkeypatch.setattr(answers.llm, "tailor_model", lambda: "test/tailor")
+    monkeypatch.delenv(answers.MODEL_ENV, raising=False)
+    assert answers.answer_model() == "test/tailor"
+    monkeypatch.setenv(answers.MODEL_ENV, "z-ai/glm-5.3")
+    assert answers.answer_model() == "z-ai/glm-5.3"
+    seen = stub(monkeypatch, GOOD)
+    assert answers.answer("Why here?", CONTEXT).model == "z-ai/glm-5.3"
+    assert seen
+
+
+def test_open_questions_are_the_empty_long_or_asked_labels_never_visa():
+    snapshot = {
+        "First name": "",
+        "What are the most interesting aspects of Perplexity that you are excited to work on?": "",
+        "Why do you want to work here?": "already answered",
+        "Tell us about a project you are proud of and what you would do differently": "",
+        "Will you now or in the future require sponsorship?": "",
+        "LinkedIn": "",
+    }
+    assert answers.open_questions(snapshot) == [
+        "What are the most interesting aspects of Perplexity that you are excited to work on?",
+        "Tell us about a project you are proud of and what you would do differently",
+    ]
+    assert answers.open_questions({}) == []

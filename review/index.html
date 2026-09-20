@@ -47,6 +47,8 @@
                   font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; padding: .3rem .6rem; }
   header .pstat::before { content: ""; width: 8px; height: 8px; background: currentColor; }
   header .pstat[data-on="1"] { border-color: var(--green); color: var(--green); }
+  header .pstat[data-on="2"] { border-color: var(--line); }
+  header .pstat span.on { color: var(--green); }
   header .tabs { display: flex; gap: 0; }
   header .tabs button { background: none; border: 1px solid var(--line); padding: .3rem .7rem;
                         color: var(--muted); font: inherit; cursor: pointer; text-transform: uppercase;
@@ -59,7 +61,7 @@
   .msg { max-width: 72ch; padding: .6rem .9rem; white-space: pre-wrap;
          line-height: 1.5; }
   .msg.user { align-self: flex-end; background: var(--ink); color: var(--bg); }
-  .msg.bot { align-self: flex-start; background: var(--panel); border: 2px solid var(--line); }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 2px solid var(--purple); }
   .msg.bot.live::after { content: "▍"; color: var(--muted); animation: blink 1s steps(2) infinite; }
   @keyframes blink { to { visibility: hidden; } }
   .composer { display: flex; gap: .5rem; align-items: flex-end; position: sticky; bottom: 0;
@@ -78,41 +80,52 @@
   nav .cov .ok { color: var(--ok); }
   nav .cov .pend { color: var(--warn); }
   nav .cov .err { color: var(--stop); }
+  /* The preliminary interview: one question per screen. */
+  .qform { max-width: 60ch; padding: 1.2rem 1.4rem; }
+  .qform .sec { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600; }
+  .qform .q { font-size: 1.1rem; font-weight: 700; margin: .5rem 0 .3rem; line-height: 1.35; }
+  .qform input[type=text] { width: 100%; padding: .6rem; border: 2px solid var(--line); background: var(--bg);
+                            color: inherit; font: inherit; }
+  .qform input[type=text]:focus, .qform select:focus { outline: none; border-color: var(--ink); }
+  .qform .prog { height: 6px; background: var(--line); margin: 0 0 1rem; }
+  .qform .prog i { display: block; height: 100%; background: var(--purple); }
+  .qform .choices { display: flex; flex-wrap: wrap; gap: .5rem; margin: .4rem 0; }
+  .qform .choices button.act[aria-pressed=true] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .qform .prot { color: var(--muted); font-size: 12px; margin: .3rem 0 0; }
+  table.kv { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.kv td { padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.kv td:first-child { color: var(--muted); width: 40%; }
+  table.kv td.empty { color: var(--muted); font-style: italic; }
   .doc { padding: .5rem 1rem; line-height: 1.55; max-width: 80ch; }
   .doc h1 { font-size: 1.15rem; margin: .6rem 0; }
   .doc h2 { font-size: .95rem; margin: 1rem 0 .3rem; }
   .doc pre { white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; background: var(--bg);
              padding: .6rem; border: 1px solid var(--line); }
-  /* The orb: the voice of the interview. Floats over the chat. A clear
-     lens drawn as SVG: the outline is a soft body (see the Bubble module)
-     that ripples with the audio at constant area, the rim is a dark edge
-     with one specular arc and a chromatic fringe, and the colour lives in
-     blurred spots inside. No fill to speak of: the page shows through. */
+  /* The orb: the voice of the interview. Floats over the chat. A flat ring
+     in the page's own ink: page-colour fill, ink stroke, hard offset shadow
+     like the decision button. The outline is a soft body (see the Bubble
+     module) that ripples with the audio. One flat core inside carries the
+     state colour: green only while listening (you), purple while speaking
+     (agent), red when paused or broken. Thinking is an arc sweeping the
+     rim, pushing the wall out ahead of it. Nothing glows. */
   .orbwrap { position: fixed; right: 28px; bottom: 96px; z-index: 20; }
-  .orb { --level: 0; --size: 112px; width: var(--size); height: var(--size); position: relative; cursor: grab;
+  .orb { --level: 0; --size: 104px; --tone: var(--muted); width: var(--size); height: var(--size); position: relative; cursor: grab;
          display: grid; place-items: center; touch-action: none; }
   .orb:active { cursor: grabbing; }
-  .orb svg { position: absolute; inset: -20%; width: 140%; height: 140%; overflow: visible; }
-  .orb .lens { -webkit-backdrop-filter: blur(1.5px) saturate(1.3) brightness(1.04); backdrop-filter: blur(1.5px) saturate(1.3) brightness(1.04);
-               position: absolute; inset: 0; border-radius: 50%; }
-  .orb .spot { mix-blend-mode: screen; opacity: .4; transition: opacity .4s; }
-  .orb.idle .spot { opacity: .22; }
-  .orb.speaking .spot { opacity: calc(.75 * var(--flicker, 1)); transition: none; }
-  .orb.speaking .glow { opacity: calc((.45 + var(--level) * .6) * var(--flicker, 1)); transition: none; }
-  .orb.speaking #orbspec { opacity: calc(.7 + .3 * var(--flicker, 1)); }
-  .orb.speaking #orbsheenpath { opacity: calc(1.2 + var(--level)); }
-  .orb.thinking .spot { opacity: .6; }
-  .orb.thinking .glow { opacity: .35; }
-  .orb.listening .spot { opacity: calc(.5 * var(--flicker, 1)); transition: none; }
-  .orb.listening #orbspec { opacity: calc(.7 + .3 * var(--flicker, 1)); }
-  .orb.listening .glow { opacity: calc((.25 + var(--level) * .6) * var(--flicker, 1)); transition: none; }
-  .orb.paused .spot { opacity: .12; }
-  .orb .glow { opacity: 0; transition: opacity .3s; }
-  .orb.listening .glow, .orb.speaking .glow { opacity: calc(.25 + var(--level) * .6); }
-  .orb.error { filter: grayscale(.9); }
-  .orb .orblabel { position: relative; z-index: 1; color: var(--ink); font-weight: 600; font-size: .8rem; letter-spacing: .02em;
-                   text-shadow: 0 1px 2px rgba(255, 255, 255, .5); user-select: none; }
-  @media (prefers-color-scheme: dark) { .orb .orblabel { text-shadow: 0 1px 3px rgba(0, 0, 0, .7); } }
+  .orb svg { position: absolute; inset: -14%; width: 128%; height: 128%; overflow: visible; }
+  .orb .shadow { fill: var(--ink); transition: opacity .2s; }
+  .orb .ring { fill: var(--bg); stroke: var(--ink); stroke-width: 3; }
+  .orb .core { fill: var(--tone); transition: fill .3s; }
+  .orb .arc { fill: none; stroke: var(--ink); stroke-width: 4; }
+  .orb.listening { --tone: var(--green); }
+  .orb.speaking { --tone: var(--purple); }
+  .orb.thinking { --tone: var(--ink); }
+  .orb.paused, .orb.error { --tone: var(--red); }
+  .orb.paused .ring { stroke: var(--red); stroke-dasharray: 6 4; }
+  .orb.paused .shadow { opacity: 0; }
+  .orb.error .ring { stroke: var(--red); }
+  .orb .orblabel { position: relative; z-index: 1; color: var(--tone); font-weight: 600; font-size: 10px;
+                   letter-spacing: .1em; text-transform: uppercase; user-select: none; }
   .doctabs { display: flex; gap: .25rem; margin: .8rem 0; }
   .doctabs button[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
   main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 47px); }
@@ -168,7 +181,7 @@
 
   /* Detail: washed in the job's colour. Green means the floating button at
      the bottom right is what happens next. */
-  section.detail { padding: 1.2rem 16px 8rem; position: relative; }
+  section.detail { padding: 1.2rem 16px 8rem; position: relative; min-width: 0; overflow-x: hidden; }
   section.detail.you   { background: linear-gradient(var(--green-wash), var(--green-wash)), var(--bg); }
   section.detail.agent { background: linear-gradient(var(--purple-soft), var(--purple-soft)), var(--bg); }
   .head { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: baseline; margin-bottom: .8rem; }
@@ -202,6 +215,9 @@
 
   /* The floating decision. Big, bottom right, only on jobs waiting on you. */
   .fab { position: fixed; right: 20px; bottom: 20px; z-index: 10; display: flex; gap: .6rem; align-items: center; }
+  /* With a note box, the bar stacks: the box above the decision. */
+  .fab:has(.ask) { flex-direction: column; align-items: flex-end; }
+  .fab .decide { display: flex; gap: .6rem; align-items: center; }
   .fab button { font: inherit; cursor: pointer; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
   .fab .big { font-size: 18px; background: var(--green); color: #fff; border: 3px solid var(--ink);
               padding: 1.05rem 1.9rem; box-shadow: 6px 6px 0 var(--ink); }
@@ -209,11 +225,27 @@
   .fab .small { font-size: 11px; background: var(--bg); color: var(--ink); border: 2px solid var(--ink); padding: .7rem 1rem; }
   .fab .small.danger { color: var(--red); border-color: var(--red); }
   .fab button:disabled { opacity: .45; cursor: not-allowed; }
+  /* The note box: a slot until touched, then a proper box with its button. */
+  .fab .ask { display: flex; flex-direction: column; gap: .4rem; align-items: flex-end; align-self: stretch; }
+  .fab .ask textarea { width: 100%; min-width: 14rem; min-height: 0; height: 2.6rem; padding: .6rem .7rem; resize: none;
+    font-size: 12px; background: var(--bg); border: 2px solid var(--line); transition: width .15s, height .15s; }
+  .fab .ask .small { display: none; }
+  .fab .ask.open textarea { width: 26rem; max-width: calc(100vw - 40px); height: 8rem; border-color: var(--ink);
+    box-shadow: 4px 4px 0 var(--ink); }
+  .fab .ask.open .small { display: inline-block; }
+  h3 .views { float: right; display: inline-flex; gap: .25rem; }
+  h3 .views .view { font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer;
+    background: var(--bg); color: var(--muted); border: 2px solid var(--line); padding: .15rem .5rem; }
+  h3 .views .view.on { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 
-  /* The two PDFs side by side, first thing on the page. */
-  .docs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: .8rem 0 1.4rem; }
-  @media (max-width: 1100px) { .docs { grid-template-columns: 1fr; } }
-  .docs iframe { height: 78vh; margin: 0; }
+  /* The two PDFs stacked, resume first, first thing on the page. Side by
+     side each viewer was too narrow and scrolled sideways. */
+  .docs { display: grid; grid-template-columns: 1fr; gap: 1rem; margin: .8rem 0 1.4rem; min-width: 0; }
+  .docs > div { min-width: 0; }
+  /* A letter page, whole, no scrolling inside the viewer: the frame keeps the
+     page's shape and the viewer fits the page to it. */
+  .docs iframe { display: block; aspect-ratio: 8.5 / 11; height: auto; margin: 0 auto;
+                 width: min(100%, calc((100vh - 110px) * 8.5 / 11)); }
   .docs .card.letter { max-height: 78vh; overflow-y: auto; }
 
   h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
@@ -246,6 +278,15 @@
     background: var(--panel); color: inherit; font: inherit;
   }
   textarea { min-height: 4.5rem; resize: vertical; }
+  .asker { display: flex; flex-direction: column; gap: .6rem; }
+  .asker .qs { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .asker .qs .q { text-align: left; white-space: normal; max-width: 100%; }
+  .asker .row { display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; }
+  .asker .hint { color: var(--muted); font-size: 12px; }
+  .asker .answer { border-left: 3px solid var(--purple); padding: .4rem .8rem; }
+  .asker .answer .q { color: var(--muted); font-size: 12px; margin-bottom: .3rem; }
+  svg.logo { display: inline-block; vertical-align: -3px; overflow: visible; margin-right: 2px; }
+  .asker .answer .a { white-space: pre-wrap; line-height: 1.5; margin-bottom: .4rem; }
   .empty { color: var(--muted); padding: 2rem 0; max-width: 60ch; }
   .hint { color: var(--muted); font-size: 12px; }
 
@@ -291,7 +332,18 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let jobs = [];
-let current = null;
+// The job the URL names (the capture's "Open in autopilot" lands on
+// /#<id>); the first in flight otherwise.
+let current = location.hash.length > 1 ? location.hash.slice(1) : null;
+window.addEventListener("hashchange", () => {
+  const id = location.hash.slice(1);
+  if (id && id !== current && view === "jobs") show(id);
+});
+// The status the open detail was drawn with. The list polls every five
+// seconds; when the open job's status moves (a fill finishing, a pipeline
+// landing), the detail is redrawn, otherwise it is left alone so nothing
+// under the cursor jumps.
+let shownStatus = null;
 let reasons = [];
 
 const LABEL = {
@@ -341,6 +393,7 @@ let view = "jobs";
 try { view = localStorage.getItem("view") || "jobs"; } catch (_) {}
 // ?view=profile opens that tab directly (links, and headless checks).
 view = new URLSearchParams(location.search).get("view") || view;
+if (location.hash.length > 1) view = "jobs";
 
 function switchView(name) {
   view = name;
@@ -355,6 +408,9 @@ $("tabProfile").onclick = () => switchView("profile");
 async function loadList() {
   if (view !== "jobs") return;
   jobs = await api("/jobs");
+  const open = current && jobs.find((j) => j.id === current);
+  // Not drawn yet (the URL named it), or its status moved: draw it.
+  if (open && (!shownStatus || open.status !== shownStatus)) show(current);
   const waiting = jobs.filter((j) => BUCKET[j.status] === "you");
   const inflight = jobs.filter((j) => ["you", "agent"].includes(BUCKET[j.status]))
     .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
@@ -402,11 +458,21 @@ async function loadList() {
     };
   }
 
+  // The job open by default is the first in flight (the list's own order:
+  // needs you first, then the agent's), never one on a closed shelf. With
+  // nothing in flight the pane says so instead of showing the last
+  // submitted or rejected job.
   if (!jobs.length) {
     $("detail").innerHTML = `<p class="empty">Queue is empty. Right-click a posting in
       Chrome and choose “Add this job to autopilot”. Tailoring starts on its own.</p>`;
   } else if (!current || !jobs.some((j) => j.id === current)) {
-    show((waiting[0] || jobs[0]).id);
+    if (inflight.length) show(inflight[0].id);
+    else {
+      current = null; shownStatus = null;
+      $("detail").className = "detail";
+      $("detail").innerHTML = `<p class="empty">Nothing in flight. Everything here is submitted or rejected;
+        open one from the shelves, or add a job from Jobright.</p>`;
+    }
   }
 }
 
@@ -417,6 +483,7 @@ function reasonLabel(value) {
 async function show(id) {
   if (view !== "jobs") return;
   current = id;
+  shownStatus = (jobs.find((j) => j.id === id) || {}).status || null;
   for (const button of $("list").querySelectorAll(".row")) {
     button.setAttribute("aria-current", button.dataset.id === id);
   }
@@ -459,14 +526,19 @@ async function show(id) {
   // grace the restart button comes back, gated behind a confirm.
   const working = fillWorking(data);
 
-  // The two PDFs are the review. Side by side, first; the letter falls back
-  // to its text when the PDF did not compile.
+  // The two PDFs are the review. Stacked, resume first; the letter falls
+  // back to its text when the PDF did not compile.
+  const views = [["resume.pdf", "Resume"], ["resume_changes.pdf", "Changes"],
+                 ["resume_both.pdf", "Before and after"]]
+    .filter(([file]) => data.artifacts.includes(file));
   const resumeDoc = data.artifacts.includes("resume.pdf")
-    ? `<div><h3>Tailored resume</h3>
-        <iframe src="/review/${id}/file/resume.pdf" title="Tailored resume"></iframe></div>` : "";
+    ? `<div><h3>Tailored resume
+        ${views.length > 1 ? `<span class="views">${views.map(([file, label], i) =>
+          `<button class="view${i ? "" : " on"}" data-file="${file}">${label}</button>`).join("")}</span>` : ""}</h3>
+        <iframe id="resumeView" src="/review/${id}/file/resume.pdf#toolbar=0&navpanes=0&view=Fit" title="Tailored resume"></iframe></div>` : "";
   const letterDoc = data.artifacts.includes("cover_letter.pdf")
     ? `<div><h3>Cover letter</h3>
-        <iframe src="/review/${id}/file/cover_letter.pdf" title="Cover letter"></iframe></div>`
+        <iframe src="/review/${id}/file/cover_letter.pdf#toolbar=0&navpanes=0&view=Fit" title="Cover letter"></iframe></div>`
     : data.cover_letter
       ? `<div><h3>Cover letter</h3><div class="card prose letter">${letter(data.cover_letter)}</div></div>`
       : data.cover_letter_error
@@ -499,15 +571,22 @@ async function show(id) {
     ${resumeDoc || letterDoc ? `<div class="docs">${resumeDoc}${letterDoc}</div>` : ""}
 
     ${data.suggestions ? `<h3>What changed, and why</h3>
-      <div class="card prose">${markdown(data.suggestions)}</div>` : ""}
-
-    ${data.diff ? `<h3>Diff against your master resume</h3>
-      <div class="card diff">${renderDiff(data.diff)}</div>` : ""}
+      <div class="card prose">${markdown(rationale(data.suggestions))}</div>` : ""}
 
     ${data.fill_notes ? `<h3>What the browser did</h3>
       <div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
 
-    ${data.answers ? `<h3>Free-form answers typed into the form</h3>
+    ${data.status !== "queued" && data.status !== "tailoring" ? `<h3>Ask for an answer</h3>
+      <div class="card asker">
+        ${data.questions && data.questions.length ? `<div class="hint">Still empty on the form, tap one:</div>
+          <div class="qs">${data.questions.map((q) => `<button class="act small q">${escape(q)}</button>`).join("")}</div>` : ""}
+        <textarea id="askQ" placeholder="Paste a question from the form, e.g. What are the most interesting aspects of the company that you are excited to work on?"></textarea>
+        <div class="row"><button class="act primary" id="askGo">Answer it</button>
+          <span class="hint" id="askNote">From the posting, the tailored resume, the letter and your profile. You paste it in.</span></div>
+        <div id="askOut"></div>
+      </div>` : ""}
+
+    ${data.answers ? `<h3>${logo()} Free-form answers, written by the assistant</h3>
       <div class="card prose">${markdown(data.answers)}</div>` : ""}
 
     ${data.stories_used && data.stories_used.length ? `<h3>Stories the tailor read</h3>
@@ -516,13 +595,6 @@ async function show(id) {
     ${data.artifacts.includes("fill_screenshot.png") ? `<h3>The filled form</h3>
       <img class="shot" src="/review/${id}/file/fill_screenshot.png"
            alt="The filled application form">` : ""}
-
-    ${reviewable ? `<h3>Or ask for a change</h3>
-      <textarea id="instruction" placeholder="e.g. lead the summary with distributed systems, and put Project Hydra above the MCP server"></textarea>
-      <div class="actions">
-        <button class="act" id="revise">Re-tailor with this note</button>
-        <span class="hint">Writes a new version. This one is kept.</span>
-      </div>` : ""}
 
     ${data.artifacts.includes("posting.md") ? `
       <details>
@@ -547,8 +619,14 @@ async function show(id) {
 
     ${reviewable ? `
       <div class="fab">
-        <button class="small danger act" id="reject">Reject</button>
-        <button class="big act" id="approve">Approve</button>
+        <div class="ask">
+          <textarea id="instruction" rows="1" placeholder="Ask for a change…"></textarea>
+          <button class="small act" id="revise">Re-tailor</button>
+        </div>
+        <div class="decide">
+          <button class="small danger act" id="reject">Reject</button>
+          <button class="big act" id="approve">Approve</button>
+        </div>
       </div>` : ""}
     ${filled ? `
       <div class="fab">
@@ -562,7 +640,22 @@ async function show(id) {
   if ($("reject")) $("reject").onclick = () => openReject(id);
   if ($("submitted")) $("submitted").onclick = () => markSubmitted(id);
   if ($("revise")) $("revise").onclick = () => revise(id);
+  // The note box: one line until it is touched, then room to write, and
+  // the re-tailor button only once there is a note.
+  const ask = $("instruction");
+  if (ask) {
+    const box = ask.parentElement;
+    const grow = () => box.classList.toggle("open", document.activeElement === ask || !!ask.value.trim());
+    ask.onfocus = grow; ask.onblur = grow; ask.oninput = grow;
+  }
+  for (const button of document.querySelectorAll(".views .view")) {
+    button.onclick = () => {
+      document.querySelectorAll(".views .view").forEach((b) => b.classList.toggle("on", b === button));
+      $("resumeView").src = `/review/${id}/file/${button.dataset.file}#toolbar=0&navpanes=0&view=Fit`;
+    };
+  }
   if ($("fillNow")) $("fillNow").onclick = () => fillAgain(id);
+  if ($("askGo")) wireAsk(id);
   if (working) setTimeout(() => { if (current === id) show(id); }, working * 1000 + 200);
 
   if ($("posting")) {
@@ -578,8 +671,7 @@ async function show(id) {
 
 function head(job, data) {
   return `<div class="head">
-      <h2>${escape(job.title || "Untitled role")}</h2>
-      <span class="co">${escape(job.company || "")}</span>
+      <h2>${job.company ? `${escape(job.company)} — ` : ""}${escape(job.title || "Untitled role")}</h2>
       <a href="${escape(job.url)}" target="_blank" rel="noreferrer">open posting ↗</a>
     </div>`;
 }
@@ -657,6 +749,36 @@ function fillWorking(data) {
 
 // Gate one: the server refuses while a fill runs. Gate two: the human
 // confirms, and only then is the running fill killed and a new one started.
+// The question box: one answer per press, shown with a copy button and
+// kept in answers.md. Nothing here touches the form; the human types it.
+function wireAsk(id) {
+  const box = $("askQ"), go = $("askGo"), out = $("askOut"), note = $("askNote");
+  for (const b of document.querySelectorAll(".asker .q")) b.onclick = () => { box.value = b.textContent; box.focus(); };
+  const run = async () => {
+    const question = box.value.trim();
+    if (!question) return;
+    go.disabled = true; note.textContent = "Writing…";
+    try {
+      const r = await api(`/review/${id}/ask`, { method: "POST", body: JSON.stringify({ question }) });
+      const block = document.createElement("div");
+      block.className = "answer";
+      block.innerHTML = `<div class="q">${logo()} ${escape(r.question)}</div><div class="a">${escape(r.answer)}</div>
+        <button class="act small copy">Copy</button>`;
+      block.querySelector(".copy").onclick = async (e) => {
+        try { await navigator.clipboard.writeText(r.answer); e.target.textContent = "Copied"; }
+        catch { e.target.textContent = "Select and copy"; }
+      };
+      out.prepend(block);
+      note.textContent = `Kept on file (${r.model}).`;
+      box.value = "";
+    } catch (err) {
+      note.textContent = err.message || "Failed";
+    } finally { go.disabled = false; }
+  };
+  go.onclick = run;
+  box.onkeydown = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") run(); };
+}
+
 async function fillAgain(id) {
   await act(id, async () => {
     try {
@@ -675,12 +797,7 @@ async function fillAgain(id) {
 async function markSubmitted(id) {
   if (!confirm("Only confirm this after you submitted the form yourself.")) return;
   await act(id, async () => {
-    const result = await api(`/review/${id}/submitted`, { method: "POST", body: "{}" });
-    if (result.browser === "kept") {
-      const list = result.in_progress
-        .map((j) => `${j.title || j.id} — ${LABEL[j.status] || j.status}`).join("\n");
-      alert(`Application filling in progress, so the browser stays open:\n${list}`);
-    }
+    await api(`/review/${id}/submitted`, { method: "POST", body: "{}" });
   });
 }
 
@@ -724,19 +841,17 @@ async function act(id, work) {
   }
 }
 
-function renderDiff(diff) {
-  return diff.split("\n").map((line) => {
-    const cls = line.startsWith("+") && !line.startsWith("+++") ? "a"
-      : line.startsWith("-") && !line.startsWith("---") ? "d"
-      : line.startsWith("@@") || line.startsWith("---") || line.startsWith("+++") ? "h" : "";
-    return `<div class="${cls}">${escape(line) || "&nbsp;"}</div>`;
-  }).join("");
-}
 
 // The letter is plain paragraphs; line breaks inside one (the sign-off) stay.
 function letter(text) {
   return escape(text.trim()).split(/\n{2,}/)
     .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+}
+
+// The rationale file starts with a title and a model line for the archive.
+// The page has its own heading, and the model is nobody's business here.
+function rationale(text) {
+  return text.replace(/^# .*\n/, "").replace(/^_Model:.*_\s*$/m, "").trim();
 }
 
 // Just enough markdown for the rationale blocks: headings, bullets, bold.
@@ -747,6 +862,14 @@ function markdown(text) {
     .replace(/^[-*]\s+(.+)$/gm, "<li>$1</li>")
     .replace(/(?:<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
     .replace(/\n{2,}/g, "<p>");
+}
+
+// The assistant's logo, small and still: the orb at rest (see Bubble),
+// the same mark the fill leaves in front of every field it set.
+function logo() {
+  return `<svg class="logo" viewBox="-70 -70 140 140" width="16" height="16" aria-hidden="true">
+    <circle r="50" cx="7" cy="7" fill="var(--ink)"/><circle r="50" fill="var(--bg)" stroke="var(--ink)" stroke-width="7"/>
+    <circle r="14" fill="var(--purple)"/></svg>`;
 }
 
 function escape(value) {
@@ -765,11 +888,13 @@ async function loadProfileStat() {
   const stat = $("profileStat");
   try {
     const state = await api("/profile");
-    const written = (state.experiences || []).some((e) => e.documents && e.documents.length);
-    stat.dataset.on = written ? "1" : "0";
-    stat.textContent = written ? "Profile used for tailoring" : "Profile not set up yet";
-    stat.title = written ? "Your stories are read when tailoring. Open the Profile tab to add more."
-      : "Tailoring uses the resume alone until the interview writes a story.";
+    const stories = (state.experiences || []).some((e) => e.documents && e.documents.length);
+    const facts = !!state.has_facts;
+    stat.dataset.on = facts && stories ? "1" : facts || stories ? "2" : "0";
+    stat.innerHTML = `<span class="${facts ? "on" : ""}">Facts</span> · <span class="${stories ? "on" : ""}">Stories</span>`;
+    stat.title = `${facts ? "Facts on file: the screen and the form fill use them."
+                         : "No facts yet: the screen guesses from the resume."} ${
+                   stories ? "Stories on file: the tailor reads them." : "No stories yet: tailoring uses the resume alone."}`;
     stat.hidden = false;
   } catch (_) { stat.hidden = true; }
 }
@@ -789,12 +914,123 @@ setInterval(() => {
   }
 }, 5000);
 
+
+// ------------------------------------------------------- Preliminary form --
+// The fixed questions every application asks, one per screen, no model.
+// Writes base/form.json through /profile/form; the code filler reads it.
+const Form = (() => {
+  let data = null;      // GET /profile/form
+  let values = {};
+  let answers = {};
+  let step = 0;         // index into asked (questions with a key, not fixed)
+  let asked = [];
+
+  async function open() {
+    Profile.setViewing({ slug: "_form", name: "form.json" });
+    try { data = await api("/profile/form"); } catch (err) { $("detail").innerHTML = `<div class="banner stop">${escape(err.message)}</div>`; return; }
+    values = { ...data.values };
+    answers = { ...data.answers };
+    asked = data.questions.filter((q) => q.key && !q.fixed);
+    for (const q of asked) if (!values[q.key] && q.default) values[q.key] = q.default;
+    if (data.exists) summary(); else { step = 0; hints(); ask(); }
+  }
+
+  // Contact details the resume already carries, filled in where empty.
+  async function hints() {
+    try {
+      const { hints } = await api("/profile/form/hints");
+      for (const [k, v] of Object.entries(hints || {})) if (!values[k] && v) values[k] = v;
+      if ($("qinput") && !$("qinput").value && values[asked[step]?.key]) $("qinput").value = values[asked[step].key];
+    } catch (_) { /* hints are a convenience */ }
+  }
+
+  function sectionOf(q) {
+    let sec = "";
+    for (const item of data.questions) { if (item.section) sec = item.section; if (item === q) break; }
+    return sec;
+  }
+
+  function ask() {
+    const q = asked[step];
+    const value = values[q.key] || "";
+    const control = q.kind === "select"
+      ? `<select id="qinput"><option value="">—</option>${q.options.map((o) => `<option ${o === value ? "selected" : ""}>${escape(o)}</option>`).join("")}</select>`
+      : q.kind === "yesno"
+      ? `<div class="choices">${["Yes", "No"].map((o) => `<button class="act" data-choice="${o}" aria-pressed="${o === value}">${o}</button>`).join("")}</div>`
+      : `<input type="text" id="qinput" value="${escape(value)}" autocomplete="off">`;
+    $("detail").innerHTML = `
+      <div class="head"><h2>Preliminary interview</h2><span class="co">${step + 1} of ${asked.length} · Enter for next, blank to skip</span></div>
+      <div class="card qform">
+        <div class="prog"><i style="width:${Math.round(100 * step / asked.length)}%"></i></div>
+        <div class="sec">${escape(sectionOf(q))}</div>
+        <div class="q">${escape(q.ask)}</div>
+        ${control}
+        ${q.help ? `<div class="hint">${escape(q.help)}</div>` : ""}
+        ${q.protected ? `<div class="prot">Kept on file for you and the screen. The filler never answers this on a form; you do.</div>` : ""}
+        <div class="actions">
+          <button class="act" id="qBack" ${step ? "" : "disabled"}>← Back</button>
+          <button class="act primary" id="qNext">${step + 1 === asked.length ? "Finish" : "Next →"}</button>
+          <button class="act" id="qSkip">Skip</button>
+          <button class="act" id="qQuit">Save and stop</button>
+        </div>
+      </div>`;
+    const input = $("qinput");
+    if (input) { input.focus(); if (input.select) input.select(); }
+    const read = () => { if (input) values[q.key] = input.value.trim(); };
+    for (const b of $("detail").querySelectorAll("[data-choice]")) b.onclick = () => { values[q.key] = b.dataset.choice; next(); };
+    $("qNext").onclick = () => { read(); next(); };
+    $("qSkip").onclick = () => { values[q.key] = ""; next(); };
+    $("qBack").onclick = () => { read(); step--; ask(); };
+    $("qQuit").onclick = () => { read(); save(); };
+    if (input) input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); read(); next(); } };
+  }
+
+  function next() {
+    if (step + 1 < asked.length) { step++; ask(); } else save();
+  }
+
+  async function save() {
+    try {
+      data = await api("/profile/form", { method: "POST", body: JSON.stringify({ values, answers }) });
+      values = { ...data.values }; answers = { ...data.answers };
+      Profile.form = data;
+      summary();
+    } catch (err) { alert(err.message); }
+  }
+
+  function summary() {
+    const rows = data.questions.map((q) => q.section
+      ? `<tr><td colspan="2" class="sec" style="padding-top:.9rem">${escape(q.section)}</td></tr>`
+      : `<tr><td>${escape(q.ask)}</td><td class="${values[q.key] ? "" : "empty"}">${escape(values[q.key] || "not answered")}</td></tr>`).join("");
+    const learned = Object.entries(answers);
+    $("detail").innerHTML = `
+      <div class="head"><h2>Form details</h2><span class="co">${data.answered}/${data.total} on file · base/form.json</span></div>
+      <div class="actions">
+        <button class="act" id="qClose">← Back</button>
+        <button class="act primary" id="qRedo">Go through the questions</button>
+      </div>
+      <div class="card" style="padding:.6rem 1rem"><table class="kv">${rows}</table></div>
+      <h3 style="margin-top:1.4rem">Answers learned from your corrections · ${learned.length}</h3>
+      <p class="hint">A question exactly as a form showed it, and what you changed it to before submitting. Used before any guess next time. Delete a wrong one.</p>
+      <div class="card" style="padding:.6rem 1rem"><table class="kv" id="ansTable">
+        ${learned.map(([k, v]) => `<tr><td>${escape(k)}</td><td>${escape(v)} <button class="act" data-del="${escape(k)}" style="margin-left:.6rem">✕</button></td></tr>`).join("")
+          || `<tr><td class="empty" colspan="2">nothing yet — fill a form, fix what is wrong, submit</td></tr>`}
+      </table></div>`;
+    $("qClose").onclick = () => Profile.back();
+    $("qRedo").onclick = () => { step = 0; ask(); };
+    for (const b of $("detail").querySelectorAll("[data-del]")) b.onclick = () => { delete answers[b.dataset.del]; save(); };
+  }
+
+  return { open };
+})();
+
 // ---------------------------------------------------------------- Profile --
 // The interviewer. Text goes over SSE; voice is optional on both ends and
 // falls back to the browser's own speech APIs when the local binaries are
 // not there. The interview loop is the same either way.
 const Profile = (() => {
   let state = null;       // GET /profile
+  let form = null;        // GET /profile/form, for the nav line
   let voice = null;       // GET /voice/status
   let busy = false;       // a turn is streaming
   let viewing = null;     // {slug, name} when reading a document
@@ -829,6 +1065,7 @@ const Profile = (() => {
 
   async function refresh() {
     try { state = await api("/profile"); } catch (err) { state = { error: err.message }; }
+    try { form = await api("/profile/form"); } catch (_) { form = null; }
   }
   async function refreshVoice() {
     try { voice = await api("/voice/status"); } catch (_) { voice = null; }
@@ -860,7 +1097,18 @@ const Profile = (() => {
   function renderNav() {
     if (!state || !state.experiences) { $("list").innerHTML = ""; return; }
     const groups = [["role", "Roles"], ["project", "Projects"]];
-    let html = "";
+    const factsNote = state.has_facts ? "on file" : state.phase === "facts"
+      ? `asking · ${state.facts?.asked || 0}/${state.facts?.total || 0}` : "not yet";
+    const formNote = form ? (form.exists ? `${form.answered}/${form.total} on file` : "not yet") : "";
+    let html = `<div class="group">Facts</div>
+      <button data-facts="1" aria-current="${viewing?.slug === "_facts"}">
+        <div class="role">About you</div>
+        <div class="cov">${escape(factsNote)}</div>
+      </button>
+      <button data-form="1" aria-current="${viewing?.slug === "_form"}">
+        <div class="role">Form details</div>
+        <div class="cov">${escape(formNote)}</div>
+      </button>`;
     for (const [kind, heading] of groups) {
       const items = state.experiences.filter((e) => e.kind === kind);
       if (!items.length) continue;
@@ -872,9 +1120,11 @@ const Profile = (() => {
         </button>`).join("");
     }
     $("list").innerHTML = html;
-    for (const button of $("list").querySelectorAll("button")) {
+    for (const button of $("list").querySelectorAll("button[data-slug]")) {
       button.onclick = () => openDocument(button.dataset.slug, "main.md");
     }
+    $("list").querySelector("button[data-facts]").onclick = () => openFacts();
+    $("list").querySelector("button[data-form]").onclick = () => Form.open();
     $("count").textContent = state.experiences.length
       ? `${state.experiences.filter((e) => e.closed).length}/${state.experiences.length} experiences done`
       : "";
@@ -892,10 +1142,13 @@ const Profile = (() => {
   function renderStart() {
     $("detail").innerHTML = `
       <div class="head"><h2>Profile interview</h2></div>
-      <p>I read your resume and ask about each role and project, one at a time, the way
-      an interviewer would. What you tell me becomes one document per experience: the tailor
-      swaps in the right story for each posting, and you get a STAR write-up to reread before
-      interviews. Stop any time; the next question picks up where you left off.</p>
+      <p>I read your resume, then ask two things. First the facts it cannot tell me — work
+      authorisation, clearance, level, relocation, start date — eight short questions that
+      become the file the auto-reject screen and the form fill read. Then your stories: each
+      role and project, one at a time, the way an interviewer would. Those become one document
+      per experience; the tailor swaps in the right story for each posting, and you get a STAR
+      write-up to reread before interviews. Stop any time; the next question picks up where you
+      left off.</p>
       ${state.has_resume ? "" : `<div class="banner stop">No resume found. The interview starts from the resume.</div>`}
       <h3>Anything else to hand over (optional)</h3>
       <textarea id="seed" placeholder="Notes, an old resume, a project README… pasted here or picked below (PDF, text, markdown; several files are fine). Used once to find experiences, then discarded."></textarea>
@@ -906,7 +1159,10 @@ const Profile = (() => {
       </div>
       <div class="actions">
         <button class="act primary" id="startInterview" ${state.has_resume ? "" : "disabled"}>Start the interview</button>
+        <button class="act" id="startForm">Preliminary interview</button>
+        <span class="hint">Form details first: the fixed questions every application asks, click-through, no voice.</span>
       </div>`;
+    $("startForm").onclick = () => Form.open();
     // Files go to the server for text extraction (PDFs need pypdf); each
     // lands in the box under its own heading so the model knows what is what.
     $("seedFile").onchange = async (event) => {
@@ -944,11 +1200,16 @@ const Profile = (() => {
 
   function renderChat() {
     const title = state.phase === "open" ? "All experiences covered — tell me anything new"
-      : state.phase === "setup" ? "Before we start"
+      : state.phase === "setup" ? "Before the stories"
+      : state.phase === "facts" ? "About you"
       : (state.experiences.find((e) => e.slug === state.current) || {}).title || "Interview";
+    const sub = { facts: `facts · ${state.facts?.asked || 0}/${state.facts?.total || 0}`, setup: "checking the list",
+                  interviewing: "interviewing", open: "listening for updates" }[state.phase] || "";
     $("detail").innerHTML = `
       <div class="head"><h2>${escape(title)}</h2>
-        <span class="co">${escape({ setup: "checking the list", interviewing: "interviewing", open: "listening for updates" }[state.phase] || "")}</span></div>
+        <span class="co">${escape(sub)}</span>
+        ${state.phase === "facts" ? `<button class="act" id="skipFacts">Skip to the stories</button>` : ""}
+        <button class="act" id="openForm">Preliminary interview</button></div>
       <div class="voicebar" id="voicebar"></div>
       <div class="chat" id="chat">${state.transcript.map((m) =>
         `<div class="msg ${m.role === "user" ? "user" : "bot"}">${escape(m.content)}</div>`).join("")}</div>
@@ -957,7 +1218,9 @@ const Profile = (() => {
         <button class="act primary" id="send">Send</button>
       </div>
       ${orbHtml()}`;
+    $("openForm").onclick = () => Form.open();
     renderVoiceBar();
+    if ($("skipFacts")) $("skipFacts").onclick = () => skipFacts();
     $("send").onclick = () => send($("say").value);
     $("say").onkeydown = (event) => {
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send($("say").value); }
@@ -969,7 +1232,6 @@ const Profile = (() => {
   function orbHtml() {
     return `<div class="orbwrap" id="orbwrap">
       <div class="orb ${paused ? "paused" : "idle"}" id="orb" title="${paused ? "Tap to resume" : "Tap to pause"}">
-        <div class="lens" id="orblens"></div>
         ${Bubble.svg()}
         <span class="orblabel" id="orblabel">${paused ? "Paused" : ""}</span></div></div>`;
   }
@@ -1056,7 +1318,7 @@ const Profile = (() => {
       el.className = `orb ${stateName}`;
       el.title = stateName === "paused" ? "Tap to resume" : "Tap to pause";
       const label = $("orblabel");
-      if (label) label.textContent = stateName === "paused" ? "Paused" : "";
+      if (label) label.textContent = stateName === "paused" ? "Paused" : stateName === "error" ? "Error" : "";
     }
     if (level != null) el.style.setProperty("--level", Math.min(1, level).toFixed(2));
     Bubble.set(stateName || null, level);
@@ -1167,7 +1429,14 @@ const Profile = (() => {
       const heading = $("detail").querySelector(".head h2");
       const current = state.experiences.find((e) => e.slug === state.current);
       if (heading) heading.textContent = state.phase === "open" ? "All experiences covered — tell me anything new"
+        : state.phase === "setup" ? "Before the stories"
+        : state.phase === "facts" ? "About you"
         : current ? current.title : heading.textContent;
+      const sub = $("detail").querySelector(".head .co");
+      if (sub) sub.textContent = state.phase === "facts" ? `facts · ${state.facts?.asked || 0}/${state.facts?.total || 0}`
+        : { setup: "checking the list", interviewing: "interviewing", open: "listening for updates" }[state.phase] || "";
+      const skip = $("skipFacts");
+      if (skip && state.phase !== "facts") skip.remove();
       renderNav();
       if ($("send")) $("send").disabled = false;
       if (!live.classList.contains("stop") && !paused) {
@@ -1179,6 +1448,46 @@ const Profile = (() => {
   }
 
   function say(text) { const s = Voice.sentenceSpeaker(true); s.feed(text); s.flush(); }
+
+  async function openFacts() {
+    leave();
+    viewing = { slug: "_facts", name: "applicant.md" };
+    renderNav();
+    $("detail").innerHTML = `
+      <div class="head"><h2>About you</h2><span class="co">facts the screen and the form fill use</span></div>
+      <div class="actions">
+        <button class="act" id="backToChat">← Back to the interview</button>
+        ${state.phase === "new" ? "" : `<button class="act" id="redoFacts">${state.has_facts ? "Redo the facts" : "Answer the facts"}</button>`}
+      </div>
+      <div class="card doc" id="doc">${state.has_facts ? "loading…"
+        : "Not written yet. The facts questions come first in the interview; answer them and this file appears."}</div>`;
+    $("backToChat").onclick = () => { viewing = null; render(); };
+    if ($("redoFacts")) $("redoFacts").onclick = () => redoFacts();
+    if (state.has_facts) {
+      const text = await fetch("/profile/facts").then((r) => r.text());
+      if ($("doc") && viewing?.slug === "_facts") $("doc").innerHTML = docMarkdown(text);
+    }
+  }
+
+  async function redoFacts() {
+    try {
+      const result = await api("/profile/facts/restart", { method: "POST", body: "{}" });
+      state = result.status; viewing = null;
+      render();
+      listenNext = true;
+      say(result.message);
+    } catch (err) { alert(err.message); }
+  }
+
+  async function skipFacts() {
+    try {
+      const result = await api("/profile/facts/skip", { method: "POST", body: "{}" });
+      state = result.status;
+      render();
+      listenNext = true;
+      say(result.message);
+    } catch (err) { alert(err.message); }
+  }
 
   async function openDocument(slug, name) {
     leave();
@@ -1230,65 +1539,35 @@ const Profile = (() => {
   }
 
   return { open, leave, poll, send, orb, caption, speechDone, idle, get voice() { return voice; },
+           setViewing(v) { viewing = v; leave(); renderNav(); }, back() { viewing = null; refresh().then(render); },
+           set form(f) { form = f; renderNav(); },
            get paused() { return paused; } };
 })();
 
 // ----------------------------------------------------------------- Bubble --
-// The orb's shape and colour, as physics rather than keyframes. Sixteen
-// points on a ring, each a damped spring on its radius; the audio level
-// kicks random points outward (a gas pushed from inside), the springs pull
-// back, neighbours couple so a kick spreads as a ripple, and the offsets
-// are kept zero-mean so the ring itself stays a firm circle of radius R:
-// it ripples, it never grows or shrinks. The path is rebuilt each frame
-// and drives the rim, the clip for the colour spots, and the lens clip.
+// The orb's shape, as physics rather than keyframes. The outline is a
+// circle of radius R plus three standing-wave modes (two, three and four
+// lobes), each a damped spring on its amplitude. A kick from the audio
+// excites a mode at a random phase; the springs pull it back. Sums of low
+// modes are smooth by construction (no spikes, zero mean), and the total
+// amplitude is capped, so the ring reads as a firm circle that bounces
+// rather than a shape that changes. The path is rebuilt each frame and
+// drives the ring and its shadow. Thinking adds a bulge that follows the
+// sweeping arc: it spans the arc, peaks at the head, fades to the tail,
+// and blends into the circle at both ends.
 const Bubble = (() => {
-  // The outline is a circle of radius R plus three standing-wave modes
-  // (two, three and four lobes), each a damped spring on its amplitude.
-  // A kick from the audio excites a mode at a random phase; the springs
-  // pull it back. Sums of low modes are smooth by construction (no spikes,
-  // zero mean), and the total amplitude is capped, so the ring reads as a
-  // firm circle that bounces rather than a shape that changes.
-  const N = 24, R = 50, K = 0.06, DAMP = 0.9, MAX = 0.035;
+  const N = 48, R = 50, K = 0.06, DAMP = 0.9, MAX = 0.035;
   const modes = [2, 3, 4];
   const amp = new Float32Array(modes.length), vel = new Float32Array(modes.length), phase = new Float32Array(modes.length);
-  let el = null, state = "idle", level = 0, raf = 0, t = 0, flicker = 1;
-  const spots = [
-    { c: "#ff8fd0", a: 0.0, d: 26, r: 22 }, { c: "#9b8cff", a: 2.1, d: 28, r: 24 },
-    { c: "#78e8ff", a: 4.2, d: 24, r: 22 }, { c: "#ffd27a", a: 3.1, d: 32, r: 16 },
-  ];
+  // The thinking arc: length, radius, angular speed per frame, the bulge's
+  // peak (fraction of R) and the blend at its ends (radians).
+  const ARC = Math.PI * 0.55, ARC_R = 38, ARC_SPEED = 0.09, BULGE = 0.06, SOFT = 0.35;
+  let el = null, state = "idle", level = 0, raf = 0, head = 0;
   const svg = () => `<svg viewBox="-70 -70 140 140" aria-hidden="true">
-    <defs>
-      <clipPath id="orbclip"><path id="orbclippath" d=""/></clipPath>
-      <filter id="orbblur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9"/></filter>
-      <linearGradient id="orbrim" x1="0" y1="0" x2="0.4" y2="1">
-        <stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".22" stop-color="#fff" stop-opacity=".25"/>
-        <stop offset=".55" stop-color="#000" stop-opacity=".35"/><stop offset="1" stop-color="#000" stop-opacity=".6"/></linearGradient>
-      <linearGradient id="orbfringe" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#ff7ad9" stop-opacity=".0"/><stop offset=".3" stop-color="#ff7ad9" stop-opacity=".7"/>
-        <stop offset=".5" stop-color="#7ad9ff" stop-opacity=".7"/><stop offset=".7" stop-color="#b08cff" stop-opacity=".6"/>
-        <stop offset="1" stop-color="#ffd27a" stop-opacity=".0"/></linearGradient>
-      <linearGradient id="orbfringegreen" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#5ef0b0" stop-opacity=".0"/><stop offset=".3" stop-color="#9dffcf" stop-opacity=".8"/>
-        <stop offset=".6" stop-color="#5ef0b0" stop-opacity=".8"/><stop offset="1" stop-color="#5ef0b0" stop-opacity=".0"/></linearGradient>
-      <radialGradient id="orbglass" cx=".5" cy=".5" r=".5">
-        <stop offset="0" stop-color="#fff" stop-opacity=".0"/><stop offset=".72" stop-color="#fff" stop-opacity=".03"/>
-        <stop offset=".9" stop-color="#000" stop-opacity=".12"/><stop offset="1" stop-color="#000" stop-opacity=".4"/></radialGradient>
-      <radialGradient id="orbsheen" cx=".5" cy=".12" r=".55">
-        <stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".45" stop-color="#fff" stop-opacity=".06"/>
-        <stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
-      <radialGradient id="orbglowg" cx=".5" cy=".5" r=".5">
-        <stop offset=".6" stop-color="var(--orbglow, #8fb0ff)" stop-opacity=".45"/><stop offset="1" stop-color="var(--orbglow, #8fb0ff)" stop-opacity="0"/></radialGradient>
-    </defs>
-    <circle class="glow" id="orbglow" r="70" fill="url(#orbglowg)"/>
-    <g clip-path="url(#orbclip)">
-      <g filter="url(#orbblur)">${spots.map((s, i) => `<circle class="spot" id="orbspot${i}" r="${s.r}" fill="${s.c}"/>`).join("")}</g>
-      <path id="orbfill" d="" fill="url(#orbglass)"/>
-      <path id="orbsheenpath" d="" fill="url(#orbsheen)"/>
-    </g>
-    <path id="orbfringepath" d="" fill="none" stroke="url(#orbfringe)" stroke-width="1.6"/>
-    <path id="orbrimpath" d="" fill="none" stroke="url(#orbrim)" stroke-width="3.2"/>
-    <path id="orbspec" d="" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="2.4" stroke-linecap="round"/>
-    <path id="orbspec2" d="" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="1.4" stroke-linecap="round"/>
+    <path class="shadow" id="orbshadow" d="" transform="translate(5,5)"/>
+    <path class="ring" id="orbring" d=""/>
+    <circle class="core" id="orbcore" r="8"/>
+    <path class="arc" id="orbarc" d=""/>
   </svg>`;
 
   function attach(node) {
@@ -1311,14 +1590,26 @@ const Bubble = (() => {
   function set(name, lv) {
     if (name) state = name;
     if (lv != null) level = Math.min(1, lv);
-    if (el) el.style.setProperty("--orbglow", state === "listening" ? "#5ef0b0" : state === "speaking" ? "#ffb070" : "#8fb0ff");
+  }
+
+  const P = (x, y) => `${x.toFixed(2)},${y.toFixed(2)}`;
+  const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+  // The bulge under the arc: u runs 0 at the tail to 1 at the head, the
+  // profile is head-heavy, and SOFT radians past each end taper to zero.
+  function bulge(a) {
+    const d = wrap(a - head);
+    if (d < -SOFT || d > ARC + SOFT) return 0;
+    const shape = (u) => 1 - Math.pow(1 - u, 2.6);
+    const u = d / ARC;
+    if (u < 0) return BULGE * shape(0) * (1 + d / SOFT);
+    if (u > 1) return BULGE * shape(1) * (1 - (d - ARC) / SOFT);
+    return BULGE * shape(u);
   }
 
   function frame() {
     raf = 0;
     if (!el || !el.isConnected) { el = null; return; }
-    t += 1;
-    const live = state === "listening" || state === "speaking";
+    const live = state === "listening" || state === "speaking", thinking = state === "thinking";
     // Kicks: the level excites a mode now and then; idle gets a whisper
     // so it never looks frozen; paused gets nothing.
     if (state !== "paused") {
@@ -1333,51 +1624,29 @@ const Bubble = (() => {
       total += Math.abs(amp[m]);
     }
     if (total > MAX) for (let m = 0; m < modes.length; m++) amp[m] *= MAX / total;
+    if (thinking) head += ARC_SPEED;
     const pts = [];
     for (let i = 0; i < N; i++) {
       const a = (i / N) * Math.PI * 2;
-      let ripple = 0;
+      let ripple = thinking ? bulge(a) : 0;
       for (let m = 0; m < modes.length; m++) ripple += amp[m] * Math.cos(modes[m] * a + phase[m]);
       const rad = R * (1 + ripple);
       pts.push([Math.cos(a) * rad, Math.sin(a) * rad]);
     }
     const d = smooth(pts);
-    for (const id of ["orbclippath", "orbfill", "orbsheenpath", "orbrimpath", "orbfringepath"]) { const n = el.querySelector("#" + id); if (n) n.setAttribute("d", d); }
-    // Speculars: a bright arc upper left, a faint one lower right.
-    const spec = pts.slice(13, 19).map(([x, y]) => [x * 0.9, y * 0.9]);
-    el.querySelector("#orbspec")?.setAttribute("d", smooth(spec, false));
-    const spec2 = pts.slice(2, 6).map(([x, y]) => [x * 0.9, y * 0.9]);
-    el.querySelector("#orbspec2")?.setAttribute("d", smooth(spec2, false));
-    // Live states flicker like a candle (smoothed noise plus the level), so
-    // the light inside and the glow shimmer. Listening is green only; any
-    // other state has no green.
-    const listening = state === "listening";
-    el.querySelector("#orbfringepath")?.setAttribute("stroke", listening ? "url(#orbfringegreen)" : "url(#orbfringe)");
-    if (live) {
-      flicker = flicker * 0.7 + (0.5 + Math.random() * 0.5 + level * 0.4) * 0.3;
-      el.style.setProperty("--flicker", flicker.toFixed(2));
-    } else el.style.removeProperty("--flicker");
-    // The lens clip follows the outline (percent path is not available, so
-    // scale the SVG coordinates to the element box).
-    const lens = el.querySelector("#orblens");
-    if (lens) lens.style.clipPath = `path("${smooth(pts.map(([x, y]) => [(x + 50) * 1.12, (y + 50) * 1.12]))}")`;
-    // Colour spots drift slowly; when speaking two orbit and two trace a
-    // figure of eight through the middle, so the motion is not one wheel.
-    // Thinking: all four chase round the rim fast, one way, a spinner.
-    const speaking = state === "speaking", thinking = state === "thinking";
-    const spin = speaking ? t * 0.03 : thinking ? t * 0.11 : t * 0.006;
-    spots.forEach((s, i) => {
-      const n = el.querySelector("#orbspot" + i);
-      if (!n) return;
-      const a = thinking ? spin + (i / spots.length) * Math.PI * 2 : s.a + spin * (i % 2 ? -1 : 1);
-      const dist = thinking ? 30 : s.d * (listening ? 0.8 : 1);
-      let x = Math.cos(a) * dist, y = Math.sin(a) * dist;
-      if (speaking && i >= 2) { x = Math.cos(a) * dist * 1.1; y = Math.sin(a) * Math.cos(a) * dist * 1.1; if (i === 3) [x, y] = [y, x]; }
-      n.setAttribute("cx", x.toFixed(1));
-      n.setAttribute("cy", y.toFixed(1));
-      if (listening) n.setAttribute("fill", ["#5ef0b0", "#8ef5c8", "#3ddc97", "#bfffe0"][i]);
-      else n.setAttribute("fill", s.c);
-    });
+    el.querySelector("#orbring")?.setAttribute("d", d);
+    el.querySelector("#orbshadow")?.setAttribute("d", d);
+    // The core: a dot at rest, grows with the level while live, gone while
+    // the arc is doing the talking or the label is.
+    const r = thinking || state === "paused" || state === "error" ? 0 : live ? 10 + 26 * level : 8;
+    el.querySelector("#orbcore")?.setAttribute("r", r.toFixed(1));
+    const arc = el.querySelector("#orbarc");
+    if (arc) {
+      if (thinking) {
+        const a1 = head + ARC;
+        arc.setAttribute("d", `M${P(Math.cos(head) * ARC_R, Math.sin(head) * ARC_R)}A${ARC_R},${ARC_R} 0 0 1 ${P(Math.cos(a1) * ARC_R, Math.sin(a1) * ARC_R)}`);
+      } else arc.setAttribute("d", "");
+    }
     raf = requestAnimationFrame(frame);
   }
 
@@ -1385,13 +1654,11 @@ const Bubble = (() => {
   function smooth(pts, closed = true) {
     const n = pts.length;
     const at = (i) => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
-    let d = `M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`;
+    let d = `M${P(pts[0][0], pts[0][1])}`;
     const last = closed ? n : n - 1;
     for (let i = 0; i < last; i++) {
       const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
-      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
-      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
-      d += `C${c1[0].toFixed(2)},${c1[1].toFixed(2)} ${c2[0].toFixed(2)},${c2[1].toFixed(2)} ${p2[0].toFixed(2)},${p2[1].toFixed(2)}`;
+      d += `C${P(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)} ${P(p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)} ${P(p2[0], p2[1])}`;
     }
     return closed ? d + "Z" : d;
   }

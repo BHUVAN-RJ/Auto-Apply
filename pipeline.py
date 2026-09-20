@@ -18,11 +18,13 @@ from pathlib import Path
 from typing import Optional
 
 from archive import store
-from server import postings, queue
+from browser import autofill, chrome
+from server import postings, queue, runner, seen, settings
 from server import screen as screen_server
 from server.models import Job, Status
-from tailor import cover, fetch, profile, tailor
+from tailor import cover, fetch, profile, quality, tailor
 from tex import compile as texc
+from tex import mark
 
 ROOT = Path(__file__).resolve().parent
 
@@ -79,23 +81,49 @@ def retailor(job: Job, instruction: str) -> Path:
 
 
 def fetch_posting(job: Job) -> fetch.Posting:
-    """The posting text: fetched when the page has it, else what the browser saw.
+    """The posting text: the best of what the server fetched, what the
+    browser saw on the employer's page, and Jobright's copy.
 
     An Apply button can land on a bare application form, and an ATS page can
-    render client-side, so the fetch may come back with nothing worth
-    tailoring against. The browser kept the employer page's text and
-    Jobright's copy of the posting (server/postings.py); the first of those
-    with a real description stands in.
+    render client-side, so the fetch may come back with a page that clears
+    the length gate on cookie notices and field labels alone. Each copy is
+    scored on what a description is made of (`tailor.quality`, no model);
+    the fetched page wins ties, being the posting itself, and loses when
+    it has clearly less than the best copy. Which one won is written into
+    the posting's header.
     """
+    candidates: list[tuple[str, fetch.Posting]] = []
+    fetched: fetch.Posting | None = None
+    error: Exception | None = None
     try:
-        return fetch.fetch(job.url)
-    except Exception as error:
-        for saved in postings.fallbacks(job.id, job.url):
-            if len(saved.text) >= fetch.MIN_USEFUL_CHARS:
-                print(f"fetch failed ({error}); using the text the browser saw at {saved.url}")
-                return fetch.Posting(url=job.url, text=saved.text, title=saved.title,
-                                     company=saved.company)
-        raise
+        fetched = fetch.fetch(job.url)
+        candidates.append(("employer page", fetched))
+    except Exception as exc:  # noqa: BLE001 - the fallbacks decide
+        error = exc
+    for saved in postings.fallbacks(job.id, job.url):
+        name = "Jobright's copy" if seen.is_source_page(saved.url) else "the page the browser saw"
+        candidates.append((name, fetch.Posting(url=job.url, text=saved.text, title=saved.title,
+                                               company=saved.company)))
+    if not candidates:
+        raise error or RuntimeError(f"no posting text for {job.url}")
+
+    scores = [(quality.score(p.text), i) for i, (_, p) in enumerate(candidates)]
+    top_score, top = max(scores, key=lambda item: (item[0], -item[1]))
+    if top_score == 0 and fetched is None:
+        raise error or RuntimeError(f"no posting text for {job.url}")
+    if fetched is not None and (top_score == 0 or scores[0][0] >= top_score * quality.GOOD_ENOUGH):
+        top = 0
+    name, posting = candidates[top]
+    if top != 0 or error is not None:
+        why = f"fetch failed ({error})" if error else f"fetched page scored {scores[0][0]} against {top_score}"
+        print(f"{why}; using {name} ({candidates[top][1].url})")
+    posting.text_source = name
+    # The fetched page may have no company; Jobright's copy usually does.
+    if not posting.company:
+        posting.company = next((p.company for _, p in candidates if p.company), "")
+    if not posting.title:
+        posting.title = next((p.title for _, p in candidates if p.title), "")
+    return posting
 
 
 def allocate(job: Job) -> Path:
@@ -124,9 +152,14 @@ def process(job: Job, extra_instruction: str = "") -> Path:
         raise
 
     # The posting is authoritative for company and title; the extension only
-    # guessed them from whatever metadata the page happened to expose.
-    if posting.company and not job.company:
-        job = queue.update(job.id, company=posting.company) or job
+    # guessed them from whatever metadata the page happened to expose, which
+    # on Jobright is "Job Recommendations | Jobright AI". Jobright's own copy
+    # of the posting names the role and employer best; the fetched page next.
+    src_title, src_company = postings.source_meta(job.url)
+    title = src_title or posting.title or job.title
+    company = job.company or src_company or posting.company
+    if (title, company) != (job.title, job.company):
+        job = queue.update(job.id, title=title, company=company) or job
 
     app_dir = allocate(job)
     store.write(app_dir, "posting.md", posting.to_markdown())
@@ -156,6 +189,7 @@ def process(job: Job, extra_instruction: str = "") -> Path:
         store.set_status(app_dir, Status.AWAITING_REVIEW, f"poor fit: {exc}")
         queue.update(job.id, status=Status.AWAITING_REVIEW)
         print(f"  flagged as a poor fit, waiting on you: {exc}")
+        tell_tab(job, "done", "Poor fit, says the model; decide on the review page")
         return app_dir
 
     store.write(app_dir, "resume.tex", result.tex)
@@ -176,6 +210,7 @@ def process(job: Job, extra_instruction: str = "") -> Path:
 
     pdf = texc.compile_pdf(app_dir / "resume.tex", app_dir / "resume.pdf")
     pages = texc.page_count(pdf)
+    write_marked(app_dir, base_tex.read_text(), result.tex)
     note = f"{pages} page(s)"
     if pages is not None and pages != target:
         note += f" — master is {target}; the page-count gate did not hold"
@@ -184,7 +219,63 @@ def process(job: Job, extra_instruction: str = "") -> Path:
 
     store.set_status(app_dir, Status.AWAITING_REVIEW, note)
     queue.update(job.id, status=Status.AWAITING_REVIEW)
+    if not auto_approve(app_dir, job):
+        tell_tab(job, "done", "Tailored; approve it on the review page")
     return app_dir
+
+
+def auto_approve(app_dir: Path, job: Job) -> bool:
+    """Checkpoint 1 without a click, when the job's auto-approve box (the
+    banner, at capture) or failing that the `auto_fill` switch says so, and
+    the screen did not reject. The clean verdict is what queued the job in
+    the first place, so the fill starts as soon as the documents exist and
+    the human decides once, on the filled form. Never for a poor-fit verdict
+    (that returns before this) or a `reject` screen. The fill itself still
+    stops at checkpoint 2; nothing submits."""
+    wanted = settings.auto_fill() if job.auto_fill is None else bool(job.auto_fill)
+    if not wanted:
+        return False
+    try:
+        verdict = json.loads((app_dir / "screen.json").read_text()).get("verdict")
+    except (OSError, ValueError):
+        verdict = None
+    if verdict == "reject":
+        tell_tab(job, "done", "The screen says reject; decide on the review page")
+        return False
+    store.set_status(app_dir, Status.APPROVED, "approved by autopilot: clean screen, tailored")
+    queue.update(job.id, status=Status.APPROVED)
+    pid = runner.start_fill(job.id)
+    if pid:
+        store.set_status(app_dir, Status.APPROVED, f"filling started (pid {pid})")
+        tell_tab(job, "working", "Tailored; the browser agent is taking over")
+        print(f"  approved by autopilot, fill started (pid {pid})")
+    else:
+        tell_tab(job, "done", "Tailored; start the fill on the review page")
+        print("  approved by autopilot; the fill did not start (autofill off or already running)")
+    return True
+
+
+def tell_tab(job: Job, state: str, note: str) -> None:
+    """Set the banner on the job's open tab, so the human sees the pipeline
+    working between Jobright's autofill and the browser agent. Advice only:
+    no tab, no browser, no harm."""
+    try:
+        autofill.notify_url(chrome.cdp_url(chrome.port()), job.url, state, note)
+    except Exception as error:  # noqa: BLE001 - the indicator is advice
+        print(f"  banner: {error}", file=sys.stderr)
+
+
+def write_marked(app_dir: Path, original: str, tailored: str) -> None:
+    """The tailored resume with its changes coloured, for the review page's
+    "changes" and "before and after" views. Derived from the source that
+    already compiled, so a failure here is a missing view, not a failed run."""
+    for mode in mark.MODES:
+        name = f"resume_{mode}"
+        try:
+            store.write(app_dir, f"{name}.tex", mark.mark(original, tailored, mode))
+            texc.compile_pdf(app_dir / f"{name}.tex", app_dir / f"{name}.pdf")
+        except Exception as error:  # noqa: BLE001 - a view, never the run
+            print(f"{name}: {error}")
 
 
 def write_screen(app_dir: Path, job: Job, posting) -> None:
@@ -253,6 +344,7 @@ def process_safely(job: Job) -> bool:
         if isinstance(exc, texc.CompileError) and exc.log:
             print(exc.tail(15), file=sys.stderr)
         queue.update(job.id, status=Status.FAILED, error=detail)
+        tell_tab(job, "error", f"Tailoring failed: {detail.splitlines()[0][:80]}")
         existing = queue.get(job.id)
         if existing and existing.app_dir:
             app_dir = Path(existing.app_dir)
