@@ -14,7 +14,11 @@ filler uses:
 
 `learn` diffs the two when the job is marked submitted: a value that is
 not empty and not what the agent left goes into `base/form.json` under
-`answers`, keyed by the question as the form showed it. Visa and
+`corrections`, keyed by the question as the form showed it, with what
+the form held before (Jobright's value, usually), the system, the
+control's id and name, and the date. The next fill on any of the three
+systems puts the corrected value over Jobright's by exact label
+(`Engine.apply_corrections`); the Profile tab shows the table. Visa and
 work-authorisation questions are never in either snapshot
 (`snapshot_of` drops them), so nothing about them is learned. Every
 failure here is a note, never an error: marking a job submitted must
@@ -28,7 +32,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from browser import chrome, forms, guard
+from browser import ats, chrome, forms, guard
 from browser.forms import profile as form_profile
 
 FILL_REPORT = "form_fill.json"
@@ -64,13 +68,14 @@ def capture(job_url: str, app_dir: Path) -> dict:
     if not forms.same_site(url, target, job_url):
         return {"captured": False, "reason": "tab has left the form"}
     try:
-        fields = asyncio.run(forms.snapshot(url, target))
+        look = asyncio.run(forms.snapshot(url, target, detail=True))
     except Exception as error:  # noqa: BLE001
         return {"captured": False, "reason": str(error)[:200]}
+    fields, meta = look.get("fields") or {}, look.get("meta") or {}
     if len(fields) < MIN_FIELDS:
         return {"captured": False, "reason": "no form on the page"}
     try:
-        (app_dir / FORM_STATE).write_text(json.dumps({"fields": fields, "target_id": target}, indent=1))
+        (app_dir / FORM_STATE).write_text(json.dumps({"fields": fields, "meta": meta, "target_id": target}, indent=1))
     except OSError as error:
         return {"captured": False, "reason": str(error)}
     return {"captured": True, "fields": len(fields)}
@@ -104,9 +109,12 @@ def learn(app_dir: Path, profile_path: Optional[Path] = None) -> dict:
     changes = diff(baseline, final)
     if not changes:
         return {"learned": 0, "reason": "nothing changed"}
-    written = form_profile.add_answers(changes, profile_path)
+    meta = state.get("meta") or report.get("after_agent_meta") or {}
+    system = str((report.get("report") or {}).get("ats") or "") or ats.detect(str(report.get("url") or ""))
+    written = form_profile.add_corrections(changes, profile_path, system=system, fields=meta,
+                                           job=app_dir.name, before=baseline)
     lines = ["# Corrections", "", "What was changed by hand before submitting; each is now in",
-             "`base/form.json` under `answers` and fills that question next time.", ""]
+             "`base/form.json` under `corrections` and goes over autofill on that field next time.", ""]
     for label, value in changes.items():
         before = str(baseline.get(label, "") or "").strip()
         lines.append(f"- **{label}**: {before!r} → {value!r}" if before else f"- **{label}**: {value!r}")

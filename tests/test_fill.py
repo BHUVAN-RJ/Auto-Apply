@@ -522,11 +522,18 @@ def test_without_the_agent_the_fill_is_the_documents_and_nothing_else(monkeypatc
                                             missing=["Salary question"])
     monkeypatch.setattr(fill.autofill, "reuse", reuse)
 
-    async def upload_documents(cdp_url, target_id, adapter, resume=None, cover_letter=None, answerer=None):
+    stores = []
+
+    async def upload_documents(cdp_url, target_id, adapter, resume=None, cover_letter=None, answerer=None,
+                               corrections=None):
+        stores.append(corrections)
         return fill.forms.Report(target_id=target_id, resume_uploaded=True, resume_name=resume.name,
                                  cover_letter_uploaded=cover_letter is not None,
-                                 answered=["Why us?"] if answerer else [])
+                                 answered=["Why us?"] if answerer else [],
+                                 corrected=["Location *"] if corrections is not None else [])
     monkeypatch.setattr(fill.forms, "upload_documents", upload_documents)
+    monkeypatch.setattr(fill.forms, "load_corrections",
+                        lambda: fill.forms.Profile({"corrections": {"Location": {"value": "LA", "was": "Delhi"}}}))
     shots, notified = [], []
 
     async def screenshot(cdp_url, target_id, path):
@@ -558,7 +565,10 @@ def test_without_the_agent_the_fill_is_the_documents_and_nothing_else(monkeypatc
     assert shots == ["TAB1"] and notified[-1] == "done"
     assert "resume: replaced" in result.notes and "Salary question" in result.notes
     assert "answered: Why us?" in result.notes
+    assert "corrected: Location *" in result.notes
     assert "no browser model ran" in result.notes
+    # The correction store went in with the documents, over Jobright's values.
+    assert stores and stores[0].answer("location") == "LA"
 
 
 def test_without_the_agent_a_missing_resume_upload_is_a_failed_fill(monkeypatch, tmp_path):
@@ -571,7 +581,8 @@ def test_without_the_agent_a_missing_resume_upload_is_a_failed_fill(monkeypatch,
         return fill.autofill.AutofillResult(target_id="TAB1", clicked=True, finished=True)
     monkeypatch.setattr(fill.autofill, "reuse", reuse)
 
-    async def upload_documents(cdp_url, target_id, adapter, resume=None, cover_letter=None, answerer=None):
+    async def upload_documents(cdp_url, target_id, adapter, resume=None, cover_letter=None, answerer=None,
+                               corrections=None):
         return fill.forms.Report(target_id=target_id, errors=["resume upload: no resume file input found"])
     monkeypatch.setattr(fill.forms, "upload_documents", upload_documents)
 

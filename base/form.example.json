@@ -29,9 +29,9 @@
   "race": "",
   "veteran": "",
   "disability": "",
-  "answers": {
-    "_comment": "Exact question label (case and punctuation ignored) to the answer. Fills radios, dropdowns and text. Grows from what you correct on the review page.",
-    "Are you willing to relocate?": "Yes",
-    "Do you have a Bachelor's degree?": "Yes"
+  "corrections": {
+    "_comment": "Exact question label (case and punctuation ignored) to what you set it to. Written by the correction loop when you fix a field before submitting; `was` is what the form held (Jobright's autofill, usually). On the next form that asks the same question the value goes over whatever autofill put there. Fills radios, dropdowns and text, never a textarea or a visa question. A plain string is accepted too.",
+    "Location": {"value": "Austin, Texas, United States", "was": "Delhi, India", "system": "greenhouse", "field": {"id": "location", "kind": "combobox"}, "when": "2026-09-20"},
+    "Are you willing to relocate?": "Yes"
   }
 }

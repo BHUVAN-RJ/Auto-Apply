@@ -78,7 +78,7 @@ job you ever considered.
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
 | `browser/` | `browser-use` fill loop driving your real Chrome profile |
-| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, and the Profile tab |
+| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, the Profile tab, and the Projects tab |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
@@ -100,7 +100,11 @@ checkpoint 1, browser fill, checkpoint 2. The on-page screen and the profile
 switch are built on top. The Profile tab holds the interviewer: it reads
 your resume, asks about each role and project the way an interviewer would,
 and writes one story per experience that the tailor, the cover letter, and
-the form answers draw on, plus a STAR write-up for you. Type, or switch to
+the form answers draw on, plus a STAR write-up for you. The Projects tab
+reads your public GitHub repositories, ranks them, and hands the ones you
+tick to the same interviewer with one to three questions each, only what
+the repository cannot say; the link on each is what a tailored resume
+hyperlinks. Type, or switch to
 voice mode and talk to the orb hands-free; speech runs on this machine
 (whisper.cpp in, Kokoro out) and the models download on first use. Ashby,
 Greenhouse and Lever forms are filled by code from the preliminary
@@ -113,7 +117,7 @@ SmartRecruiters, where Jobright's autofill is still step one. See
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 467 tests
+pytest                        # 525 tests
 ```
 
 ## Setup
@@ -259,13 +263,18 @@ voice, contact details prefilled from the resume. "How did you hear about
 us" is always "Other". The authorisation answers are kept for you and the
 screen; the filler never types them onto a form, that stays yours.
 
-**What you correct is learned.** The form as the agent left it is kept;
-while you check it the tab reports back, and when you mark the job
-submitted the difference — anything you filled in or changed — goes into
-`base/form.json` under `answers`, keyed by the question as the form showed
-it, and fills that question next time before any guess. The Form details
-page on the Profile tab lists them; delete a wrong one there. Visa
-questions are never recorded.
+**What you correct is corrected next time.** The form as autofill left
+it is kept; while you check it the tab reports back, and when you mark
+the job submitted the difference — anything you filled in or changed —
+goes into `base/form.json` under `corrections`, keyed by the question as
+the form showed it, with what the form had before, the system, and the
+control it was. On every next form that asks the same question the value
+you set goes over whatever Jobright's autofill put there (its location
+is wrong most of the time; fix it once). The Form details page on the
+Profile tab shows the table — field, what the form filled, what you
+corrected, where — and a delete on each row. Free-form answers are
+written per job and never carried over; visa questions are never
+recorded.
 
 If you would rather do it yourself, or the agent is slow: the banner on
 the form's page shows the tailored resume and cover letter as chips. Drag
@@ -448,8 +457,8 @@ tab-routing path, so they always leave the matching Autopilot job visible.
 ## Form details
 
 `base/form.json` (gitignored; template `base/form.example.json`) is what
-the code filler types: one key per field, and `answers`, the question
-label to the answer, grown from your corrections. Fill it in from the
+the code filler types: one key per field, and `corrections`, the question
+label to what you set it to, grown from what you fix before submitting. Fill it in from the
 Profile tab ("Preliminary interview" / "Form details") or by hand. Without
 it the code fill stands aside and Jobright's Autofill is pressed as before.
 
@@ -461,6 +470,22 @@ answers, and the screen are given `base/applicant.md` and every document in
 `base/stories/` (one per role or project, written by the Profile
 interview). Until then everything runs on the resume and `base/profile.md`
 alone. Clicking the label opens the Profile tab.
+
+## Projects from GitHub
+
+The Projects tab takes a GitHub handle and reads every public repository
+on it: the README, the file tree, the manifests, the heads of a few
+files, and how many commits are yours (forks and empty repositories are
+listed as skipped). Each gets a short write-up and one to three
+questions the repository cannot answer; the list is ranked, the best ten
+are ticked, and any repository that is a project on your resume is
+ticked too. Confirm, and the Profile interview asks those questions,
+folding a resume match into that project's story ("Resume name
+(repo-name)") and making the rest new ones. The link on each project is
+the repository unless you change it (a store listing, a live site); it
+is what the tailored resume links when it swaps that project in. Public
+repositories only; no token needed, though `AUTOPILOT_GITHUB_TOKEN`
+raises GitHub's hourly limit past about fifty repositories.
 
 ## Fit assessment
 

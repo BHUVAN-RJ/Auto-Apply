@@ -283,7 +283,26 @@ def overrun_report(original: str, tailored: str) -> str:
     )
 
 
-def _validate(original: str, tailored: str) -> list[str]:
+HREF = re.compile(r"\\href\{([^}]*)\}")
+LINK_LINE = re.compile(r"^Link:\s*(\S+)\s*$", re.M)
+
+
+def allowed_links(original: str, profile: str) -> set[str]:
+    """Every URL the tailored resume may hyperlink: the master's own, and
+    the Link line of each story in the profile context. A project swapped
+    in from a story carries its link; any other new URL is invented."""
+    return set(HREF.findall(original)) | set(LINK_LINE.findall(profile or ""))
+
+
+def _check_links(original: str, tailored: str, profile: str) -> None:
+    allowed = allowed_links(original, profile)
+    strange = [url for url in HREF.findall(tailored) if url not in allowed]
+    if strange:
+        raise TailorError("tailored resume links to a URL that is neither on the master "
+                          f"resume nor a story's Link line: {', '.join(sorted(set(strange)))}")
+
+
+def _validate(original: str, tailored: str, profile: str = "") -> list[str]:
     """Structural checks, cheapest first. Returns non-fatal warnings."""
     if not tailored.strip():
         raise TailorError("model returned an empty resume")
@@ -293,6 +312,7 @@ def _validate(original: str, tailored: str) -> list[str]:
         if command in original and command not in tailored:
             raise TailorError(f"tailored resume dropped {command}")
     _check_frozen_sections(original, tailored)
+    _check_links(original, tailored, profile)
     return _check_lengths(original, tailored)
 
 
@@ -395,7 +415,7 @@ def tailor(
                 continue
 
         try:
-            warnings = _validate(original, tailored)
+            warnings = _validate(original, tailored, profile)
         except TailorError as exc:
             last_error = str(exc)
             rejected.append({"attempt": attempt, "reason": last_error, "tex": tailored})

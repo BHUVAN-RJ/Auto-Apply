@@ -514,6 +514,7 @@ class Report:
     missing: list[dict] = field(default_factory=list)   # {"label", "kind", "required"}
     protected: list[str] = field(default_factory=list)
     answered: list[str] = field(default_factory=list)  # open questions written by the tailor model
+    corrected: list[str] = field(default_factory=list)  # fields set from the correction store, over autofill
     resume_uploaded: bool = False
     resume_name: str = ""
     cover_letter_uploaded: bool = False
@@ -534,6 +535,8 @@ class Report:
             parts.append("cover letter attached")
         if self.answered:
             parts.append(f"{len(self.answered)} question(s) answered")
+        if self.corrected:
+            parts.append(f"{len(self.corrected)} field(s) corrected")
         required = [m for m in self.missing if m.get("required")]
         parts.append(f"{len(self.missing)} left ({len(required)} required)")
         if self.protected:
@@ -739,35 +742,100 @@ class Engine:
             value = self.profile.get(key) if key else ""
         if not value:
             return
-        aliases = OPTION_ALIASES.get(key, [])
-        done = False
-        if f.kind in ("text", "textarea"):
-            if f.value.strip() == value:
-                done = True
-            else:
-                done = await self.call(SET_TEXT_FN, f.ref, value) == "ok"
-                # Lever's location box drops a scripted value on blur and
-                # keeps a typed one; the audit reads back what stuck.
-                if not done:
-                    done = await self.type_into(f, value)
-        elif f.kind == "select":
-            index = pick_option(f.options, value, aliases)
-            if index is not None:
-                option = f.options[index]
-                if guard.describes_submit(option.get("text", "")):
-                    return
-                done = await self.call(SET_SELECT_FN, f.ref, index) == "ok"
-        elif f.kind == "radio":
-            done = await self.choose_radio(f, value, aliases)
-        elif f.kind == "checkbox":
-            # Only an explicit answer ticks a box, and only "yes" does.
-            if _norm(value) in ("yes", "true", "on", "checked") and not f.value:
-                done = await self.call(CLICK_FN, f.ref) == "ok"
-        elif f.kind == "combobox":
-            done = await self.fill_combobox(f, value, aliases)
-        if done:
+        if await self.set_value(f, value, OPTION_ALIASES.get(key, [])):
             self.report.filled.append(f.question or key)
             await self.mark(f.ref, "from your profile")
+
+    async def set_value(self, f: Field, value: str, aliases: Optional[list[str]] = None) -> bool:
+        """Put `value` on the field the way its kind wants: the native
+        setter with real typing as fallback for text, an option by text
+        for a select, a click for a radio or a box, the menu for a
+        combobox. No option or radio is clicked when its label reads as
+        a submit. True when the value is on the field."""
+        aliases = aliases or []
+        if f.kind in ("text", "textarea"):
+            if f.value.strip() == value:
+                return True
+            done = await self.call(SET_TEXT_FN, f.ref, value) == "ok"
+            # Lever's location box drops a scripted value on blur and
+            # keeps a typed one; the audit reads back what stuck.
+            if not done:
+                done = await self.type_into(f, value)
+            return done
+        if f.kind == "select":
+            index = pick_option(f.options, value, aliases)
+            if index is None:
+                return False
+            option = f.options[index]
+            if guard.describes_submit(option.get("text", "")):
+                return False
+            return await self.call(SET_SELECT_FN, f.ref, index) == "ok"
+        if f.kind == "radio":
+            return await self.choose_radio(f, value, aliases)
+        if f.kind == "checkbox":
+            # Only an explicit answer ticks a box, and only "yes" does.
+            if _norm(value) in ("yes", "true", "on", "checked") and not f.value:
+                return await self.call(CLICK_FN, f.ref) == "ok"
+            return False
+        if f.kind == "combobox":
+            return await self.fill_combobox(f, value, aliases)
+        return False
+
+    # -- the corrections -----------------------------------------------------
+
+    def correctable(self, fields: list[Field]) -> list[tuple[Field, dict]]:
+        """Fields the correction store has a value for, by exact label:
+        the question or the label as the form shows it. A file slot is
+        never one, a visa question is never one, and a textarea is never
+        one either: free-form prose is written per job by the tailor
+        model, not carried from the last form. Radios come once per
+        group, so the group's question is what matches."""
+        found = []
+        seen: set[str] = set()
+        for f in fields:
+            if f.kind in ("file", "textarea") or f.protected():
+                continue
+            record = self.profile.correction(f.question) or self.profile.correction(f.label)
+            if not record:
+                continue
+            if f.kind == "radio":
+                if f.question in seen:
+                    continue
+                seen.add(f.question)
+            found.append((f, record))
+        return found
+
+    async def apply_corrections(self, fields: list[Field]) -> None:
+        """Every field the human corrected on an earlier form gets that
+        value now, over whatever Jobright's autofill left there. Jobright
+        puts the wrong city on the location field most of the time; once
+        the human has fixed it on one form, it is fixed on every form
+        that asks. A value already right is counted, not touched."""
+        for f, record in self.correctable(fields):
+            value = record["value"]
+            q = f.question or f.label
+            try:
+                if f.kind == "radio":
+                    done = await self.choose_radio_in_group(fields, f, value)
+                else:
+                    done = await self.set_value(f, value)
+            except Exception as error:  # noqa: BLE001 - one field never stops the rest
+                self.report.errors.append(f"correcting {q[:60]!r}: {error}")
+                continue
+            if done:
+                self.report.corrected.append(q)
+                was = str(record.get("was") or "")
+                await self.mark(f.ref, f"corrected: {value}" + (f" (autofill had {was})" if was else ""))
+            else:
+                self.report.errors.append(f"could not put the corrected value on {q[:60]!r}")
+
+    async def choose_radio_in_group(self, fields: list[Field], one: Field, value: str) -> bool:
+        """The option of `one`'s group whose own label matches `value`."""
+        for other in fields:
+            if other.kind == "radio" and other.question == one.question:
+                if await self.choose_radio(other, value, []):
+                    return True
+        return False
 
     async def mark(self, ref: str, note: str) -> None:
         """The purple dot in front of a field we set. Never fails a fill."""
@@ -1076,9 +1144,26 @@ def same_site(cdp_url: str, target_id: str, url: str) -> bool:
     return False
 
 
-async def snapshot(cdp_url: str, target_id: str) -> dict:
+def identifiers_of(fields: list[Field]) -> dict:
+    """What identifies each field beyond its label, keyed the way
+    `snapshot_of` keys the values: the control's id and name, its kind,
+    the tag. Kept next to a correction so the row on the page says which
+    control on which system it was, not only the words over it."""
+    out: dict = {}
+    for f in fields:
+        q = f.question
+        if not q or f.protected() or q in out:
+            continue
+        out[q] = {k: v for k, v in (("id", f.id), ("name", f.name), ("kind", f.kind),
+                                    ("tag", f.tag), ("type", f.type)) if v}
+    return out
+
+
+async def snapshot(cdp_url: str, target_id: str, detail: bool = False) -> dict:
     """The form in an existing tab, question -> value. Attaches to the
-    tab, scans, detaches; nothing is touched. Empty when the tab is gone."""
+    tab, scans, detaches; nothing is touched. Empty when the tab is gone.
+    With `detail`, `{"fields": question -> value, "meta": question ->
+    identifiers}` instead."""
     import json as _json
     import urllib.request
     from itertools import count
@@ -1096,7 +1181,10 @@ async def snapshot(cdp_url: str, target_id: str) -> dict:
         await page.send("Runtime.enable")
         try:
             raw = await page.evaluate(SCAN_JS) or []
-            return snapshot_of([Field.from_scan(r) for r in raw if isinstance(r, dict)])
+            fields = [Field.from_scan(r) for r in raw if isinstance(r, dict)]
+            if detail:
+                return {"fields": snapshot_of(fields), "meta": identifiers_of(fields)}
+            return snapshot_of(fields)
         finally:
             try:
                 await _send(socket, "Target.detachFromTarget", {"sessionId": page.session_id}, None, ids)
@@ -1123,14 +1211,18 @@ async def fill(cdp_url: str, url: str, adapter: Adapter, profile: Profile,
 
 async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
                         resume: Optional[Path] = None, cover_letter: Optional[Path] = None,
-                        answerer=None) -> Report:
-    """The files and the open questions, on a form something else has
-    filled: the tailored resume over whatever Jobright attached, the cover
-    letter where there is a slot for one, then every empty free-form
-    question answered by the tailor model when an `answerer` is given. No
-    other field is touched. `attempted` stays False so the agent's task is
-    the Jobright one; the upload flags and `answered` are what change."""
-    engine = Engine(page, adapter, Profile({}), resume, cover_letter)
+                        answerer=None, corrections: Optional[Profile] = None) -> Report:
+    """The files, the corrections and the open questions, on a form
+    something else has filled: the tailored resume over whatever Jobright
+    attached, the cover letter where there is a slot for one, every field
+    the human corrected on an earlier form set to that value when a
+    `corrections` profile is given, then every free-form question answered
+    by the tailor model when an `answerer` is given. No other field is
+    touched. `attempted` stays False so the agent's task is the Jobright
+    one; the upload flags, `corrected` and `answered` are what change."""
+    # `Profile.__bool__` is its contact details; a store of corrections alone is
+    # falsy, so the test is on None, not truth.
+    engine = Engine(page, adapter, corrections if corrections is not None else Profile({}), resume, cover_letter)
     report = engine.report
     report.target_id = target_id
     report.note = "documents only"
@@ -1153,17 +1245,21 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
             except Exception as error:  # noqa: BLE001 - then the agent replaces it
                 report.errors.append(f"clearing the {what} slot: {error}")
     await engine.upload_files(fields)
+    # The uploads may have re-rendered the form; read it again.
+    fields = await engine.scan() or fields
+    if corrections is not None and corrections.corrections:
+        await engine.apply_corrections(fields)
+        fields = await engine.scan() or fields
     if answerer is not None:
-        # The uploads may have re-rendered the form; read it again.
-        await engine.answer_questions(await engine.scan() or fields, answerer)
+        await engine.answer_questions(fields, answerer)
     return report
 
 
 async def upload_documents(cdp_url: str, target_id: str, adapter: Adapter,
                            resume: Optional[Path] = None, cover_letter: Optional[Path] = None,
-                           answerer=None) -> Report:
+                           answerer=None, corrections: Optional[Profile] = None) -> Report:
     """`run_documents` in the tab `target_id`, attached over CDP. The tab
     stays open; the agent takes over in it afterwards."""
     async with attached(cdp_url, target_id=target_id) as (page, _):
         await page.send("DOM.enable")
-        return await run_documents(page, adapter, target_id, resume, cover_letter, answerer)
+        return await run_documents(page, adapter, target_id, resume, cover_letter, answerer, corrections)

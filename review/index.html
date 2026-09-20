@@ -76,8 +76,10 @@
   .voicebar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center;
               color: var(--muted); font-size: .82rem; margin: .4rem 0; }
   .voicebar progress { width: 120px; height: 8px; }
-  nav .cov { color: var(--muted); font-size: .78rem; font-family: ui-monospace, monospace; }
+  nav .cov { display: block; color: var(--muted); font-size: 11px; margin-top: .15rem;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   nav .cov .ok { color: var(--ok); }
+  .hint .ok { color: var(--green); }
   nav .cov .pend { color: var(--warn); }
   nav .cov .err { color: var(--stop); }
   /* The preliminary interview: one question per screen. */
@@ -96,6 +98,9 @@
   table.kv td { padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
   table.kv td:first-child { color: var(--muted); width: 40%; }
   table.kv td.empty { color: var(--muted); font-style: italic; }
+  table.kv.corr td:first-child { width: 28%; }
+  table.kv.corr tr.th td { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  table.kv.corr td.was { color: var(--red); text-decoration: line-through; }
   .doc { padding: .5rem 1rem; line-height: 1.55; max-width: 80ch; }
   .doc h1 { font-size: 1.15rem; margin: .6rem 0; }
   .doc h2 { font-size: .95rem; margin: 1rem 0 .3rem; }
@@ -305,6 +310,7 @@
   <div class="tabs" role="tablist">
     <button id="tabJobs" aria-current="true">Jobs</button>
     <button id="tabProfile" aria-current="false">Profile</button>
+    <button id="tabProjects" aria-current="false">Projects</button>
   </div>
   <span class="count" id="count"></span>
   <button class="pstat" id="profileStat" aria-current="false" hidden></button>
@@ -400,10 +406,15 @@ function switchView(name) {
   try { localStorage.setItem("view", name); } catch (_) {}
   $("tabJobs").setAttribute("aria-current", name === "jobs");
   $("tabProfile").setAttribute("aria-current", name === "profile");
-  if (name === "jobs") { Profile.leave(); loadList(); } else { Profile.open(); }
+  $("tabProjects").setAttribute("aria-current", name === "projects");
+  if (name !== "profile") Profile.leave();
+  if (name === "jobs") loadList();
+  else if (name === "profile") Profile.open();
+  else Projects.open();
 }
 $("tabJobs").onclick = () => switchView("jobs");
 $("tabProfile").onclick = () => switchView("profile");
+$("tabProjects").onclick = () => switchView("projects");
 
 async function loadList() {
   if (view !== "jobs") return;
@@ -910,10 +921,201 @@ api("/review/meta/reject-reasons")
 // or the page is hidden, so a decision in progress is not interrupted.
 setInterval(() => {
   if (!document.hidden && !$("rejectDialog").open) {
-    if (view === "jobs") { loadList(); loadProfileStat(); } else Profile.poll();
+    if (view === "jobs") { loadList(); loadProfileStat(); }
+    else if (view === "profile") Profile.poll();
+    else Projects.poll();
   }
 }, 5000);
 
+
+// ------------------------------------------------------------- Projects --
+// A GitHub handle in, the public repositories ranked, the ticked ones
+// handed to the interviewer. The scan runs on the server; this polls.
+const Projects = (() => {
+  let state = null;     // GET /projects
+  let viewing = null;   // repo name when reading one
+  let busy = false;
+  let started = true;   // the profile interview exists; the projects join it
+
+  async function open() {
+    viewing = null;
+    await refresh();
+    render();
+  }
+
+  async function refresh() {
+    try { state = await api("/projects"); } catch (err) { state = { phase: "error", error: err.message, repos: [], issues: [] }; }
+    try { started = (await api("/profile")).phase !== "new"; } catch (_) { started = true; }
+  }
+
+  async function poll() {
+    if (busy || view !== "projects" || !state) return;
+    const moving = state.phase === "scanning" || state.repos.some((r) => r.state === "listed" || r.state === "reading");
+    if (!moving) return;
+    await refresh();
+    render();
+  }
+
+  function render() {
+    renderNav();
+    if (!state) return;
+    if (viewing) return renderRepo();
+    if (state.phase === "new" || state.phase === "error" || !state.repos.length) return renderStart();
+    renderPicks();
+  }
+
+  function tone(r) {
+    if (r.slug) return "done";
+    if (r.state === "error") return "stop";
+    if (r.state === "reading" || r.state === "listed") return "agent";
+    return r.picked ? "you" : "done";
+  }
+
+  function note(r) {
+    if (r.slug) return '<span class="ok">in the interview</span>';
+    if (r.state === "error") return '<span class="err">not read</span>';
+    if (r.state === "reading") return '<span class="pend">reading…</span>';
+    if (r.state === "listed") return "queued";
+    return escape(r.summary || r.description || r.language || "");
+  }
+
+  function renderNav() {
+    const repos = state?.repos || [];
+    if (!repos.length) {
+      $("list").innerHTML = state?.handle ? `<div class="group">${escape(state.handle)}</div>` : "";
+      $("count").textContent = "";
+      return;
+    }
+    $("list").innerHTML = `<div class="group">${escape(state.handle)} <span class="n">${repos.length}</span></div>` +
+      repos.map((r) => `
+        <button class="row" data-name="${escape(r.name)}" data-tone="${tone(r)}" aria-current="${viewing === r.name}">
+          <span class="role">${r.rank ? `#${r.rank} ` : ""}${escape(r.name)}</span>
+          <span class="cov">${note(r)}</span>
+        </button>`).join("");
+    for (const button of $("list").querySelectorAll("button[data-name]")) {
+      button.onclick = () => { viewing = button.dataset.name; render(); };
+    }
+    const ready = repos.filter((r) => r.state === "ready").length;
+    $("count").textContent = state.phase === "scanning" ? `${ready}/${repos.length} read` : `${repos.length} repositories`;
+  }
+
+  function renderStart() {
+    $("detail").innerHTML = `
+      <div class="head"><h2>Projects from GitHub</h2></div>
+      <p>Give me a GitHub handle and I read every public repository on it: the README, the
+      file tree, the manifests, the heads of a few files, and how many commits are yours.
+      Each one gets a short write-up, the list is ranked, and the best ten are ticked. Confirm
+      the ticks and the interviewer asks one to three questions per project, only what GitHub
+      cannot tell. A repository whose name matches a project on the resume becomes that project.
+      The link on each one is what the resume hyperlinks; change it here when the store listing
+      or a live site is the better address.</p>
+      ${state.error ? `<div class="banner stop">${escape(state.error)}</div>` : ""}
+      <div class="actions">
+        <textarea id="handle" rows="1" style="min-height:2.6rem;max-width:22rem" placeholder="github handle">${escape(state.handle || "")}</textarea>
+        <button class="act primary" id="scan">Read the repositories</button>
+        <span class="hint">Public repositories only. Around a minute per ten.</span>
+      </div>`;
+    $("scan").onclick = () => scan();
+    $("handle").onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); scan(); } };
+  }
+
+  async function scan() {
+    const handle = $("handle").value.trim();
+    if (!handle) return;
+    busy = true;
+    try {
+      state = await api("/projects/scan", { method: "POST", body: JSON.stringify({ handle }) });
+      render();
+    } catch (err) { alert(err.message); }
+    busy = false;
+  }
+
+  function renderPicks() {
+    const repos = state.repos;
+    const scanning = state.phase === "scanning";
+    const ready = repos.filter((r) => r.state === "ready").length;
+    const ticked = repos.filter((r) => r.picked && !r.slug);
+    const added = repos.filter((r) => r.slug).length;
+    const confirmable = started && !scanning && ticked.length && ticked.every((r) => r.state === "ready");
+    $("detail").innerHTML = `
+      <div class="head"><h2>${escape(state.handle)}</h2>
+        <span class="co">${scanning ? `reading · ${ready}/${repos.length}` : `${repos.length} repositories · ${added} in the interview`}</span></div>
+      ${state.error ? `<div class="banner stop">${escape(state.error)}</div>` : ""}
+      ${scanning ? `<div class="banner warn">Reading the repositories, best first. Tick and untick while it runs; confirm once it is done.</div>` : ""}
+      ${started ? "" : `<div class="banner warn">Start the profile interview first (Profile tab); the projects join it.</div>`}
+      <p class="hint">The best ${state.auto_pick} are ticked: newest, most worked on, starred, documented. An old project
+      that matters still belongs here; tick it. Click a row on the left to read what was found and to change its link.</p>
+      <div class="card" style="padding:.4rem .8rem">${repos.map((r) => `
+        <label style="display:flex;gap:.7rem;align-items:baseline;padding:.35rem 0;border-bottom:1px solid var(--line)">
+          <input type="checkbox" data-pick="${escape(r.name)}" ${r.picked || r.slug ? "checked" : ""} ${r.slug || r.state === "error" ? "disabled" : ""}>
+          <span style="color:var(--muted);min-width:2.2rem">#${r.rank || "–"}</span>
+          <span style="flex:1;min-width:0">
+            <strong>${escape(r.name)}</strong>
+            <span class="hint" style="margin-left:.5rem">${r.language ? escape(r.language) + " · " : ""}${r.pushed_at ? "pushed " + escape(r.pushed_at.slice(0, 10)) : ""}${r.commits >= 0 ? " · " + r.commits + " commits" : ""}${r.stars ? " · ★" + r.stars : ""}</span>
+            <br><span class="hint">${r.on_resume ? `<span class="ok">on the resume as ${escape(r.on_resume)}</span> · ` : ""}${note(r)}</span>
+          </span>
+        </label>`).join("")}</div>
+      <div class="actions">
+        <button class="act primary" id="confirm" ${confirmable ? "" : "disabled"}>Add ${ticked.length} to the interview</button>
+        <button class="act" id="rescan" ${scanning ? "disabled" : ""}>Scan again</button>
+        <span class="hint">${added ? "The Profile tab asks about the added ones." : ""}</span>
+      </div>
+      ${state.issues?.length ? `<details><summary>Skipped · ${state.issues.length}</summary><ul>${state.issues.map((i) => `<li>${escape(i)}</li>`).join("")}</ul></details>` : ""}`;
+    for (const box of $("detail").querySelectorAll("input[data-pick]")) {
+      box.onchange = async () => {
+        try { state = await api(`/projects/${encodeURIComponent(box.dataset.pick)}/pick`, { method: "POST", body: JSON.stringify({ picked: box.checked }) }); }
+        catch (err) { alert(err.message); }
+        render();
+      };
+    }
+    $("confirm").onclick = async () => {
+      busy = true;
+      $("confirm").disabled = true; $("confirm").textContent = "Adding…";
+      try {
+        state = await api("/projects/confirm", { method: "POST", body: "{}" });
+        render();
+        if (confirm("Added. Open the Profile tab and answer their questions now?")) switchView("profile");
+      } catch (err) { alert(err.message); render(); }
+      busy = false;
+    };
+    $("rescan").onclick = () => { state = { ...state, phase: "new", repos: [] }; render(); };
+  }
+
+  async function renderRepo() {
+    const r = state.repos.find((x) => x.name === viewing);
+    if (!r) { viewing = null; return render(); }
+    $("detail").innerHTML = `
+      <div class="head"><h2>${escape(r.name)}</h2><span class="co">${r.rank ? `#${r.rank} · ` : ""}${escape(r.full_name)}</span></div>
+      <div class="actions">
+        <button class="act" id="back">← All repositories</button>
+        ${r.slug ? `<span class="hint">In the interview as <strong>${escape(r.slug)}</strong>.</span>` : ""}
+      </div>
+      ${r.error ? `<div class="banner stop">${escape(r.error)}</div>` : ""}
+      <h3>Link on the resume</h3>
+      <div class="actions">
+        <textarea id="link" rows="1" style="min-height:2.6rem;max-width:40rem">${escape(r.url)}</textarea>
+        <button class="act" id="saveLink">Save</button>
+        <a href="${escape(r.url)}" target="_blank" rel="noopener" class="hint">open ↗</a>
+      </div>
+      <p class="hint">The repository by default. A store listing or a live site works as well; whatever is here is what the tailored resume links.</p>
+      ${r.questions?.length ? `<h3>The interviewer will ask</h3><ul>${r.questions.map((q) => `<li>${escape(q)}</li>`).join("")}</ul>` : ""}
+      <h3>What was found</h3>
+      <div class="card doc" id="doc">${r.state === "ready" ? "loading…" : r.state === "error" ? "Not read." : "Not read yet."}</div>`;
+    $("back").onclick = () => { viewing = null; render(); };
+    $("saveLink").onclick = async () => {
+      try {
+        state = await api(`/projects/${encodeURIComponent(r.name)}/link`, { method: "POST", body: JSON.stringify({ link: $("link").value }) });
+        render();
+      } catch (err) { alert(err.message); }
+    };
+    if (r.state === "ready") {
+      const text = await fetch(`/projects/${encodeURIComponent(r.name)}/scaffold`).then((x) => x.text());
+      if ($("doc") && viewing === r.name) $("doc").innerHTML = Profile.docMarkdown(text);
+    }
+  }
+
+  return { open, poll };
+})();
 
 // ------------------------------------------------------- Preliminary form --
 // The fixed questions every application asks, one per screen, no model.
@@ -921,7 +1123,7 @@ setInterval(() => {
 const Form = (() => {
   let data = null;      // GET /profile/form
   let values = {};
-  let answers = {};
+  let corrections = {};  // label -> {value, was, system, field, when, job}
   let step = 0;         // index into asked (questions with a key, not fixed)
   let asked = [];
 
@@ -929,7 +1131,7 @@ const Form = (() => {
     Profile.setViewing({ slug: "_form", name: "form.json" });
     try { data = await api("/profile/form"); } catch (err) { $("detail").innerHTML = `<div class="banner stop">${escape(err.message)}</div>`; return; }
     values = { ...data.values };
-    answers = { ...data.answers };
+    corrections = { ...data.corrections };
     asked = data.questions.filter((q) => q.key && !q.fixed);
     for (const q of asked) if (!values[q.key] && q.default) values[q.key] = q.default;
     if (data.exists) summary(); else { step = 0; hints(); ask(); }
@@ -991,8 +1193,8 @@ const Form = (() => {
 
   async function save() {
     try {
-      data = await api("/profile/form", { method: "POST", body: JSON.stringify({ values, answers }) });
-      values = { ...data.values }; answers = { ...data.answers };
+      data = await api("/profile/form", { method: "POST", body: JSON.stringify({ values, corrections }) });
+      values = { ...data.values }; corrections = { ...data.corrections };
       Profile.form = data;
       summary();
     } catch (err) { alert(err.message); }
@@ -1002,7 +1204,8 @@ const Form = (() => {
     const rows = data.questions.map((q) => q.section
       ? `<tr><td colspan="2" class="sec" style="padding-top:.9rem">${escape(q.section)}</td></tr>`
       : `<tr><td>${escape(q.ask)}</td><td class="${values[q.key] ? "" : "empty"}">${escape(values[q.key] || "not answered")}</td></tr>`).join("");
-    const learned = Object.entries(answers);
+    // Newest first: the row that just landed is the one being checked.
+    const corrected = Object.entries(corrections).sort((a, b) => String(b[1].when || "").localeCompare(String(a[1].when || "")));
     $("detail").innerHTML = `
       <div class="head"><h2>Form details</h2><span class="co">${data.answered}/${data.total} on file · base/form.json</span></div>
       <div class="actions">
@@ -1010,15 +1213,28 @@ const Form = (() => {
         <button class="act primary" id="qRedo">Go through the questions</button>
       </div>
       <div class="card" style="padding:.6rem 1rem"><table class="kv">${rows}</table></div>
-      <h3 style="margin-top:1.4rem">Answers learned from your corrections · ${learned.length}</h3>
-      <p class="hint">A question exactly as a form showed it, and what you changed it to before submitting. Used before any guess next time. Delete a wrong one.</p>
-      <div class="card" style="padding:.6rem 1rem"><table class="kv" id="ansTable">
-        ${learned.map(([k, v]) => `<tr><td>${escape(k)}</td><td>${escape(v)} <button class="act" data-del="${escape(k)}" style="margin-left:.6rem">✕</button></td></tr>`).join("")
-          || `<tr><td class="empty" colspan="2">nothing yet — fill a form, fix what is wrong, submit</td></tr>`}
+      <h3 style="margin-top:1.4rem">Corrected fields · ${corrected.length}</h3>
+      <p class="hint">A field you changed on a form before submitting. On every next form that asks it, the value you set goes over what autofill put there. Delete a row to stop that.</p>
+      <div class="card" style="padding:.6rem 1rem"><table class="kv corr" id="corrTable">
+        ${corrected.length ? `<tr class="th"><td>Field</td><td>Form filled</td><td>You corrected</td><td>Where</td><td></td></tr>` : ""}
+        ${corrected.map(([k, r]) => `<tr>
+          <td title="${escape(fieldTitle(r))}">${escape(k)}</td>
+          <td class="${r.was ? "was" : "empty"}">${escape(r.was || "blank")}</td>
+          <td>${escape(r.value)}</td>
+          <td class="empty">${escape([r.system, r.when].filter(Boolean).join(" · ") || "—")}</td>
+          <td><button class="act" data-del="${escape(k)}">✕</button></td></tr>`).join("")
+          || `<tr><td class="empty" colspan="5">nothing yet — fill a form, fix what is wrong, submit</td></tr>`}
       </table></div>`;
     $("qClose").onclick = () => Profile.back();
     $("qRedo").onclick = () => { step = 0; ask(); };
-    for (const b of $("detail").querySelectorAll("[data-del]")) b.onclick = () => { delete answers[b.dataset.del]; save(); };
+    for (const b of $("detail").querySelectorAll("[data-del]")) b.onclick = () => { delete corrections[b.dataset.del]; save(); };
+  }
+
+  // The control the correction was read off, for the hover: which input
+  // on which system, so two forms wording one question alike can be told apart.
+  function fieldTitle(r) {
+    const f = r.field || {};
+    return [f.kind, f.id && `#${f.id}`, f.name && `name=${f.name}`, r.job && `from ${r.job}`].filter(Boolean).join(" ");
   }
 
   return { open };
@@ -1101,22 +1317,23 @@ const Profile = (() => {
       ? `asking · ${state.facts?.asked || 0}/${state.facts?.total || 0}` : "not yet";
     const formNote = form ? (form.exists ? `${form.answered}/${form.total} on file` : "not yet") : "";
     let html = `<div class="group">Facts</div>
-      <button data-facts="1" aria-current="${viewing?.slug === "_facts"}">
-        <div class="role">About you</div>
-        <div class="cov">${escape(factsNote)}</div>
+      <button class="row" data-facts="1" data-tone="${state.has_facts ? "done" : "you"}" aria-current="${viewing?.slug === "_facts"}">
+        <span class="role">About you</span>
+        <span class="cov">${escape(factsNote)}</span>
       </button>
-      <button data-form="1" aria-current="${viewing?.slug === "_form"}">
-        <div class="role">Form details</div>
-        <div class="cov">${escape(formNote)}</div>
+      <button class="row" data-form="1" data-tone="${form?.exists ? "done" : "you"}" aria-current="${viewing?.slug === "_form"}">
+        <span class="role">Form details</span>
+        <span class="cov">${escape(formNote)}</span>
       </button>`;
     for (const [kind, heading] of groups) {
       const items = state.experiences.filter((e) => e.kind === kind);
       if (!items.length) continue;
       html += `<div class="group">${heading} · ${items.length}</div>`;
       html += items.map((e) => `
-        <button data-slug="${escape(e.slug)}" aria-current="${viewing ? viewing.slug === e.slug : e.slug === state.current}">
-          <div class="role">${escape(e.title)}</div>
-          <div class="cov">${coverage(e)}</div>
+        <button class="row" data-slug="${escape(e.slug)}" data-tone="${rowTone(e)}"
+                aria-current="${viewing ? viewing.slug === e.slug : e.slug === state.current}">
+          <span class="role">${escape(e.title)}</span>
+          <span class="cov">${coverage(e)}</span>
         </button>`).join("");
     }
     $("list").innerHTML = html;
@@ -1128,6 +1345,14 @@ const Profile = (() => {
     $("count").textContent = state.experiences.length
       ? `${state.experiences.filter((e) => e.closed).length}/${state.experiences.length} experiences done`
       : "";
+  }
+
+  // Row colour: purple while the agent writes, green when it is your turn
+  // (asking now, or not started), plain once the documents are on file.
+  function rowTone(e) {
+    if (e.children === "pending") return "agent";
+    if (e.closed) return "done";
+    return "you";
   }
 
   function coverage(e) {
@@ -1538,7 +1763,7 @@ const Profile = (() => {
       .replace(/\n{2,}/g, "<p>");
   }
 
-  return { open, leave, poll, send, orb, caption, speechDone, idle, get voice() { return voice; },
+  return { open, leave, poll, send, orb, caption, speechDone, idle, docMarkdown, get voice() { return voice; },
            setViewing(v) { viewing = v; leave(); renderNav(); }, back() { viewing = null; refresh().then(render); },
            set form(f) { form = f; renderNav(); },
            get paused() { return paused; } };

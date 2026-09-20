@@ -99,8 +99,16 @@ class Experience:
     closed: bool = False
     children: str = "none"  # none | pending | ready | error
     children_error: str = ""
+    # A project that came from GitHub (tailor/github.py): the scaffold is
+    # its main document's spine, `questions` its whole checklist, `link`
+    # what the resume hyperlinks. Empty on experiences from the resume.
+    github: dict = field(default_factory=dict)
+    link: str = ""
+    questions: list[str] = field(default_factory=list)
 
     def lines(self, experienced: bool) -> list[str]:
+        if self.questions:
+            return [f"g{i}" for i in range(1, len(self.questions) + 1)]
         ids = [str(i) for i in range(1, 10)]
         if self.kind == "role":
             ids += list(ROLE_LINES)
@@ -110,6 +118,20 @@ class Experience:
 
     def uncovered(self, experienced: bool) -> list[str]:
         return [i for i in self.lines(experienced) if self.coverage.get(i) != "covered"]
+
+    def label(self, line: str) -> str:
+        if line.startswith("g") and self.questions:
+            return self.questions[int(line[1:]) - 1]
+        return CHECKLIST[line]
+
+    def max_questions(self) -> int:
+        # From GitHub: the listed questions and nothing more; the scaffold
+        # already holds what an interview would otherwise ask for.
+        return len(self.questions) if self.questions else MAX_QUESTIONS
+
+    def scaffold(self) -> str:
+        path = stories_dir() / self.slug / "scaffold.md"
+        return path.read_text() if path.exists() else ""
 
     def path(self) -> Path:
         return stories_dir() / self.slug / "state.json"
@@ -132,7 +154,8 @@ class Experience:
             "covered": sum(1 for i in lines if self.coverage.get(i) == "covered"),
             "total": len(lines), "asked": self.asked, "closed": self.closed,
             "children": self.children, "children_error": self.children_error,
-            "documents": [name for name in ("main.md", "tailor.md", "star.md")
+            "link": self.link, "github": self.github.get("full_name", ""),
+            "documents": [name for name in ("main.md", "tailor.md", "star.md", "scaffold.md")
                           if (stories_dir() / self.slug / name).exists()],
         }
 
@@ -181,7 +204,9 @@ def status() -> dict:
         except InterviewError:
             experiences.append({"slug": entry["slug"], "title": entry["title"], "kind": entry["kind"],
                                 "covered": 0, "total": 0, "asked": 0, "closed": False,
-                                "children": "none", "children_error": "", "documents": []})
+                                "children": "none", "children_error": "",
+                                "link": entry.get("link", ""), "github": (entry.get("github") or {}).get("full_name", ""),
+                                "documents": []})
     transcript = list(state.transcript)
     facts = facts_module.Facts.load()
     if state.phase == "facts":
@@ -205,7 +230,7 @@ def status() -> dict:
 
 
 def document(slug: str, name: str) -> str:
-    if name not in ("main.md", "tailor.md", "star.md"):
+    if name not in ("main.md", "tailor.md", "star.md", "scaffold.md"):
         raise InterviewError(f"not a story document: {name}")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
         raise InterviewError(f"bad slug: {slug}")
@@ -362,15 +387,33 @@ the whole document and nothing else."""
 
 
 def checklist_text(experience: Experience, experienced: bool) -> str:
-    return "\n".join(f"{i}. {CHECKLIST[i]}" for i in experience.lines(experienced))
+    return "\n".join(f"{i}. {experience.label(i)}" for i in experience.lines(experienced))
+
+
+GITHUB_NOTE = """
+## This project came from GitHub
+
+The scaffold below was read off the repository: what it does, how it is
+built, the stack, the dates. Do not ask about any of that. The checklist
+lines are the questions the repository could not answer; ask them in order,
+one per turn, as written or in your own plain words, and nothing else. When
+the last one is answered, DONE is yes."""
+
+
+def _entry_text(experience: Experience) -> str:
+    text = f"## Resume entry\n\n{experience.resume_entry or experience.title}"
+    scaffold = experience.scaffold()
+    if scaffold:
+        text += f"\n\n## From GitHub\n\n{scaffold}"
+    return text
 
 
 def system_prompt(experience: Experience, experienced: bool) -> str:
     return (
-        RULES.read_text() + REPLY_FORMAT
+        RULES.read_text() + REPLY_FORMAT + (GITHUB_NOTE if experience.questions else "")
         + f"\n\n## This experience\n\nTitle: {experience.title}\nKind: {experience.kind}\n"
         f"\nChecklist lines for it:\n\n{checklist_text(experience, experienced)}\n"
-        f"\nQuestions asked so far: {experience.asked} of {MAX_QUESTIONS}."
+        f"\nQuestions asked so far: {experience.asked} of {experience.max_questions()}."
         f"\nLines still uncovered: {', '.join(experience.uncovered(experienced)) or 'none'}."
     )
 
@@ -384,7 +427,7 @@ def _field(header: str, name: str) -> str:
 
 
 def _covered_ids(header: str, allowed: list[str]) -> list[str]:
-    return [i for i in re.findall(r"\d+", _field(header, "COVERED")) if i in allowed]
+    return [i for i in re.findall(r"g?\d+", _field(header, "COVERED")) if i in allowed]
 
 
 # ----------------------------------------------------------------- turns --
@@ -732,7 +775,9 @@ def _next_experience(state: State) -> Iterator[dict]:
         experience = Experience.load(slug)
     except InterviewError:
         experience = Experience(slug=slug, title=entry["title"], kind=entry["kind"],
-                                resume_entry=entry.get("resume_entry", ""))
+                                resume_entry=entry.get("resume_entry", ""),
+                                github=entry.get("github") or {}, link=entry.get("link", ""),
+                                questions=list(entry.get("questions") or []))
         experience.save()
     state.current = slug
     state.save()
@@ -744,8 +789,11 @@ def _next_experience(state: State) -> Iterator[dict]:
 
 def _ask(state: State, experience: Experience) -> Iterator[dict]:
     """Stream the next question for the current experience and record it."""
-    entry = f"## Resume entry\n\n{experience.resume_entry or experience.title}"
-    if not experience.transcript:
+    entry = _entry_text(experience)
+    if not experience.transcript and experience.questions:
+        entry += ("\n\n(Ask the first question: name the project and ask checklist line g1. "
+                  "Do not read the scaffold back.)")
+    elif not experience.transcript:
         entry += ("\n\n(Ask the first question: name the experience and ask for the story "
                   "behind its first bullet. Do not read the entry back; they wrote it.)")
     messages = [{"role": "system", "content": system_prompt(experience, state.experienced)},
@@ -776,9 +824,12 @@ def _interview_turn(state: State, message: str) -> Iterator[dict]:
     # The reply both grades the answer and asks the next question; the
     # header is read here even when the code overrides what to ask next.
     messages = [{"role": "system", "content": system_prompt(experience, state.experienced)},
-                {"role": "user", "content": f"## Resume entry\n\n{experience.resume_entry or experience.title}"}]
+                {"role": "user", "content": _entry_text(experience)}]
     messages += experience.transcript
     closing = experience.wrapup_asked or bool(MOVE_ON.search(message))
+    if experience.questions and experience.asked >= experience.max_questions():
+        # The last listed question has its answer; nothing more to ask.
+        closing = True
     if closing:
         messages.append({"role": "system", "content":
                          "This was the answer to the wrap-up question. Mark what it covered, set "
@@ -808,7 +859,7 @@ def _interview_turn(state: State, message: str) -> Iterator[dict]:
         yield from _close(state, experience)
         return
     experience.asked += 1
-    if experience.asked >= MAX_QUESTIONS and not experience.wrapup_asked:
+    if experience.asked >= experience.max_questions() and not experience.wrapup_asked and not experience.questions:
         # The model asked question ten (or more); the code asks the wrap-up
         # instead of letting the model keep going.
         experience.transcript.pop()
@@ -906,11 +957,35 @@ def write_main(experience: Experience, experienced: bool) -> str:
     user = (f"## Title\n\n{experience.title}\n\n## Kind\n\n{experience.kind}\n\n"
             f"## Checklist\n\n{checklist_text(experience, experienced)}\n\n"
             f"## Resume entry\n\n{experience.resume_entry}\n\n## Transcript\n\n{transcript}")
+    scaffold = experience.scaffold()
+    if scaffold:
+        user += ("\n\n## From GitHub\n\n" + scaffold
+                 + "\n\n(Write the sections from the transcript first; where the transcript "
+                 "is silent, use what the scaffold states. The scaffold is a reading of the "
+                 "code; a README claim stays marked as the README's.)")
     text = llm.complete(WRITE_MAIN_PROMPT, user, model=interview_model(),
                         temperature=0.1, max_tokens=8000, reasoning=llm.minimal_reasoning(interview_model()))
+    text = with_link_lines(text.strip(), experience)
     path = stories_dir() / experience.slug / "main.md"
-    path.write_text(text.strip() + "\n")
+    path.write_text(text + "\n")
     return text
+
+
+def with_link_lines(text: str, experience: Experience) -> str:
+    """`GitHub:` and `Link:` lines under the Kind line, from the state,
+    never from the model: the link is what the resume hyperlinks."""
+    text = re.sub(r"^(GitHub|Link):.*\n?", "", text, flags=re.M)
+    if not experience.link and not experience.github:
+        return text
+    extra = ""
+    if experience.github.get("full_name"):
+        extra += f"GitHub: {experience.github['full_name']}\n"
+    if experience.link:
+        extra += f"Link: {experience.link}\n"
+    match = re.search(r"^Kind:.*$", text, re.M)
+    if match:
+        return text[:match.end()] + "\n" + extra.rstrip("\n") + text[match.end():]
+    return extra + text
 
 
 def update_main(slug: str, new_information: str) -> str:
@@ -920,8 +995,114 @@ def update_main(slug: str, new_information: str) -> str:
                         f"## Document\n\n{current}\n\n## New information\n\n{new_information}",
                         model=interview_model(), temperature=0.1, max_tokens=8000,
                         reasoning=llm.minimal_reasoning(interview_model()))
-    path.write_text(text.strip() + "\n")
+    try:
+        text = with_link_lines(text.strip(), Experience.load(slug))
+    except InterviewError:
+        text = text.strip()
+    path.write_text(text + "\n")
     return text
+
+
+def set_link(slug: str, link: str) -> None:
+    """The resume's hyperlink for a project, changed by the candidate.
+    Rewritten in place in every document, no model."""
+    state = State.load()
+    for entry in state.experiences:
+        if entry["slug"] == slug:
+            entry["link"] = link
+    state.save()
+    experience = Experience.load(slug)
+    experience.link = link
+    experience.save()
+    for name in ("main.md", "tailor.md"):
+        path = stories_dir() / slug / name
+        if not path.exists():
+            continue
+        text = path.read_text()
+        if re.search(r"^Link:.*$", text, re.M):
+            text = re.sub(r"^Link:.*$", f"Link: {link}", text, count=1, flags=re.M)
+        elif name == "main.md":
+            text = with_link_lines(text.strip(), experience) + "\n"
+        else:
+            text = re.sub(r"^(Summary:.*)$", rf"\1\nLink: {link}", text, count=1, flags=re.M)
+        _write_atomic(path, text)
+
+
+def add_github_projects(repos) -> dict[str, str]:
+    """Repos the candidate ticked, into the interview. One whose name is a
+    resume project's becomes that project, "Resume name (repo-name)", the
+    scaffold folded into its documents; the rest are new experiences with
+    the scaffold's questions as their checklist. Returns repo name -> slug."""
+    from . import github as github_module
+    state = State.load()
+    if state.phase == "new":
+        raise InterviewError("start the profile interview first; the projects join it")
+    added: dict[str, str] = {}
+    queued = 0
+    for repo in repos:
+        info = {"full_name": repo.full_name, "name": repo.name, "url": repo.url,
+                "description": repo.description, "language": repo.language, "stars": repo.stars,
+                "pushed_at": repo.pushed_at, "commits": repo.commits, "rank": repo.rank}
+        scaffold_text = github_module.scaffold(repo.name)
+        match = github_module.match_resume_project(repo, state.experiences)
+        if match is not None:
+            slug = match["slug"]
+            if f"({repo.name})" not in match["title"]:
+                match["title"] = f"{match['title']} ({repo.name})"
+            match["github"], match["link"] = info, repo.url
+            _write_atomic(stories_dir() / slug / "scaffold.md", scaffold_text)
+            try:
+                experience = Experience.load(slug)
+                experience.title, experience.github, experience.link = match["title"], info, repo.url
+                experience.save()
+                if experience.closed:
+                    # Interviewed already: the scaffold is new information.
+                    start_fold(slug, scaffold_text)
+            except InterviewError:
+                pass  # not opened yet; _next_experience carries the fields over
+            added[repo.name] = slug
+            continue
+        entry = _with_slugs([{"title": repo.name, "kind": "project", "resume_entry": ""}],
+                            {e["slug"] for e in state.experiences})[0]
+        entry.update({"github": info, "link": repo.url, "questions": list(repo.questions)})
+        state.experiences.append(entry)
+        _write_atomic(stories_dir() / entry["slug"] / "scaffold.md", scaffold_text)
+        added[repo.name] = entry["slug"]
+        queued += 1
+    if queued and state.phase == "open":
+        # The interview had closed; it reopens for the new projects on the
+        # candidate's next message.
+        state.phase = "interviewing"
+        state.current = None
+        note = (f"{queued} project{'s' if queued != 1 else ''} from GitHub joined the queue. "
+                "Say ready and I will ask about the first one.")
+        state.transcript.append({"role": "assistant", "content": note})
+    state.save()
+    return added
+
+
+def start_fold(slug: str, new_information: str) -> threading.Thread:
+    """Fold new information into a closed experience's main document and
+    regenerate its children, off the request thread."""
+    experience = Experience.load(slug)
+    experience.children = "pending"
+    experience.save()
+
+    def run() -> None:
+        try:
+            update_main(slug, "## From GitHub\n\n" + new_information)
+            generate_children(slug)
+        except Exception as exc:  # noqa: BLE001 - thread; record, never raise
+            try:
+                current = Experience.load(slug)
+                current.children = "error"
+                current.children_error = f"{type(exc).__name__}: {exc}"
+                current.save()
+            except InterviewError:
+                pass
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
 
 
 def _story_rules(section: str) -> str:

@@ -13,6 +13,7 @@ prose, no advice. Markdown, in exactly this order:
 
 ```
 Summary: <one sentence, what was built and for whom, at most twenty-five words>
+Link: <the main document's Link line, verbatim; left out when it has none>
 Stack: <comma-separated technologies, as the candidate named them>
 Dates: <when and how long, or "not discussed">
 Scale: <users, data, requests, latency, model size; or "not discussed">
@@ -25,7 +26,9 @@ Outcome: <shipped or not, used by whom, what happened after>
 ```
 
 The Summary and Stack lines are what the index shows the tailor before it
-decides which stories to read, so they must stand alone.
+decides which stories to read, so they must stand alone. The Link line is
+the URL the resume hyperlinks when this project is written into it; copy
+it exactly, never shorten or "fix" it.
 
 ## Star document
 

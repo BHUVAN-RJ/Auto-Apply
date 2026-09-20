@@ -1012,7 +1012,9 @@ selectors.
   checks it and the server looks at the form itself; marking the job
   submitted diffs the two and writes every changed or newly filled value
   into `base/form.json` `answers`. The human's fix is the next fill's
-  first choice, whoever made the mistake.
+  first choice, whoever made the mistake. (Phase 16 renames the store
+  `corrections`, keeps what the form held, and applies it after
+  Jobright's autofill, where the wrong value comes from.)
 - The preliminary interview (`server/form.py`, `Form` in the page): the
   fixed questions every form asks, click-through, contact details
   prefilled from the resume, source pinned to "Other", authorisation
@@ -1036,7 +1038,7 @@ selectors.
 
 ### Status
 
-Built, 467 tests. Live: the three adapters on real forms. Not yet seen
+Built, 467 tests at the time. Live: the three adapters on real forms. Not yet seen
 live: Jobright's message on a real fill (the listener was checked with
 their message shapes in a real tab), the correction diff on a real
 submission.
@@ -1146,3 +1148,108 @@ Built, 504 tests. Live: the whole path on two Greenhouse embeds, end to
 end, from Jobright's Apply to a green badge with the tailored resume and
 cover letter on the form, no model. Not yet seen live: the box unticked,
 a non-Greenhouse slot, `/autofilled` on a `failed` job with no resume.
+
+## Phase 15 — projects from GitHub (built)
+
+The resume names a project in one line; the interview asks ten questions
+about each one on it and nothing about the forty that are not. Most of
+what a project is can be read off its repository, so that is what the
+Projects tab does (2026-09-20): a handle in, every public repository
+read, ranked, the best ten ticked, and the candidate asked only what the
+repository cannot say.
+
+### Decisions
+
+- **No git, no token.** The listing endpoint carries description,
+  language, stars, dates and size; one API call per repository counts
+  the handle's commits off the `Link` header's last page; the code is
+  the tarball from codeload, which is not rate limited, read in memory
+  (tree, README, manifests, the heads of five entry-point files, 45 KB
+  to the model). Fifty repositories fit inside the unauthenticated hour.
+  `AUTOPILOT_GITHUB_TOKEN` is there for more, never required. Public
+  repositories only; private is deferred.
+- **The scaffold is the cheap model's, the questions are the whole
+  interview.** `github_rules.md` asks for what it does, how it is built,
+  the stack from the manifests, what the commit log says about the
+  candidate's part, and one to three questions the repository cannot
+  answer (outcome, users, why, hardest). A README's claims stay "the
+  README says". The scaffold becomes the project's `main.md` spine; the
+  answers fill the rest; `tailor.md` and `star.md` follow as for any
+  story. A GitHub project's checklist is its questions (`g1..gN`), and
+  the code closes it after the last answer, no wrap-up.
+- **Ranking is arithmetic.** Recency, stars, commits, a README, a
+  description, size, each bounded, so an old project with real work
+  still ranks (`github.score`). The top ten are ticked, plus any
+  repository whose name is a resume project's; the candidate unticks
+  and ticks before confirming. Not a model call: the list is the
+  candidate's to change, and a model's order would be argued with.
+- **A match on the resume is one story, not two.** The resume says
+  "Project Hydra (Distributed Systems Platform)", GitHub says
+  `Project-Hydra`; `match_resume_project` joins them by the repo name
+  inside the title or a close ratio, the experience becomes "Resume
+  name (repo-name)", and the scaffold is folded into its documents
+  (rewritten by `update_main` and regenerated when already closed).
+  Doubtful pairs are left apart and the candidate ticks the repo as a
+  new project.
+- **The link is the candidate's.** Every scaffold carries `Link:` (the
+  repository by default); the Projects tab edits it, since a Chrome Web
+  Store listing or a live site is often the better address, and the
+  line is rewritten in `main.md` and `tailor.md` in code. That line is
+  the only URL the tailor may put on the resume beyond the master's
+  own: `rules.md` allows one whole `PROJECTS` entry to be swapped for a
+  linked story, hyperlinked as the existing entries are, and
+  `tailor._check_links` rejects any other `\href`.
+- **Forks and empty repositories are issues, not judgements.** Listed
+  under "Skipped" with why; a fork the candidate did the work in is
+  theirs to add by hand. An owned repository whose commits carry an
+  email GitHub has not linked comes back with zero attributed commits;
+  it is counted whole and noted rather than skipped (two of the
+  handle's own repositories on the first live run).
+
+### Status
+
+Built, 525 tests. Live: 54 repositories, 8 forks, 40 read in nine
+minutes, scaffolds accurate on the ones checked (AudiTex: Kokoro, ONNX
+Runtime Web, OPFS, three sane questions). Ranking put an auto-synced
+problem-solutions repository first on commit count; the candidate
+unticks it, and a weight against such names is the next step if it
+recurs. Not yet seen live: confirm into a running interview, the short
+interview itself, a swap on a tailored resume.
+
+## Phase 16 — corrected fields, applied over autofill (built, 2026-09-20)
+
+Phase 12 recorded corrections and nothing applied them: the code filler
+that reads `answers` is off (`AUTOPILOT_FORM_FILL=0`, Jobright's
+autofill is step one) and the agent is off (`AUTOPILOT_AGENT=0`). So a
+location Jobright kept getting wrong was fixed by hand on every form and
+learned every time, to no effect.
+
+- **The store is `corrections`, and a row is a record.** `value` (what
+  the human set), `was` (what the form held, Jobright's value usually),
+  `system`, `field` (the control's id, name, kind), `when`, `job`. The
+  old `answers` key is read as records without a `was` and folded in on
+  the next write. `forms.profile.corrections_of` is the one reader;
+  `add_corrections` the one writer.
+- **Applied where the wrong value comes from.** `Engine.apply_corrections`
+  runs in `run_documents`, after the documents and before the open
+  questions, on the same tab Jobright just filled: every field whose
+  label matches a row, punctuation ignored, gets the corrected value
+  over whatever autofill left. Never a textarea (prose is per job, the
+  tailor writes it), never a visa question, no radio or option whose
+  label reads as a submit. The logo says `corrected: … (autofill had …)`.
+- **The snapshot carries identifiers.** `forms.snapshot(detail=True)`
+  returns the values and, per label, the control's id / name / kind;
+  the fill keeps them as `after_agent_meta`, `capture` as `meta`, and
+  `learn` puts them on the row, so two forms wording one question alike
+  can be told apart on the page.
+- **The page is a table, not a list.** Form details on the Profile tab:
+  field, what the form filled (struck through), what you corrected,
+  where (system, date), delete. Every row there is a value the next fill
+  will write; nothing is applied that is not shown.
+- **Bitten once, in the tests:** `Profile.__bool__` is the contact
+  details, so a store of corrections alone is falsy and
+  `corrections or Profile({})` dropped it silently. The test is on
+  `None` now.
+
+Not verified live yet; the next Greenhouse fill after a hand-corrected
+location is the check.

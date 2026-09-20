@@ -285,9 +285,49 @@ def test_the_engine_never_clicks_a_submit_control():
     assert "kill" not in source and "Target.closeTarget" not in source and "Page.close" not in source
 
 
-def run_documents(page, resume=None, cover=None, adapter=None, answerer=None):
+def run_documents(page, resume=None, cover=None, adapter=None, answerer=None, corrections=None):
     return asyncio.run(engine.run_documents(page, adapter or forms.Greenhouse(), "TARGET1234",
-                                            resume=resume, cover_letter=cover, answerer=answerer))
+                                            resume=resume, cover_letter=cover, answerer=answerer,
+                                            corrections=corrections))
+
+
+def test_corrected_fields_go_over_what_autofill_left_by_label_only():
+    """The correction store after Jobright: the location the human fixed
+    on the last form goes over Jobright's wrong city here, by exact label
+    with punctuation ignored; a radio picks its option; a value already
+    right is counted and left; a textarea, a visa question and a field
+    with no correction on file are never touched. Each corrected field
+    carries the logo with what autofill had."""
+    store = Profile({"corrections": {
+        "Location": {"value": "Los Angeles, California, United States", "was": "Delhi, India", "system": "greenhouse"},
+        "Are you willing to relocate?": "Yes",
+        "Phone": {"value": "5550001111"},
+        "Why us?": {"value": "canned prose"},
+        "Will you require sponsorship?": {"value": "No"},
+    }})
+    page = FakePage([
+        gh_field("1", id="first_name", label="First Name *", value="Jane"),
+        gh_field("2", id="job_application_location", label="Location *", value="Delhi, India"),
+        gh_field("3", kind="radio", tag="input", type="radio", group="Are you willing to relocate? *", label="No"),
+        gh_field("4", kind="radio", tag="input", type="radio", group="Are you willing to relocate? *", label="Yes"),
+        gh_field("5", id="phone", label="Phone", value="5550001111"),
+        gh_field("6", tag="textarea", kind="textarea", label="Why us?", value="my own words"),
+        gh_field("7", kind="select", label="Will you require sponsorship?", options=[{"text": "Yes", "value": "y"}, {"text": "No", "value": "n"}]),
+    ])
+    report = run_documents(page, corrections=store)
+    assert page.fields["2"]["value"] == "Los Angeles, California, United States"
+    assert page.fields["4"]["value"] and not page.fields["3"]["value"]
+    assert page.fields["6"]["value"] == "my own words", "prose is per job, never carried over"
+    assert page.fields["7"]["value"] == "", "a visa question is never touched"
+    assert page.fields["1"]["value"] == "Jane"
+    assert report.corrected == ["Location *", "Are you willing to relocate? *", "Phone"]
+    assert not report.errors
+    marks = dict(page.marked)
+    assert marks["2"] == "corrected: Los Angeles, California, United States (autofill had Delhi, India)"
+    assert marks["5"] == "corrected: 5550001111"
+    assert "1" not in marks and "6" not in marks and "7" not in marks
+    # An empty store is a no-op, not an error.
+    assert run_documents(FakePage([gh_field("2", label="Location *", value="Delhi")]), corrections=Profile({})).corrected == []
 
 
 def test_documents_only_uploads_and_touches_no_field(tmp_path):

@@ -13,7 +13,7 @@ from .ashby import Ashby
 from .engine import Adapter, Report, fill, find_target, same_site, snapshot, upload_documents
 from .greenhouse import Greenhouse
 from .lever import Lever
-from .profile import Profile, load
+from .profile import Profile, load, load_corrections
 
 ADAPTERS: dict[str, type[Adapter]] = {
     "ashby": Ashby,
@@ -27,4 +27,4 @@ def adapter_for(url: str) -> Optional[Adapter]:
     return cls() if cls else None
 
 
-__all__ = ["Adapter", "Report", "Profile", "adapter_for", "fill", "find_target", "load", "same_site", "snapshot", "upload_documents"]
+__all__ = ["Adapter", "Report", "Profile", "adapter_for", "fill", "find_target", "load", "load_corrections", "same_site", "snapshot", "upload_documents"]

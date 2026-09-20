@@ -148,6 +148,7 @@ FORM_FILLED_STEP = """1. The form in this tab has already been filled by code ({
 
 # Set to 0 to skip the code fill and use Jobright's Autofill everywhere.
 FORM_FILL_ENV = "AUTOPILOT_FORM_FILL"
+CORRECTIONS_ENV = "AUTOPILOT_CORRECTIONS"   # 0: the correction store is not applied
 
 # Autofill has written the wrong country before; the agent corrects to this.
 LOCATION_ENV = "AUTOPILOT_LOCATION"
@@ -527,20 +528,24 @@ async def fill_async(
         # Read back off the inputs; a miss leaves the step to the agent.
         if pressed.target_id and os.environ.get(DOCS_BY_CODE, "1") != "0":
             await autofill.notify(cdp_url, pressed.target_id, "working", "Attaching the tailored resume")
+            # What the human corrected on earlier forms goes over Jobright's
+            # values by exact label; the store is empty when nothing was.
+            corrections = forms.load_corrections() if os.environ.get(CORRECTIONS_ENV, "1") != "0" else None
             try:
                 docs = await forms.upload_documents(cdp_url, pressed.target_id, adapter or forms.Adapter(),
-                                                    resume_pdf, cover_letter_pdf, answerer)
+                                                    resume_pdf, cover_letter_pdf, answerer, corrections)
             except Exception as error:  # noqa: BLE001 - the agent is the fallback
                 docs = forms.Report(note=f"failed: {error}")
             filled.resume_uploaded = docs.resume_uploaded
             filled.resume_name = docs.resume_name
             filled.cover_letter_uploaded = docs.cover_letter_uploaded
             filled.answered = docs.answered
+            filled.corrected = docs.corrected
             filled.errors.extend(docs.errors)
-            log.info("documents by code: resume %s, cover letter %s, %d question(s) answered%s",
+            log.info("documents by code: resume %s, cover letter %s, %d field(s) corrected, %d question(s) answered%s",
                      "attached" if docs.resume_uploaded else "NOT attached",
                      "attached" if docs.cover_letter_uploaded else "not attached",
-                     len(docs.answered),
+                     len(docs.corrected), len(docs.answered),
                      f"; {'; '.join(docs.errors)}" if docs.errors else "")
     target_id = filled.target_id or pressed.target_id
     tab_id = filled.tab_id if filled.target_id else pressed.tab_id
@@ -662,12 +667,14 @@ async def _write_report(report: forms.Report, path: Path, cdp_url: str, url: str
     the screenshot. `after_agent` is the baseline the correction loop
     diffs the submitted form against. Best effort: a missing snapshot
     means no corrections learned, never a failed fill."""
-    body: dict = {"report": report.to_json(), "target_id": target_id, "after_agent": {}}
+    body: dict = {"report": report.to_json(), "url": url, "target_id": target_id, "after_agent": {}, "after_agent_meta": {}}
     try:
         tab = forms.find_target(cdp_url, url, target_id)
         body["target_id"] = tab or target_id
         if tab:
-            body["after_agent"] = await forms.snapshot(cdp_url, tab)
+            look = await forms.snapshot(cdp_url, tab, detail=True)
+            body["after_agent"] = look.get("fields") or {}
+            body["after_agent_meta"] = look.get("meta") or {}
     except Exception as error:  # noqa: BLE001
         body["snapshot_error"] = str(error)
     try:
@@ -712,6 +719,7 @@ async def _finish_without_agent(cdp_url: str, url: str, target_id: str, filled: 
     notes = "\n".join(filter(None, [
         "resume: replaced" if filled.resume_uploaded else "resume: NOT replaced",
         "cover letter: " + ("attached" if filled.cover_letter_uploaded else "skipped" if wanted_cover_letter else "not needed"),
+        "corrected: " + (", ".join(q[:50] for q in filled.corrected) if filled.corrected else "nothing on file for this form"),
         "answered: " + (", ".join(q[:50] for q in filled.answered) if filled.answered else "no open question found"),
         "left blank: " + (", ".join(left) if left else "none reported by Jobright"),
         "(no browser model ran on this form; whatever else it needs is yours)",

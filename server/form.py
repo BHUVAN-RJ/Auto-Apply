@@ -7,8 +7,9 @@ the page renders one at a time. Work-authorisation questions are asked
 too (status, sponsorship, dates) because every form asks them and the
 answers belong on file, but the filler never puts them on a form: those
 fields are refused by `guard.describes_protected` before matching, and
-the human answers them on the page. `answers` (the correction store) is
-kept across saves and shown for editing.
+the human answers them on the page. `corrections` (the correction store,
+`browser/forms/profile.py`) is kept across saves and shown as a table
+for deleting.
 """
 from __future__ import annotations
 
@@ -90,7 +91,7 @@ KEYS = [q["key"] for q in QUESTIONS if "key" in q]
 
 class Save(BaseModel):
     values: dict
-    answers: Optional[dict] = None
+    corrections: Optional[dict] = None
 
 
 def _path() -> Path:
@@ -112,8 +113,7 @@ def get_form() -> dict:
     """The questions, what is on file, and whether the file exists."""
     data = _read(_path())
     values = {k: str(data.get(k, "")).strip() for k in KEYS if str(data.get(k, "")).strip()}
-    answers = {k: v for k, v in (data.get("answers") or {}).items() if not str(k).startswith("_")}
-    return {"questions": QUESTIONS, "values": values, "answers": answers,
+    return {"questions": QUESTIONS, "values": values, "corrections": form_profile.corrections_of(data),
             "exists": _path().exists(), "answered": len(values), "total": len(KEYS)}
 
 
@@ -156,8 +156,10 @@ def hints() -> dict:
 
 @router.post("")
 def save(body: Save) -> dict:
-    """Write base/form.json: the asked keys from `values`, `answers`
-    replaced when sent, everything else in the file kept."""
+    """Write base/form.json: the asked keys from `values`, `corrections`
+    replaced when sent (a plain string is a record with no `was`),
+    everything else in the file kept; a legacy `answers` key is folded
+    into `corrections` either way."""
     path = _path()
     data = _read(path)
     for key in KEYS:
@@ -167,11 +169,11 @@ def save(body: Save) -> dict:
         else:
             data.pop(key, None)
     data["how_heard"] = "Other"
-    if body.answers is not None:
-        kept = {k: v for k, v in (data.get("answers") or {}).items() if str(k).startswith("_")}
-        kept.update({str(k).strip(): str(v).strip() for k, v in body.answers.items()
-                     if str(k).strip() and str(v).strip()})
-        data["answers"] = kept
+    if body.corrections is not None:
+        data["corrections"] = form_profile.corrections_of({"corrections": body.corrections})
+    else:
+        data["corrections"] = form_profile.corrections_of(data)
+    data.pop("answers", None)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     return get_form()

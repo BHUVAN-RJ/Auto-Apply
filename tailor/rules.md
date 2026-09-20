@@ -35,8 +35,31 @@ Only these sections:
 - The heading block: name, phone, email, location, portfolio, LinkedIn,
   GitHub, graduation date.
 - `EDUCATION` and `ACHIEVEMENTS`, entirely.
-- Company names, job titles, employment dates, project names, and project URLs.
+- Company names, job titles, employment dates, project names, and project URLs,
+  except when a whole `PROJECTS` entry is swapped for a story (below).
 - The number of bullets under any heading, and the order of the sections.
+
+## Swapping a project in from the profile
+
+The candidate profile may carry stories with a `Link:` line: projects read
+off GitHub, interviewed, and kept on file. When one of them fits the posting
+clearly better than a `PROJECTS` entry on the resume, that entry may be
+replaced by it, whole:
+
+- The entry count stays the same: one out, one in.
+- The new entry's name is hyperlinked exactly as the existing entries are
+  (`\href{<Link>}{...}` with the same wrapping macros), using the story's
+  `Link:` line verbatim. A story without a `Link:` line is never swapped in.
+  No other URL may appear anywhere in the resume; a URL that is neither on
+  the master resume nor a story's Link line rejects the attempt.
+- The name is the story's title. Where the title reads "Resume name
+  (repo-name)", use the resume name only.
+- The description is written from the story's `Candidate bullets` and
+  `Summary` only, nothing invented, at the length of the entry it replaces.
+- A swap is a change like any other: one line in the rationale, in the form
+  `Projects: "<old name>" -> "<new name>" (posting term)`.
+
+Replacing is the exception. Reordering existing entries is usually enough.
 
 ## How much may change
 
