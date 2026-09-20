@@ -403,29 +403,37 @@ def confirmation_seen(job_id: str, seen: Confirmation) -> dict:
     """The page in the browser showed a submission confirmation.
 
     Reported by the capture script watching the filled form's tab after the
-    human pressed submit; the agent has no path here either, it never
-    reaches the page after its own last action. Marks the job like the
-    button does, but never closes the browser: the person is looking at
-    it. A job that is not filled or filling is left alone, so a stray
-    "thank you" on an unrelated page changes nothing.
+    human pressed submit, and by `server/watch.py`, which reads the tab
+    itself; the agent has no path here either, it never reaches the page
+    after its own last action. Marks the job like the button does, but
+    never closes the browser: the person is looking at it. A job that is
+    not filled or filling is left alone, so a stray "thank you" on an
+    unrelated page changes nothing.
     """
     job, app_dir = _job_and_dir(job_id)
+    return mark_seen(job, app_dir, seen.url, seen.quote, "on the page")
+
+
+def mark_seen(job: Job, app_dir: Path, url: str = "", quote: str = "", by: str = "") -> dict:
+    """Submitted, because a confirmation was seen in the browser. Only a
+    filled or filling job; the fill, if still running, stops; the last
+    look at the form is what gets learned. Never closes anything."""
     if job.status not in (Status.FILLED, Status.FILLING):
-        return {"id": job_id, "status": job.status.value, "marked": False}
-    killed = runner.stop_fill(job_id)
-    note = "confirmation seen on the page"
-    if seen.quote:
-        note += f": “{seen.quote[:120]}”"
-    if seen.url:
-        note += f" at {seen.url}"
+        return {"id": job.id, "status": job.status.value, "marked": False}
+    killed = runner.stop_fill(job.id)
+    note = f"confirmation seen {by}".strip()
+    if quote:
+        note += f": “{quote[:120]}”"
+    if url:
+        note += f" at {url}"
     if killed:
         note += f" (fill {killed} still running, killed)"
     store.set_status(app_dir, Status.SUBMITTED, note)
-    queue.update(job_id, status=Status.SUBMITTED)
+    queue.update(job.id, status=Status.SUBMITTED)
     # The page has moved on to the confirmation; the last state the tab
     # reported before that is what gets learned.
     learned = corrections.learn(app_dir)
-    return {"id": job_id, "status": Status.SUBMITTED.value, "marked": True, "learned": learned}
+    return {"id": job.id, "status": Status.SUBMITTED.value, "marked": True, "learned": learned}
 
 
 @router.post("/{job_id}/form-state")

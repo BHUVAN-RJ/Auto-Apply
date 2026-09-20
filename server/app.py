@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from archive import store
 
-from . import postings, queue, runner, seen, settings
+from . import postings, queue, runner, seen, settings, watch
 from .models import Job, Status
 from .form import router as form_router
 from .profile import router as profile_router
@@ -75,6 +75,14 @@ app.include_router(profile_router)
 app.include_router(form_router)
 app.include_router(voice_router)
 app.include_router(github_router)
+
+
+@app.on_event("startup")
+def _start_watch() -> None:
+    # The server's own look at every filled form: form state for the
+    # correction loop, and submitted when the page turns into a
+    # confirmation. Independent of the script in the tab.
+    watch.start()
 
 
 @app.get("/health")

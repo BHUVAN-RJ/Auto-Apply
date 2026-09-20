@@ -54,6 +54,8 @@ POLL = 0.25
 # your most recent position?"), not a field name, and the generic patterns
 # would match a word in it. Real Ashby run: that question got a job title.
 GENERIC_LABEL_MAX = 60
+TEXT_CAP = 20000          # of the page's visible text kept by a detailed snapshot
+PAGE_TEXT_JS = "(document.body && document.body.innerText) || ''"
 
 # Shared by every script: find the element carrying a ref, through shadow roots.
 FIND_FN = r"""
@@ -340,13 +342,16 @@ LOGO_SVG = (
 MARK_FN = r"""
 (function (ref, note, logo) {
   const el = FIND(document, ref);
-  if (!el) return false;
+  // Greenhouse drops the file input once a file is on the slot; the block
+  // MARK_UPLOAD_FN tagged before the upload is still there and is the host.
+  const block = document.querySelector("[data-autopilot-upload='" + CSS.escape(ref) + "']");
+  if (!el && !block) return false;
   let host = null;
-  if (el.type === "file") host = document.querySelector("[data-autopilot-upload='" + CSS.escape(ref) + "']");
-  if (!host && el.labels && el.labels.length) host = el.labels[0];
-  if (!host && el.getAttribute("aria-labelledby")) host = document.getElementById(el.getAttribute("aria-labelledby").split(/\s+/)[0]);
-  if (!host) host = el.closest("label");
-  if (!host) { const p = el.parentElement; host = p && p.querySelector("label") || p; }
+  if (!el || el.type === "file") host = block && (block.querySelector("label, legend, [class*='label' i]") || block);
+  if (!host && el && el.labels && el.labels.length) host = el.labels[0];
+  if (!host && el && el.getAttribute("aria-labelledby")) host = document.getElementById(el.getAttribute("aria-labelledby").split(/\s+/)[0]);
+  if (!host && el) host = el.closest("label");
+  if (!host && el) { const p = el.parentElement; host = p && p.querySelector("label") || p; }
   if (!host) return false;
   const old = host.querySelector(":scope > [data-autopilot-mark='" + CSS.escape(ref) + "']");
   if (old) { old.title = "Filled by Autopilot: " + note; return true; }
@@ -1163,7 +1168,8 @@ async def snapshot(cdp_url: str, target_id: str, detail: bool = False) -> dict:
     """The form in an existing tab, question -> value. Attaches to the
     tab, scans, detaches; nothing is touched. Empty when the tab is gone.
     With `detail`, `{"fields": question -> value, "meta": question ->
-    identifiers}` instead."""
+    identifiers, "text": the page's visible text, "url"}` instead, which
+    is what the server's watch reads to see a confirmation page."""
     import json as _json
     import urllib.request
     from itertools import count
@@ -1183,7 +1189,10 @@ async def snapshot(cdp_url: str, target_id: str, detail: bool = False) -> dict:
             raw = await page.evaluate(SCAN_JS) or []
             fields = [Field.from_scan(r) for r in raw if isinstance(r, dict)]
             if detail:
-                return {"fields": snapshot_of(fields), "meta": identifiers_of(fields)}
+                text = await page.evaluate(PAGE_TEXT_JS)
+                url = await page.evaluate("location.href")
+                return {"fields": snapshot_of(fields), "meta": identifiers_of(fields),
+                        "text": str(text or "")[:TEXT_CAP], "url": str(url or "")}
             return snapshot_of(fields)
         finally:
             try:

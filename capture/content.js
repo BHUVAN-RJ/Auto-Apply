@@ -85,6 +85,19 @@ const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
 const CONFIRMED = /thank(s| you) for (applying|your (application|interest|submission))|application (has been |was )?(submitted|received|sent|complete)|we('ve| have) received your application|your application (is|has been) (in|complete)|successfully (submitted|applied)/i;
 const CONFIRM_POLL_MS = 1500;
 const JOB_KEY = "autopilotJob";
+// A confirmation is a page with the phrase and no form left: a posting's
+// own text says "thank you for your interest" often enough, and a filled
+// form is still a form. Fewer than this many controls = the form is gone.
+const FORM_GONE = 3;
+let submissionWatched = false;   // this tab is a filled form or what it became; never screen it again
+function formControls() {
+  let n = 0;
+  for (const el of document.querySelectorAll("input:not([type=hidden]), select, textarea")) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 || r.height > 0) n += 1;
+  }
+  return n;
+}
 
 // While the human works on a filled form, the server is asked to look at
 // it now and then (it reads the fields itself over CDP; this script sends
@@ -129,12 +142,13 @@ function watchState(jobId) {
 let confirmTimer = null;
 function watchSubmission(jobId) {
   if (confirmTimer) return;
+  submissionWatched = true;
   try { sessionStorage.setItem(JOB_KEY, jobId); } catch { /* storage blocked */ }
   watchState(jobId);
   confirmTimer = setInterval(async () => {
     const text = (document.body?.innerText || "");
     const match = CONFIRMED.exec(text);
-    if (!match) return;
+    if (!match || formControls() >= FORM_GONE) return;
     clearInterval(confirmTimer);
     confirmTimer = null;
     if (stateTimer) { clearInterval(stateTimer); stateTimer = null; }
@@ -684,6 +698,10 @@ async function addToQueue(autoFill = null) {
 
 async function screen({ force = false, waited = 0 } = {}) {
   if (!isPosting()) return;
+  // A filled form, or the confirmation it turned into, is not a posting
+  // to screen: the verdict would paint over "submitted" and the screen
+  // would run on a thank-you page.
+  if (submissionWatched && !force) return;
   const text = pageText();
   if (text.length < MIN_TEXT) {
     const url = location.href;
@@ -719,6 +737,7 @@ async function screen({ force = false, waited = 0 } = {}) {
 function schedule() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
+  if (submissionWatched) return;
   bannerCollapsed = false;
   setTimeout(() => {
     if (location.href === lastUrl) screen();

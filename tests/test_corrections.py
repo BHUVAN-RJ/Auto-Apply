@@ -85,7 +85,8 @@ def test_a_form_with_only_corrections_still_loads_the_store(tmp_path):
 def test_the_submitted_endpoints_learn_but_never_depend_on_it(monkeypatch):
     import inspect
     import server.review as review
-    for name in ("mark_submitted", "confirmation_seen"):
+    for name in ("mark_submitted", "mark_seen"):
         source = inspect.getsource(getattr(review, name))
         assert "corrections.learn" in source
         assert source.index("Status.SUBMITTED") < source.index("corrections.learn"), name
+    assert "mark_seen(" in inspect.getsource(review.confirmation_seen)
