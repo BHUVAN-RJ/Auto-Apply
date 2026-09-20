@@ -406,3 +406,42 @@ def test_applicant_facts_are_not_softened():
     result = screen.Screen(verdict="reject", facts_source="applicant.md", flags=[
         screen.Flag("visa", "hard", "unable to sponsor", "r")])
     assert screen.soften_unknowns(result).verdict == "reject"
+
+
+def test_a_confirmation_page_is_answered_locally_and_never_reaches_the_model(monkeypatch):
+    """After the person submits, the tab shows a thank-you page and the
+    script in it screens it like any page. That is a string check on the
+    server, not a model call, and it marks the job when it is ours."""
+    calls = []
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: calls.append(1) or "")
+    from server import seen as server_seen
+    monkeypatch.setattr(server_seen, "find", lambda *a, **k: None)
+    data = TestClient(app).post("/screen", json={
+        "url": "https://jobs.lever.co/acme/1/thanks", "title": "Acme",
+        "text": "Acme\nApplication submitted\nThank you for applying. We will be in touch."}).json()
+    assert data["verdict"] == "submitted" and "Confirmation page" in data["summary"]
+    assert calls == []
+
+    # A posting that thanks the reader deep in a long description is a posting.
+    quote = server_screen.confirmation_quote("Software Engineer\n" + "Requirements. " * 400
+                                             + "Thank you for your interest in Acme.")
+    assert quote is None
+    assert server_screen.confirmation_quote("Thanks for applying!") == "Thanks for applying!"
+
+
+def test_a_confirmation_on_a_filled_job_marks_it_submitted(monkeypatch, tmp_path):
+    from server import queue, review, seen as server_seen
+    from server.models import Job, Status
+    app_dir = tmp_path / "acme"
+    app_dir.mkdir()
+    job = Job(url="https://jobs.lever.co/acme/1", status=Status.FILLED, app_dir=str(app_dir))
+    match = server_seen.Match(level="high", id=job.id, status="filled", at="", title="", company="", reason="url")
+    monkeypatch.setattr(server_seen, "find", lambda *a, **k: match)
+    monkeypatch.setattr(queue, "get", lambda job_id: job if job_id == job.id else None)
+    marked = []
+    monkeypatch.setattr(review, "mark_seen", lambda j, d, url, quote, by: marked.append((j.id, url, quote)) or {"marked": True})
+    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("model called"))
+    data = TestClient(app).post("/screen", json={
+        "url": "https://jobs.lever.co/acme/1/thanks", "title": "", "text": "Thank you for applying to Acme."}).json()
+    assert data["verdict"] == "submitted" and "marked in autopilot" in data["summary"]
+    assert marked and marked[0][0] == job.id and marked[0][1].endswith("/thanks")

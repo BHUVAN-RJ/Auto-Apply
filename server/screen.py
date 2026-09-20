@@ -116,8 +116,56 @@ def screen_url(url: str, text: str, title: str = "", force: bool = False) -> tup
     return result, False
 
 
+# A confirmation page is not a posting. Its text is short and says so near
+# the top; a posting that thanks the reader for their interest does it
+# deep in a long description. Decided here, string work only, before any
+# model is asked, and if the page is a job of ours that was being filled,
+# it is the submission itself.
+CONFIRMATION_MAX_CHARS = 2500
+CONFIRMATION_HEAD = 400
+
+
+def confirmation_quote(text: str) -> Optional[str]:
+    from server import watch
+
+    flat = " ".join((text or "").split())
+    match = watch.CONFIRMED.search(flat)
+    if not match:
+        return None
+    if len(flat) > CONFIRMATION_MAX_CHARS and match.start() > CONFIRMATION_HEAD:
+        return None
+    return flat[max(0, match.start() - 40):match.end() + 60].strip()
+
+
+def _submitted_locally(req: ScreenRequest) -> Optional[dict]:
+    """The reply for a confirmation page, or None when the page is not
+    one. Marks the job when the page is a filled job of ours."""
+    quote = confirmation_quote(req.text)
+    if quote is None:
+        return None
+    try:
+        match = seen.find(req.url, title=req.title, text=req.text)
+    except Exception:  # noqa: BLE001
+        match = None
+    summary = "Confirmation page, not a posting: nothing screened."
+    if match and match.status in ("filled", "filling"):
+        from server import queue, review
+
+        job = queue.get(match.id)
+        if job and job.app_dir and Path(job.app_dir).exists():
+            marked = review.mark_seen(job, Path(job.app_dir), req.url, quote, "on the page")
+            if marked.get("marked"):
+                summary = "Application submitted — marked in autopilot."
+                match = seen.find(req.url, title=req.title, text=req.text)
+    return {"verdict": "submitted", "flags": [], "summary": summary, "model": "", "facts_source": "",
+            "cached": False, "seen": match.to_dict() if match else None}
+
+
 @router.post("/screen")
 def screen_endpoint(req: ScreenRequest) -> dict:
+    local = _submitted_locally(req)
+    if local is not None:
+        return local
     try:
         result, was_cached = screen_url(req.url, req.text, title=req.title, force=req.force)
     except screener.ScreenError as exc:

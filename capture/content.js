@@ -722,6 +722,8 @@ async function screen({ force = false, waited = 0 } = {}) {
     // Say so rather than show nothing, so a missing verdict is never
     // mistaken for a clean one.
     render(data);
+    // The server saw a confirmation page: this tab is done, never screen it again.
+    if (data.verdict === "submitted") submissionWatched = true;
     if (data.seen && ["filled", "filling"].includes(data.seen.status)) watchSubmission(data.seen.id);
     // Jobright's copy of the posting outlives the page: the employer's
     // Apply may land on a bare form, and the tailor still needs a
