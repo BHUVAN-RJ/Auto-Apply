@@ -128,6 +128,7 @@ def detail(job_id: str) -> dict:
         "fill_notes": latest_section(read("fill_notes.md")),
         "answers": read("answers.md"),
         "questions": _open_questions(app_dir),
+        "changes": corrections.changes(app_dir),
         "stories_used": [line for line in read("stories_used.txt").splitlines() if line.strip()],
         "error": read("error.txt"),
         "error_detail": job.error,
@@ -346,16 +347,17 @@ def mark_submitted(job_id: str, decision: Decision) -> dict:
     store.set_status(app_dir, Status.SUBMITTED, note)
     queue.update(job_id, status=Status.SUBMITTED)
 
-    # One last look at the form before its tab goes, then learn from what
-    # the human changed. Neither can fail the submission.
+    # One last look at the form before its tab goes, so the changes the
+    # human may still pick to remember are the final ones. Never fails
+    # the submission; nothing is learned by itself.
     corrections.capture(job.url, app_dir)
-    learned = corrections.learn(app_dir)
 
     # Only this job's tab goes. The browser is the person's working set:
     # the Jobright list, the next job's form, their logins. Closing the
     # whole thing here read as a crash (2026-09-19).
     tab = "closed" if chrome.close_tab(_form_tab(job, app_dir)) else "not_open"
-    return {"id": job_id, "status": Status.SUBMITTED.value, "tab": tab, "learned": learned}
+    return {"id": job_id, "status": Status.SUBMITTED.value, "tab": tab,
+            "changes": corrections.changes(app_dir)}
 
 
 def _form_tab(job: Job, app_dir: Path) -> str:
@@ -431,9 +433,9 @@ def mark_seen(job: Job, app_dir: Path, url: str = "", quote: str = "", by: str =
     store.set_status(app_dir, Status.SUBMITTED, note)
     queue.update(job.id, status=Status.SUBMITTED)
     # The page has moved on to the confirmation; the last state the tab
-    # reported before that is what gets learned.
-    learned = corrections.learn(app_dir)
-    return {"id": job.id, "status": Status.SUBMITTED.value, "marked": True, "learned": learned}
+    # reported before that is what the human can still pick from.
+    return {"id": job.id, "status": Status.SUBMITTED.value, "marked": True,
+            "changes": corrections.changes(app_dir)}
 
 
 @router.post("/{job_id}/form-state")
@@ -443,8 +445,30 @@ def form_state(job_id: str) -> dict:
     out. Only a filled or filling job has a form worth looking at."""
     job, app_dir = _job_and_dir(job_id)
     if job.status not in (Status.FILLED, Status.FILLING):
-        return {"id": job_id, "captured": False, "reason": job.status.value}
-    return {"id": job_id, **corrections.capture(job.url, app_dir)}
+        return {"id": job_id, "captured": False, "reason": job.status.value,
+                "changes": corrections.changes(app_dir)}
+    return {"id": job_id, **corrections.capture(job.url, app_dir), "changes": corrections.changes(app_dir)}
+
+
+class Remember(BaseModel):
+    labels: list[str]
+
+
+@router.get("/{job_id}/changes")
+def form_changes(job_id: str) -> dict:
+    """What the human changed on this form since the fill: for the
+    banner's and the page's pick list. Read, never decided."""
+    _, app_dir = _job_and_dir(job_id)
+    return {"id": job_id, "changes": corrections.changes(app_dir)}
+
+
+@router.post("/{job_id}/remember")
+def remember_changes(job_id: str, body: Remember) -> dict:
+    """The human's pick of which changes to keep for every next form.
+    The only way a correction gets on file."""
+    _, app_dir = _job_and_dir(job_id)
+    result = corrections.remember(app_dir, body.labels)
+    return {"id": job_id, **result, "changes": corrections.changes(app_dir)}
 
 
 @router.post("/{job_id}/revise")

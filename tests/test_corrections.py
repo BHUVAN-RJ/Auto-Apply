@@ -22,7 +22,7 @@ def test_clearing_a_field_teaches_nothing():
     assert corrections.diff({"Phone": "555"}, {"Phone": ""}) == {}
 
 
-def test_learn_writes_corrections_with_what_the_form_held_and_a_note(tmp_path):
+def _app(tmp_path):
     app = tmp_path / "acme_swe"
     app.mkdir()
     (app / corrections.FILL_REPORT).write_text(json.dumps({
@@ -33,26 +33,48 @@ def test_learn_writes_corrections_with_what_the_form_held_and_a_note(tmp_path):
         "fields": {"Phone": "555", "Pronouns": "she/her", "Location": "Los Angeles, California, United States",
                    "Do you need a visa?": "No"},
         "meta": {"Location": {"id": "job_application_location", "kind": "combobox"}}}))
+    return app
+
+
+def test_changes_are_offered_never_decided(tmp_path):
+    app = _app(tmp_path)
+    rows = corrections.changes(app, store={})
+    assert [(r["label"], r["was"], r["now"], r["remembered"]) for r in rows] == [
+        ("Pronouns", "", "she/her", False),
+        ("Location", "Delhi, India", "Los Angeles, California, United States", False),
+    ]
+    # A row already on file with that value shows as remembered.
+    on_file = {"location *": {"value": "Los Angeles, California, United States"}}
+    assert [r["remembered"] for r in corrections.changes(app, store=on_file)] == [False, True]
+    assert corrections.changes(tmp_path) == []
+
+
+def test_remember_writes_only_what_was_picked(tmp_path):
+    app = _app(tmp_path)
     form = tmp_path / "form.json"
-    result = corrections.learn(app, form)
-    assert result["learned"] == 2
-    assert result["changes"] == {"Pronouns": "she/her", "Location": "Los Angeles, California, United States"}
+    result = corrections.remember(app, ["Location"], form)
+    assert result["remembered"] == 1 and result["changes"] == {"Location": "Los Angeles, California, United States"}
     saved = json.loads(form.read_text())["corrections"]
+    assert list(saved) == ["Location"], "Pronouns was not picked"
     location = saved["Location"]
-    assert location["value"] == "Los Angeles, California, United States"
-    assert location["was"] == "Delhi, India"
-    assert location["system"] == "greenhouse" and location["job"] == "acme_swe"
+    assert location["was"] == "Delhi, India" and location["system"] == "greenhouse" and location["job"] == "acme_swe"
     assert location["field"]["id"] == "job_application_location" and location["when"]
-    assert saved["Pronouns"]["was"] == "" and saved["Pronouns"]["value"] == "she/her"
-    assert "she/her" in (app / corrections.NOTES).read_text()
-    # The next fill reads it back as the value to put on that label.
+    assert "Los Angeles" in (app / corrections.NOTES).read_text()
     assert form_profile.load_corrections(form).answer("location *") == "Los Angeles, California, United States"
+    # Nothing picked, or a label that did not change: nothing written.
+    assert corrections.remember(app, [], form)["remembered"] == 0
+    assert corrections.remember(app, ["Phone"], form)["remembered"] == 0
+    assert corrections.remember(app, ["Do you need a visa?"], form)["remembered"] == 0
 
 
-def test_learn_without_a_snapshot_is_a_note_not_an_error(tmp_path):
-    assert corrections.learn(tmp_path)["learned"] == 0
-    (tmp_path / corrections.FORM_STATE).write_text(json.dumps({"fields": {"A": "b"}}))
-    assert "baseline" in corrections.learn(tmp_path)["reason"]
+def test_nothing_is_learned_when_a_job_is_marked_submitted():
+    import inspect
+    import server.review as review
+    for name in ("mark_submitted", "mark_seen"):
+        source = inspect.getsource(getattr(review, name))
+        assert "corrections.learn" not in source and "add_corrections" not in source and "remember(" not in source, name
+        assert "corrections.changes" in source, "the pick list is still offered"
+    assert not hasattr(corrections, "learn")
 
 
 def test_add_corrections_merges_dedupes_by_normalised_label_and_migrates_answers(tmp_path):
@@ -80,13 +102,3 @@ def test_a_form_with_only_corrections_still_loads_the_store(tmp_path):
     store = form_profile.load_corrections(form)
     assert store.answer("Location") == "LA" and store.correction("location")["was"] == "Delhi"
     assert not form_profile.load_corrections(tmp_path / "missing.json").corrections
-
-
-def test_the_submitted_endpoints_learn_but_never_depend_on_it(monkeypatch):
-    import inspect
-    import server.review as review
-    for name in ("mark_submitted", "mark_seen"):
-        source = inspect.getsource(getattr(review, name))
-        assert "corrections.learn" in source
-        assert source.index("Status.SUBMITTED") < source.index("corrections.learn"), name
-    assert "mark_seen(" in inspect.getsource(review.confirmation_seen)

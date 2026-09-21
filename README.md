@@ -263,18 +263,19 @@ voice, contact details prefilled from the resume. "How did you hear about
 us" is always "Other". The authorisation answers are kept for you and the
 screen; the filler never types them onto a form, that stays yours.
 
-**What you correct is corrected next time.** The form as autofill left
-it is kept; while you check it the tab reports back, and when you mark
-the job submitted the difference — anything you filled in or changed —
-goes into `base/form.json` under `corrections`, keyed by the question as
-the form showed it, with what the form had before, the system, and the
-control it was. On every next form that asks the same question the value
-you set goes over whatever Jobright's autofill put there (its location
-is wrong most of the time; fix it once). The Form details page on the
-Profile tab shows the table — field, what the form filled, what you
-corrected, where — and a delete on each row. Free-form answers are
-written per job and never carried over; visa questions are never
-recorded.
+**What you correct, you choose to keep.** The form as autofill left it
+is kept; while you check it the server reads the form back, and the
+banner on the page lists what you changed — field, what autofill had,
+what it is now — with a tick each. Tick the ones Jobright got wrong and
+press Remember: those go into `base/form.json` under `corrections`,
+keyed by the question as the form showed it, with the old value, the
+system and the control, and on every next form that asks the same
+question your value goes over whatever autofill put there (its location
+is wrong most of the time; fix it once). Nothing is remembered without
+the tick; the same card is on the review page for after the tab is
+gone. The Form details page on the Profile tab shows the whole table
+and a delete on each row. Free-form answers are written per job and
+never carried over; visa questions are never offered.
 
 If you would rather do it yourself, or the agent is slow: the banner on
 the form's page shows the tailored resume and cover letter as chips. Drag

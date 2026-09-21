@@ -587,6 +587,16 @@ async function show(id) {
     ${data.fill_notes ? `<h3>What the browser did</h3>
       <div class="card prose">${markdown(data.fill_notes)}</div>` : ""}
 
+    ${data.changes && data.changes.length ? `<h3>What you changed on the form</h3>
+      <div class="card changes">
+        <p class="hint">Since autofill left it. Tick what it got wrong; every next form gets your value on that field. Nothing is remembered without the tick.</p>
+        <table class="kv corr">${data.changes.map((c) => `<tr class="${c.remembered ? "kept" : ""}">
+          <td><label><input type="checkbox" data-label="${escape(c.label)}" ${c.remembered ? "checked disabled" : ""}> ${escape(c.label)}</label></td>
+          <td class="${c.was ? "was" : "empty"}">${escape(c.was || "blank")}</td>
+          <td>${escape(c.now)}${c.remembered ? " ✓" : ""}</td></tr>`).join("")}</table>
+        <div class="row"><button class="act primary" id="rememberGo" disabled>Remember</button><span class="hint" id="rememberNote"></span></div>
+      </div>` : ""}
+
     ${data.status !== "queued" && data.status !== "tailoring" ? `<h3>Ask for an answer</h3>
       <div class="card asker">
         ${data.questions && data.questions.length ? `<div class="hint">Still empty on the form, tap one:</div>
@@ -667,6 +677,7 @@ async function show(id) {
   }
   if ($("fillNow")) $("fillNow").onclick = () => fillAgain(id);
   if ($("askGo")) wireAsk(id);
+  if ($("rememberGo")) wireRemember(id);
   if (working) setTimeout(() => { if (current === id) show(id); }, working * 1000 + 200);
 
   if ($("posting")) {
@@ -762,6 +773,23 @@ function fillWorking(data) {
 // confirms, and only then is the running fill killed and a new one started.
 // The question box: one answer per press, shown with a copy button and
 // kept in answers.md. Nothing here touches the form; the human types it.
+// The pick list of what the human changed on the form: only ticked rows
+// go on file, and the card is redrawn from the server's answer.
+function wireRemember(id) {
+  const boxes = [...$("detail").querySelectorAll(".changes input[type=checkbox]:not(:disabled)")];
+  const sync = () => { $("rememberGo").disabled = !boxes.some((b) => b.checked); };
+  for (const b of boxes) b.onchange = sync;
+  $("rememberGo").onclick = async () => {
+    const labels = boxes.filter((b) => b.checked).map((b) => b.dataset.label);
+    $("rememberGo").disabled = true;
+    try {
+      const r = await api(`/review/${id}/remember`, { method: "POST", body: JSON.stringify({ labels }) });
+      $("rememberNote").textContent = r.remembered ? `Remembered ${r.remembered}.` : (r.reason || "Nothing remembered");
+      setTimeout(() => { if (current === id) show(id); }, 800);
+    } catch (err) { $("rememberNote").textContent = err.message; sync(); }
+  };
+}
+
 function wireAsk(id) {
   const box = $("askQ"), go = $("askGo"), out = $("askOut"), note = $("askNote");
   for (const b of document.querySelectorAll(".asker .q")) b.onclick = () => { box.value = b.textContent; box.focus(); };

@@ -124,11 +124,51 @@ window.__autopilotAutomation = (state, note) => {
   applyAutomation();
 };
 
+// What the person changed on the form since autofill, as the server read
+// it back (label, what autofill had, what it is now). Shown in the banner
+// as a pick list: tick the ones Jobright got wrong, press Remember, and
+// every next form gets the corrected value on that field. Nothing is
+// remembered without the tick; the list is advice until then.
+const CHANGES = { jobId: null, rows: [], picked: new Set(), busy: false, note: "", popped: false };
+let paintChanges = () => {};
+let expandBanner = () => {};
+function takeChanges(jobId, rows) {
+  CHANGES.jobId = jobId;
+  CHANGES.rows = Array.isArray(rows) ? rows : [];
+  // The first change worth remembering pops the bar open once; after
+  // that the badge keeps it and the person opens it when they want.
+  if (!CHANGES.popped && CHANGES.rows.some((r) => !r.remembered)) { CHANGES.popped = true; expandBanner(); }
+  for (const label of [...CHANGES.picked]) if (!CHANGES.rows.some((r) => r.label === label && !r.remembered)) CHANGES.picked.delete(label);
+  paintChanges();
+}
+async function rememberPicked() {
+  if (CHANGES.busy || !CHANGES.jobId || !CHANGES.picked.size) return;
+  CHANGES.busy = true; CHANGES.note = "Remembering…"; paintChanges();
+  try {
+    const res = await post(`/review/${CHANGES.jobId}/remember`, { labels: [...CHANGES.picked] });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `server ${res.status}`);
+    CHANGES.note = data.remembered ? `Remembered ${data.remembered}; next form gets ${data.remembered === 1 ? "it" : "them"}.` : (data.reason || "Nothing remembered");
+    CHANGES.picked.clear();
+    takeChanges(CHANGES.jobId, data.changes);
+  } catch (err) {
+    CHANGES.note = `Could not remember: ${err.message}`;
+  } finally {
+    CHANGES.busy = false; paintChanges();
+  }
+}
+
 const STATE_PING_MS = 5000;
 let stateTimer = null;
 function watchState(jobId) {
   if (stateTimer) return;
-  const ping = () => { post(`/review/${jobId}/form-state`, {}).catch(() => {}); };
+  const ping = async () => {
+    try {
+      const res = await post(`/review/${jobId}/form-state`, {});
+      const data = await res.json();
+      if (res.ok && data.changes) takeChanges(jobId, data.changes);
+    } catch { /* the server's own watch reads the tab too */ }
+  };
   stateTimer = setInterval(ping, STATE_PING_MS);
   document.addEventListener("submit", ping, true);
   document.addEventListener("click", (event) => {
@@ -282,6 +322,20 @@ function render(result, { pending = false } = {}) {
       .seen { display: block; color: #fff; font-weight: 600; margin-top: 3px; }
       .files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; align-items: center; }
       .files .hint { color: #a0a0a0; font-size: 11px; }
+      .changes { display: none; margin-top: 6px; border-top: 1px solid #333; padding-top: 6px; }
+      .changes.on { display: block; }
+      .changes .hint { color: #a0a0a0; font-size: 11px; display: block; margin-bottom: 4px; }
+      .changes label.row { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: #fff; cursor: pointer; padding: 2px 0; }
+      .changes label.row input { accent-color: #b48cff; margin: 0; flex: none; position: relative; top: 1px; }
+      .changes label.row .l { color: #fff; font-weight: 600; }
+      .changes label.row .was { color: #ff5c5c; text-decoration: line-through; }
+      .changes label.row .now { color: #3ddc84; }
+      .changes label.row.kept { color: #a0a0a0; cursor: default; }
+      .changes label.row.kept .now { color: #a0a0a0; }
+      .changes .row-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+      .changes button.remember { background: #b48cff; color: #000; border-color: #b48cff; }
+      .changes button.remember:disabled { opacity: .5; cursor: default; }
+      .changes .note { color: #b48cff; font-size: 11px; }
       .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; cursor: grab;
               background: #111; color: #fff; border: 2px solid #b48cff; font-size: 11px; font-weight: 600;
               letter-spacing: .04em; user-select: none; }
@@ -312,6 +366,7 @@ function render(result, { pending = false } = {}) {
           <span class="auto"></span>
           ${seen ? `<span class="seen">${esc(seenLine(seen))}</span>` : ""}
           ${seen && seen.level === "high" ? `<div class="files" id="files"></div>` : ""}
+          <div class="changes" id="changes"></div>
           ${flags ? `<ul>${flags}</ul>` : ""}
         </div>
         <div class="actions">
@@ -353,6 +408,34 @@ function render(result, { pending = false } = {}) {
   const shell = shadow.querySelector(".shell");
   const badge = shadow.querySelector("button.badge");
   const auto = shadow.querySelector(".auto");
+  expandBanner = () => { if (bannerCollapsed) expand(); };
+  paintChanges = () => {
+    const box = shadow.getElementById("changes");
+    if (!box) return;
+    const rows = CHANGES.rows;
+    if (!rows.length && !CHANGES.note) { box.classList.remove("on"); box.innerHTML = ""; return; }
+    box.classList.add("on");
+    const open = rows.filter((r) => !r.remembered);
+    box.innerHTML = `<span class="hint">${open.length
+        ? "Changed since autofill. Tick what Jobright got wrong and every next form gets your value:"
+        : rows.length ? "Everything you changed here is on file." : ""}</span>`
+      + rows.map((r) => `<label class="row${r.remembered ? " kept" : ""}" title="${esc(r.label)}">
+          <input type="checkbox" data-label="${esc(r.label)}" ${r.remembered ? "checked disabled" : CHANGES.picked.has(r.label) ? "checked" : ""}>
+          <span class="l">${esc(r.label.length > 48 ? r.label.slice(0, 47) + "…" : r.label)}</span>
+          ${r.was ? `<span class="was">${esc(r.was)}</span>` : ""}
+          <span class="now">${esc(r.now)}</span>${r.remembered ? " ✓" : ""}</label>`).join("")
+      + `<div class="row-actions">${open.length ? `<button class="remember" data-act="remember" ${CHANGES.busy || !CHANGES.picked.size ? "disabled" : ""}>Remember ${CHANGES.picked.size || ""}</button>` : ""}
+          ${CHANGES.note ? `<span class="note">${esc(CHANGES.note)}</span>` : ""}</div>`;
+    for (const input of box.querySelectorAll("input[type=checkbox]:not(:disabled)")) {
+      input.addEventListener("change", () => {
+        if (input.checked) CHANGES.picked.add(input.dataset.label); else CHANGES.picked.delete(input.dataset.label);
+        const button = box.querySelector("button.remember");
+        if (button) { button.disabled = CHANGES.busy || !CHANGES.picked.size; button.textContent = `Remember ${CHANGES.picked.size || ""}`; }
+      });
+    }
+  };
+  paintChanges();
+
   applyAutomation = () => {
     shell.classList.remove("working", "done", "error");
     if (AUTOMATION.state !== "idle") shell.classList.add(AUTOMATION.state);
@@ -468,6 +551,7 @@ function render(result, { pending = false } = {}) {
     if (action === "expand") expand();
     if (action === "again") screen({ force: true });
     if (action === "open" && seen) openReview(seen.id);
+    if (action === "remember") { e.stopPropagation(); rememberPicked(); }
     if (action === "add" && !add.disabled) {
       if (timer) cancel();
       else act();

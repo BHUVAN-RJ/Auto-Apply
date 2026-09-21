@@ -618,3 +618,40 @@ def test_ask_refuses_a_visa_question(client, monkeypatch):
     monkeypatch.setattr(review_module.profile, "applicant_facts", lambda: "")
     r = client.post(f"/review/{job_id}/ask", json={"question": "Do you require visa sponsorship?"})
     assert r.status_code == 422
+
+
+def test_the_changes_are_offered_and_only_the_picked_ones_remembered(client, monkeypatch, tmp_path):
+    """The form's pick list: what changed since the fill, on the detail
+    and on every form-state reply; a pick writes the store; submitting
+    writes nothing by itself."""
+    import json as _json
+    from browser.forms import profile as form_profile
+    from server import corrections
+    monkeypatch.setattr(form_profile, "FORM", tmp_path / "form.json")
+    job_id, app_dir = reviewable_job()
+    queue.update(job_id, status=Status.FILLED)
+    store.write(app_dir, corrections.FILL_REPORT, _json.dumps({
+        "report": {"ats": "ashby"}, "after_agent": {"Location": "Delhi, India", "Phone": "1"}}))
+    store.write(app_dir, corrections.FORM_STATE, _json.dumps({
+        "fields": {"Location": "Los Angeles, California, United States", "Phone": "1", "Pronouns": "he/him"}}))
+    monkeypatch.setattr(corrections, "capture", lambda url, app_dir: {"captured": False, "reason": "test"})
+
+    rows = client.get(f"/review/{job_id}").json()["changes"]
+    assert [(r["label"], r["now"], r["remembered"]) for r in rows] == [
+        ("Location", "Los Angeles, California, United States", False), ("Pronouns", "he/him", False)]
+    assert client.post(f"/review/{job_id}/form-state").json()["changes"] == rows
+
+    picked = client.post(f"/review/{job_id}/remember", json={"labels": ["Location"]}).json()
+    assert picked["remembered"] == 1
+    assert [r["remembered"] for r in picked["changes"]] == [True, False]
+    saved = _json.loads((tmp_path / "form.json").read_text())["corrections"]
+    assert list(saved) == ["Location"] and saved["Location"]["was"] == "Delhi, India" and saved["Location"]["system"] == "ashby"
+
+    import server.review as review_module
+    monkeypatch.setattr(review_module.chrome, "close_tab", lambda target: False)
+    done = client.post(f"/review/{job_id}/submitted", json={}).json()
+    assert done["status"] == "submitted"
+    assert [r["remembered"] for r in done["changes"]] == [True, False], "still offered, still not taken"
+    assert list(_json.loads((tmp_path / "form.json").read_text())["corrections"]) == ["Location"]
+    # The list survives the status change, for the confirmation page's banner.
+    assert client.post(f"/review/{job_id}/form-state").json()["changes"] == done["changes"]
