@@ -111,12 +111,22 @@ Specifically:
   dates) because every form asks and the screen wants it, but those keys
   are not in `forms.profile.KEYS` and `describes_protected` skips the
   field before matching. Flipping that is a decision, not a bug fix.
-- **A submission is marked two ways, both human.** The "I submitted it"
-  button, and `POST /review/{id}/submitted-seen` from `capture/content.js`
-  when the filled form's tab shows a confirmation (`CONFIRMED` regex, job
-  id kept in `sessionStorage` across the navigation). The latter marks
-  only a `filled` / `filling` job and never closes the browser. The agent
-  reaches neither.
+- **A submission is marked four ways, all behind a human's click on
+  Submit.** The "I submitted it" button; `POST /review/{id}/submitted-seen`
+  from `capture/content.js` when the filled form's tab shows a
+  confirmation with no form left (`CONFIRMED` regex plus `FORM_GONE`, job
+  id kept in `sessionStorage` across the navigation); `server/watch.py`
+  reading the same off the tab over CDP every 4 s (2026-09-20, for when
+  the script is not in the tab); and `/screen` recognising a confirmation
+  page by its text before any model call (`screen.confirmation_quote`).
+  All four go through `review.mark_seen` / `mark_submitted`, mark only a
+  `filled` / `filling` job, write no correction, and never close the
+  browser. The agent reaches none of them.
+- **Adding a job never changes the active tab** (2026-09-20). The banner's
+  `openReview(id, { focus: false })` points the Autopilot tab at the job
+  (`/__open` with `focus`, `Target.createTarget` `background`, the
+  extension's `active: false`); only "Open in autopilot" focuses. The
+  fill's own tab, on approve, is what comes to the front.
 - **Jobright's panel stalls on Oracle** at ~85% and never reports done;
   the agent waited 15 s a step for seven steps. The task now says two
   identical readings = finished, and `browser/autofill.py` waits on the
@@ -159,7 +169,7 @@ Specifically:
 | `browser/forms/` | the fill without a model, for Ashby, Greenhouse and Lever (`adapter_for(url)`, one module per system, `ADAPTERS` in `__init__`). `engine.py` scans every control over raw CDP (label resolved like a screen reader, `data-autopilot-ref` tags), matches by the adapter's id/name selectors, then `base/form.json` `answers` by exact label, then generic label patterns (never on a textarea or a label over 60 chars: those are questions), sets text through the native setter with real typing as fallback, `<select>` by option text, radios and Ashby's `button[aria-pressed]` by click, comboboxes by click + keys + clicking the suggestion, files by `DOM.setFileInputFiles` read back off the input or its block. Visa fields are skipped before matching whatever the profile says; no option or radio is clicked without `guard.describes_submit`. The report (`form_fill.json` next to the screenshot) is the agent's task: "these are still empty". `base/form.json` is gitignored, template `base/form.example.json`; missing = Jobright path as before. `AUTOPILOT_FORM_FILL=0` turns it off, and **it is off in `.env`** (2026-09-18): Jobright's autofill is always step one, this stays as the fallback |
 | `server/corrections.py` | the correction loop, **human-picked** (2026-09-20, replaces the silent diff-on-submit: "a very bad way for the AI to learn"). `browser/fill.py` writes `form_fill.json` with `after_agent` (the form as the fill left it, `forms.snapshot` over CDP, visa questions dropped) and `after_agent_meta` (the control's id / name / kind per label); the filled tab's `content.js` pings `POST /review/{id}/form-state` every 5 s, on submit clicks and on `pagehide`, and the server looks at the form itself (`capture`; `server/watch.py` does the same without the page) into `form_state.json`. `changes(app_dir)` = the diff, rows `{label, was, now, remembered}`, returned on every `/form-state` reply, on `GET /review/{id}/changes` and in `detail`. The banner (`CHANGES` / `paintChanges` in `content.js`, pops the bar open once when the first row appears) and the review page's "What you changed on the form" card show the rows with a tick each; **Remember** → `POST /review/{id}/remember {labels}` → `remember()` → `forms.profile.add_corrections` for the picked labels only, records (`value`, `was`, `system`, `field`, `when`, `job`) in `base/form.json` `corrections` (old `answers` key folded in on read, dropped on write). `/submitted` and `mark_seen` take one last look and return the rows; **they write nothing**. **Applied on the next fill:** `Engine.apply_corrections` in `run_documents`, after the documents and before the questions, puts each corrected value over whatever Jobright left on any field whose label matches, never a textarea, never a visa question, logo note "corrected: … (autofill had …)"; `Report.corrected`, the notes say `corrected: …`; `AUTOPILOT_CORRECTIONS=0` turns it off. The Profile tab's Form details shows the whole table (field, form filled, you corrected, where) with delete |
 | `server/watch.py` | the server's own eyes on every filled form (2026-09-20), a thread started at app startup (`AUTOPILOT_WATCH=0` off; `TestClient(app)` without `with` never starts it). Every 4 s, for each `filled` / `filling` job with a `form_fill.json`: attach to its tab (`find_target` by the recorded id), `forms.snapshot(detail=True)` (fields, identifiers, visible text, URL). Form still there and on the job's host → `form_state.json`, the file the page's ping writes, so the correction loop has its final state without a single ping. No form and a `CONFIRMED` phrase → `review.mark_seen` (shared with `/submitted-seen`). The phrase alone is never enough: postings say "thank you for your interest"; the form has to be gone (`corrections.MIN_FIELDS`). The page's script does the same from inside the tab; this is for the times it is not there (tab never marked, navigation missed, `sessionStorage` blocked), which was "sometimes it works". Nothing pressed, nothing closed |
-| `server/form.py` | the preliminary interview: `GET/POST /profile/form`, fixed `QUESTIONS` (contact, location, work, education, source pinned to Other, EEO, work authorisation), `/profile/form/hints` = contacts from the resume cached in `data/contacts.json`. The Profile tab's `Form` module walks them one per screen (Enter next, Skip, Save and stop), then shows the file and the learned answers with delete. Authorisation keys are on file but not in `forms.profile.KEYS`: collected, never auto-filled |
+| `server/form.py` | the preliminary interview: `GET/POST /profile/form`, fixed `QUESTIONS` (contact, location, work, education, source pinned to Other, EEO, work authorisation), `/profile/form/hints` = contacts from the resume cached in `data/contacts.json`. The Profile tab's `Form` module walks them one per screen (Enter next, Skip, Save and stop), then shows the file and the "Corrected fields" table with delete. Authorisation keys are on file but not in `forms.profile.KEYS`: collected, never auto-filled |
 | `browser/ats.py` + `ats_rules.md` | per-system notes for the browser model, picked by URL (oracle, greenhouse, ashby, workday, lever), sent verbatim under "Notes for this application system". Edit the markdown, not the Python. Oracle: one "Upload Attachment" control for every document, so the upload guard lets the cover letter onto a generic attachment slot (never onto a resume-named one) |
 | `browser/guard.py` | the never-submit deny-list |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |

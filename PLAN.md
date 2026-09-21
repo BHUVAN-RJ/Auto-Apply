@@ -1216,14 +1216,27 @@ unticks it, and a weight against such names is the next step if it
 recurs. Not yet seen live: confirm into a running interview, the short
 interview itself, a swap on a tailored resume.
 
-## Phase 16 — corrected fields, applied over autofill (built, 2026-09-20)
+## Phase 16 — corrected fields, picked by hand, applied over autofill (built, 2026-09-20)
 
 Phase 12 recorded corrections and nothing applied them: the code filler
 that reads `answers` is off (`AUTOPILOT_FORM_FILL=0`, Jobright's
 autofill is step one) and the agent is off (`AUTOPILOT_AGENT=0`). So a
 location Jobright kept getting wrong was fixed by hand on every form and
-learned every time, to no effect.
+learned every time, to no effect. And the learning itself was wrong:
+every changed field at submit time went on file, silently, so a value
+typed for one company would have become the value for every company.
+"A very bad way for the AI to learn."
 
+- **The human picks.** `corrections.changes` is the diff, rows
+  `{label, was, now, remembered}`, and it is only ever offered: on every
+  `/form-state` reply, so the banner on the filled form lists what
+  changed since autofill (what autofill had struck through, what it is
+  now) with a tick each and a **Remember** button, popping the bar open
+  once when the first row appears; on the review page as "What you
+  changed on the form", for after the tab is gone; on the confirmation
+  page too, since the list survives the status change. `POST
+  /review/{id}/remember {labels}` writes the ticked rows and nothing
+  else. `/submitted` and `mark_seen` return the rows and write nothing.
 - **The store is `corrections`, and a row is a record.** `value` (what
   the human set), `was` (what the form held, Jobright's value usually),
   `system`, `field` (the control's id, name, kind), `when`, `job`. The
@@ -1237,19 +1250,38 @@ learned every time, to no effect.
   over whatever autofill left. Never a textarea (prose is per job, the
   tailor writes it), never a visa question, no radio or option whose
   label reads as a submit. The logo says `corrected: … (autofill had …)`.
-- **The snapshot carries identifiers.** `forms.snapshot(detail=True)`
-  returns the values and, per label, the control's id / name / kind;
-  the fill keeps them as `after_agent_meta`, `capture` as `meta`, and
-  `learn` puts them on the row, so two forms wording one question alike
-  can be told apart on the page.
+- **The snapshot carries identifiers and the page's text.**
+  `forms.snapshot(detail=True)` returns the values, per label the
+  control's id / name / kind, the visible text and the URL; the fill
+  keeps the identifiers as `after_agent_meta`, `capture` as `meta`,
+  `remember` puts them on the row, and `server/watch.py` reads the text
+  to see a confirmation page.
+- **The server watches the form itself.** Marking a job submitted from
+  the page depended on the script being in the tab, re-evaluated after
+  the navigation, with `sessionStorage` allowed; any miss left the job
+  at `filled` after the person had pressed submit. `watch.py` attaches
+  to every filled job's tab every 4 s: form there, keep its state; form
+  gone and a confirmation phrase, mark it (`review.mark_seen`, shared
+  with `/submitted-seen`). `/screen` answers a confirmation page in
+  string work too, no model, and marks the job when it is ours. The
+  page's own check wants the form gone before it believes a thank-you.
 - **The page is a table, not a list.** Form details on the Profile tab:
   field, what the form filled (struck through), what you corrected,
   where (system, date), delete. Every row there is a value the next fill
   will write; nothing is applied that is not shown.
-- **Bitten once, in the tests:** `Profile.__bool__` is the contact
-  details, so a store of corrections alone is falsy and
-  `corrections or Profile({})` dropped it silently. The test is on
-  `None` now.
+- **Adding a job never changes the active tab.** The review tab is
+  pointed at the job in the background (`/__open` with `focus: false`,
+  `Target.createTarget` `background`, the extension's `active: false`);
+  the fill's own tab, on approve, is what comes to the front.
+- **Bitten:** `Profile.__bool__` is the contact details, so a store of
+  corrections alone is falsy and `corrections or Profile({})` dropped it
+  silently (the test is on `None` now). Greenhouse removes the file
+  input after an upload, so `MARK_FN` found nothing to put the logo on;
+  the host is the tagged upload block now. The confirmation page was
+  screened like a posting, with a model call, until `/screen` learned
+  to see it first. And the whole thing ran for a day against a uvicorn
+  started before the code existed; `pgrep -fl uvicorn` first, always.
 
-Not verified live yet; the next Greenhouse fill after a hand-corrected
-location is the check.
+Verified live so far: the fill's report carries `corrected` and the
+identifiers, the pick list shows Delhi → Los Angeles on the Render job.
+Not yet: a fill after a Remember, which is the point.

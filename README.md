@@ -108,8 +108,8 @@ hyperlinks. Type, or switch to
 voice mode and talk to the orb hands-free; speech runs on this machine
 (whisper.cpp in, Kokoro out) and the models download on first use. Ashby,
 Greenhouse and Lever forms are filled by code from the preliminary
-interview's answers, and what you correct before submitting is learned for
-the next form. Next: the same code fill for Workday, Oracle, iCIMS and
+interview's answers, and what you correct on a form is offered back to
+you with a tick each: what you keep goes over autofill on the next form. Next: the same code fill for Workday, Oracle, iCIMS and
 SmartRecruiters, where Jobright's autofill is still step one. See
 [PLAN.md](PLAN.md) for the design and what is deliberately deferred.
 
@@ -379,10 +379,15 @@ Three independent things stop it submitting, none of them a prompt rule:
   agent entirely. Arbitrary JavaScript would make every other guard
   decorative, and Enter submits a single-input form with no button click.
 - **A terminal state.** The run always ends in a screenshot and `status:
-  filled`. `SUBMITTED` is reachable only from the review page, only on a job
-  that is `filled` or still `filling`, and only behind a confirmation.
+  filled`. `SUBMITTED` is set by a human or by a confirmation the browser
+  shows after a human pressed submit: the review page's button, the
+  page's own script seeing a thank-you with no form left, the server's
+  watch reading the same off the tab, or the screen recognising a
+  confirmation page (string work, no model). Never by the agent, and
+  only on a job that is `filled` or still `filling`.
 
-You then review the screenshot, submit in the browser yourself, and mark it.
+You then review the screenshot, submit in the browser yourself, and the
+job is marked; the button is there for when nothing saw the confirmation.
 
 ## Tailoring rules
 
