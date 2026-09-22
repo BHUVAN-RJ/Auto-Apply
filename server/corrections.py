@@ -38,6 +38,7 @@ from typing import Optional
 
 from browser import ats, chrome, forms, guard
 from browser.forms import profile as form_profile
+from server import settings
 
 FILL_REPORT = "form_fill.json"
 FORM_STATE = "form_state.json"
@@ -103,7 +104,10 @@ def changes(app_dir: Path, store: Optional[dict] = None) -> list[dict]:
     """What the human changed on the form since the fill left it: label,
     what autofill had, what it is now, and whether that exact correction
     is already on file. Read off the two snapshots; nothing is decided
-    here. Visa questions never appear."""
+    here. Visa questions never appear. Empty while the auto-learn switch
+    is off: nothing to pick, nothing to nag about."""
+    if not settings.auto_learn():
+        return []
     report = _read(app_dir / FILL_REPORT)
     baseline = report.get("after_agent") or {}
     state = _read(app_dir / FORM_STATE)

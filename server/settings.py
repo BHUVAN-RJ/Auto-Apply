@@ -25,9 +25,15 @@ SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", ROOT / "data" / "setti
 # the job approved and start the browser fill without waiting at checkpoint
 # 1. The clean verdict already queued the job by itself; the human's decision
 # moves to checkpoint 2, the filled form. A poor-fit verdict still waits.
+# auto_learn: the correction loop. On, the review page and the banner list
+# what the human changed on a filled form, Remember puts it on file, and the
+# next fill writes the corrected values over autofill's. Off since 2026-09-21:
+# Jobright fixed the autofill it was correcting for, so the rows are noise
+# and nothing on file is applied. The table on the Profile tab stays
+# readable either way.
 # scout_checks_per_day: how often every watched careers page is read, unless
 # the watch sets its own. 4 = every six hours.
-DEFAULTS = {"use_profile": True, "auto_fill": True, "scout_checks_per_day": 4}
+DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "scout_checks_per_day": 4}
 
 router = APIRouter()
 
@@ -35,6 +41,7 @@ router = APIRouter()
 class Settings(BaseModel):
     use_profile: Optional[bool] = None
     auto_fill: Optional[bool] = None
+    auto_learn: Optional[bool] = None
     scout_checks_per_day: Optional[int] = None
 
 
@@ -61,6 +68,10 @@ def use_profile() -> bool:
 
 def auto_fill() -> bool:
     return bool(load().get("auto_fill", True))
+
+
+def auto_learn() -> bool:
+    return bool(load().get("auto_learn", False))
 
 
 @router.get("/settings")

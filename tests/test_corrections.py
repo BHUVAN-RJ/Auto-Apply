@@ -8,7 +8,7 @@ import json
 import pytest
 
 from browser.forms import profile as form_profile
-from server import corrections
+from server import corrections, settings
 
 
 def test_diff_keeps_what_the_human_filled_in_or_changed():
@@ -36,7 +36,13 @@ def _app(tmp_path):
     return app
 
 
-def test_changes_are_offered_never_decided(tmp_path):
+@pytest.fixture
+def auto_learn(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    settings.save(auto_learn=True)
+
+
+def test_changes_are_offered_never_decided(tmp_path, auto_learn):
     app = _app(tmp_path)
     rows = corrections.changes(app, store={})
     assert [(r["label"], r["was"], r["now"], r["remembered"]) for r in rows] == [
@@ -49,7 +55,19 @@ def test_changes_are_offered_never_decided(tmp_path):
     assert corrections.changes(tmp_path) == []
 
 
-def test_remember_writes_only_what_was_picked(tmp_path):
+def test_auto_learn_off_lists_nothing(tmp_path, monkeypatch):
+    # The switch on the Profile tab, off by default since Jobright fixed
+    # its autofill: the same two snapshots produce no rows, so the banner
+    # and the review page have nothing to nag about.
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    app = _app(tmp_path)
+    assert settings.auto_learn() is False
+    assert corrections.changes(app, store={}) == []
+    settings.save(auto_learn=True)
+    assert len(corrections.changes(app, store={})) == 2
+
+
+def test_remember_writes_only_what_was_picked(tmp_path, auto_learn):
     app = _app(tmp_path)
     form = tmp_path / "form.json"
     result = corrections.remember(app, ["Location"], form)

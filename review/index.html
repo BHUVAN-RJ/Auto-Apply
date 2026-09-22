@@ -1458,10 +1458,12 @@ const Form = (() => {
   let corrections = {};  // label -> {value, was, system, field, when, job}
   let step = 0;         // index into asked (questions with a key, not fixed)
   let asked = [];
+  let autoLearn = false;  // settings.auto_learn: the correction loop on or off
 
   async function open() {
     Profile.setViewing({ slug: "_form", name: "form.json" });
     try { data = await api("/profile/form"); } catch (err) { $("detail").innerHTML = `<div class="banner stop">${escape(err.message)}</div>`; return; }
+    try { autoLearn = !!(await api("/settings")).auto_learn; } catch { autoLearn = false; }
     values = { ...data.values };
     corrections = { ...data.corrections };
     asked = data.questions.filter((q) => q.key && !q.fixed);
@@ -1546,6 +1548,7 @@ const Form = (() => {
       </div>
       <div class="card" style="padding:.6rem 1rem"><table class="kv">${rows}</table></div>
       <h3 style="margin-top:1.4rem">Corrected fields · ${corrected.length}</h3>
+      <label class="hint" style="display:block;margin:.2rem 0 .6rem"><input type="checkbox" id="autoLearn" ${autoLearn ? "checked" : ""}> Auto-learn: list what I change on a filled form, and put the fields below over autofill on the next one. Off, nothing is listed and nothing below is applied.</label>
       <p class="hint">A field you changed on a form before submitting. On every next form that asks it, the value you set goes over what autofill put there. Delete a row to stop that.</p>
       <div class="card" style="padding:.6rem 1rem"><table class="kv corr" id="corrTable">
         ${corrected.length ? `<tr class="th"><td>Field</td><td>Form filled</td><td>You corrected</td><td>Where</td><td></td></tr>` : ""}
@@ -1559,6 +1562,11 @@ const Form = (() => {
       </table></div>`;
     $("qClose").onclick = () => Profile.back();
     $("qRedo").onclick = () => { step = 0; ask(); };
+    $("autoLearn").onchange = async (e) => {
+      autoLearn = e.target.checked;
+      try { await api("/settings", { method: "POST", body: JSON.stringify({ auto_learn: autoLearn }) }); }
+      catch (err) { e.target.checked = autoLearn = !autoLearn; alert(err.message); }
+    };
     for (const b of $("detail").querySelectorAll("[data-del]")) b.onclick = () => { delete corrections[b.dataset.del]; save(); };
   }
 

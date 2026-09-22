@@ -80,9 +80,12 @@ def test_story_dirs_skip_interviewer_state(tmp_path):
 
 
 def test_settings_default_and_roundtrip():
-    assert settings.load() == {"use_profile": True, "auto_fill": True, "scout_checks_per_day": 4}
+    assert settings.load() == {"use_profile": True, "auto_fill": True, "auto_learn": False, "scout_checks_per_day": 4}
     settings.save(use_profile=False)
     assert settings.use_profile() is False
     assert settings.auto_fill() is True
     settings.save(auto_fill=False)
     assert settings.auto_fill() is False and settings.use_profile() is False
+    assert settings.auto_learn() is False
+    settings.save(auto_learn=True)
+    assert settings.auto_learn() is True and settings.auto_fill() is False

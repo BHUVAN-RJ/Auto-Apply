@@ -626,8 +626,10 @@ def test_the_changes_are_offered_and_only_the_picked_ones_remembered(client, mon
     writes nothing by itself."""
     import json as _json
     from browser.forms import profile as form_profile
-    from server import corrections
+    from server import corrections, settings
     monkeypatch.setattr(form_profile, "FORM", tmp_path / "form.json")
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    settings.save(auto_learn=True)
     job_id, app_dir = reviewable_job()
     queue.update(job_id, status=Status.FILLED)
     store.write(app_dir, corrections.FILL_REPORT, _json.dumps({

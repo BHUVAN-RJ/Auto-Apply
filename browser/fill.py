@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from server import settings
+
 from . import ats, autofill, chrome, forms, guard
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -530,7 +532,9 @@ async def fill_async(
             await autofill.notify(cdp_url, pressed.target_id, "working", "Attaching the tailored resume")
             # What the human corrected on earlier forms goes over Jobright's
             # values by exact label; the store is empty when nothing was.
-            corrections = forms.load_corrections() if os.environ.get(CORRECTIONS_ENV, "1") != "0" else None
+            # Only while the auto-learn switch on the page is on.
+            corrections = (forms.load_corrections()
+                           if os.environ.get(CORRECTIONS_ENV, "1") != "0" and settings.auto_learn() else None)
             try:
                 docs = await forms.upload_documents(cdp_url, pressed.target_id, adapter or forms.Adapter(),
                                                     resume_pdf, cover_letter_pdf, answerer, corrections)
