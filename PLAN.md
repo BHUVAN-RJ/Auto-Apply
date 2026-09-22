@@ -101,6 +101,13 @@ browser/   browser-use fill loop. Attaches to a Chrome that chrome.py owns,
 review/    Localhost web page. Diff view, PDF preview, Approve / Reject / Chat.
 
 archive/   Application folder writer plus index.csv.
+
+scout/     Companies' own careers pages, watched on a schedule. detect()
+           picks a provider from the URL, providers.py reads the public
+           JSON (or server-rendered page) behind it, run.py filters titles
+           by level, screens what is new, records hits, mails a digest.
+           Never a browser, never a queue write of its own; a hit enters
+           the pipeline only by the person's click. Phase 17.
 ```
 
 ## Flow
@@ -196,6 +203,10 @@ leak; a deny-list in code does not.
   "Remove file" whose label has gone through `describes_submit`.
 - A fill works in one tab per job, found by the whole URL minus visitor
   tags (`autofill.same_page`), never by host and path alone.
+- The scout reads and writes nothing but its own file. It queues no job,
+  opens no browser, presses nothing; `run.queue_hit` runs only from the
+  "Add to autopilot" button and does exactly what `/capture` does, so a
+  scouted job meets the same two checkpoints as a captured one.
 - The code filler (`browser/forms/`) clicks no option, radio or button
   without `describes_submit` refusing first, fills no field that reads as
   a visa question whatever the profile holds, and records nothing about
@@ -355,6 +366,15 @@ and the same class of mistake is likely in what remains.
   letter shipped.
 
 ## Deferred — noted, not built
+
+- **Scout: Meta, LinkedIn, a browser fallback.** Meta's careers site is
+  GraphQL behind a per-session token; LinkedIn has no public listing API;
+  a careers page rendered only by JavaScript needs a browser. All three
+  are refused by name at add time instead of half-working. A Playwright
+  provider would cover the last one at the cost of a browser in the
+  scout, which is what the one-click thesis says to avoid.
+- **Scout: Telegram / push.** Mail was asked for; the digest is one
+  function (`mail.digest`) and a second channel is one more sender.
 
 - **Recipe cache per ATS domain.** Not built; every fill currently runs the
   full agent loop at full cost, roughly 20-40 model calls with a screenshot
@@ -1285,3 +1305,102 @@ typed for one company would have become the value for every company.
 Verified live so far: the fill's report carries `corrected` and the
 identifiers, the pick list shows Delhi → Los Angeles on the Render job.
 Not yet: a fill after a Remember, which is the point.
+
+## Phase 17 — scout: a company's careers page, watched (built, 2026-09-20)
+
+The pipeline starts from a posting someone found. For the few companies
+where the person knows someone who can refer them, the finding is the
+slow part: the role has to be seen the day it opens, and the referral
+asked for before the posting fills. So: give it the careers page, have it
+looked at a few times a day, be told the moment a role at the level
+appears, with the message to the referrer ready.
+
+Prior art was read first (`akv2011/job-watcher`, `ms-job-watcher`,
+`job-alert-watcher`, `fulltime_newsletter`, the Apify scrapers). Every one
+is thin wrappers on the same public endpoints plus a cron and a `seen`
+file; none is licensed for lifting, none fits a one-click app (Node,
+GitHub Actions, Streamlit, paid API), and this repo already owns the
+parts they bolt on: the screen, the queue, the page, a background thread.
+Reimplemented in ~500 lines.
+
+### Decisions
+
+- **The URL is the setup.** `scout.detect` reads host and path:
+  Greenhouse (`boards.greenhouse.io/<slug>`, the embed's `?for=`),
+  Lever, Ashby, Workday (`<tenant>.wd<n>.myworkdayjobs.com/<locale>/<site>`),
+  SmartRecruiters, Oracle ORC (`/sites/<site>`), Eightfold (`?domain=`,
+  and `careers.microsoft.com` mapped to its pcsx host), Google, Amazon,
+  Apple. The page's own search filters carry over (`q`, `location`,
+  `target_level`). An unknown host is refused with the list; a watch
+  that can never list a role is not created.
+- **Public JSON, no browser.** Each provider is one function over the
+  endpoint the page itself calls: Greenhouse `boards-api`, Lever
+  `api.lever.co`, Ashby `posting-api`, Workday `wday/cxs/.../jobs`
+  (POST, `searchText`), SmartRecruiters `v1/companies/.../postings`,
+  Oracle `recruitingCEJobRequisitions` with its `finder` string built by
+  hand (URL-encoding breaks it), Eightfold `api/pcsx/search`, Amazon
+  `search.json`. Google's `careers.google.com/api/v3/search` is gone
+  (`Not Found`); the results page server-renders the rows into an
+  `AF_initDataCallback` block, positional: id 0, title 1, apply URL 2,
+  locations 9, description 10, posted epoch 12, team 15, preferred
+  quals 18, minimum quals 19. The posting page by id is the hit's URL;
+  row 2 is the sign-in-to-apply link. Apple is server-rendered HTML,
+  titles from the link slugs. Microsoft answers ten rows a page whatever
+  `num` says, so paging steps by what came back.
+- **Level is a title filter, on the watch.** `filter.at_level`: one of
+  the positives, none of the negatives, word-bounded substrings. The
+  defaults are entry-level software; `III` is deliberately not negative
+  (Google's new-grad level), `intern` is. Both lists are editable per
+  watch on the page. The screen does the rest: every new title at the
+  level goes through `server.screen.screen_url` with the description
+  the listing carried (Google, Greenhouse, Lever, Ashby, Amazon send
+  it; Workday, Apple, Eightfold do not, so the page is fetched), cached
+  by URL, so a role later opened in the browser costs nothing twice.
+- **Only what is new.** `seen_ids` on the watch. The first check of a
+  page records everything listed and mails nothing: the point is what
+  appears from then on, and today's list is on the page. Ids no longer
+  listed are dropped, so a role that comes back after a gap is news
+  again. At most `SCREEN_LIMIT` new roles are screened per check; the
+  rest wait a round.
+- **Frequency is one number.** `settings.scout_checks_per_day` (4), a
+  per-watch override; `due` is 24 h / that since the last check; the
+  thread ticks every minute and checks what is due, serially. "Check
+  now" and "Verify" on the page run outside the schedule.
+- **Broken is loud, three ways.** A fetch that raises or a page that
+  lists nothing sets `Watch.error`: red `BROKEN` on the tab button from
+  every view, "This company does not work" on the Scout tab and on the
+  watch, and one mail (`broken_mailed`, reset when it reads again, so
+  it never nags and does say it again on the next breakage). Adding a
+  URL runs `verify` on the spot and says how many roles, how many at
+  the level, the first titles.
+- **Mail is SMTP from a personal account.** stdlib `smtplib`,
+  `AUTOPILOT_SMTP_USER` / `_PASS` / `AUTOPILOT_MAIL_TO`, Gmail by default
+  with an App Password, host and port for anything else. One digest per
+  round with every hit not `reject`, the verdict and summary, the
+  referrer and a note to forward. Not configured: the page says so, the
+  hits stay on the page. Chosen over the Gmail API because four `.env`
+  lines is what a friend will do and an OAuth consent screen is not.
+- **The referral note is a template.** It goes to a friend and should
+  read like the person, not like a model; company, title, first two
+  locations, link, one line asking. Copy button on the hit.
+- **Nothing is queued by itself.** A hit sits at `new` until "Add to
+  autopilot" (`run.queue_hit`, the same three steps as `/capture`: queue
+  row, saved posting text, pipeline start), "Dismiss", or a page
+  breakage. The pipeline then runs as for any job, checkpoints intact.
+- **`POST /settings` changes only the keys sent.** It took the whole
+  model with defaults; the page's `{use_profile: true}` would have reset
+  the scout frequency every load.
+
+### Status
+
+Built and verified live: ten providers probed the day of writing
+(Google 101 rows / 30 at level unfiltered by location, Greenhouse 664 /
+33, Ashby 148 / 18, Workday 300 / 39, Microsoft 300, Amazon 300 / 193,
+Apple 100 / 11, Lever 313 / 126); a Google watch on early-career US
+software engineers seeded with two roles; one forced re-discovery went
+through the real screen (`ok`) and onto the page with the note; a
+deliberately wrong SmartRecruiters company came up BROKEN on the tab
+button, the banner and the row. Mail not yet configured on the
+author's machine; the digest and the broken notice are tested with the
+sender stubbed. `tools/scout_verify.py` exits with the broken count.
+Not yet: a real hit arriving on the schedule, and a mail received.

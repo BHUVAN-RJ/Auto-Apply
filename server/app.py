@@ -22,6 +22,7 @@ from .form import router as form_router
 from .profile import router as profile_router
 from .github import router as github_router
 from .review import router as review_router
+from .scout import router as scout_router
 from .screen import router as screen_router
 from .settings import router as settings_router
 from .voice import router as voice_router
@@ -75,6 +76,7 @@ app.include_router(profile_router)
 app.include_router(form_router)
 app.include_router(voice_router)
 app.include_router(github_router)
+app.include_router(scout_router)
 
 
 @app.on_event("startup")
@@ -83,6 +85,10 @@ def _start_watch() -> None:
     # correction loop, and submitted when the page turns into a
     # confirmation. Independent of the script in the tab.
     watch.start()
+    # The scout: every watched careers page read on its schedule, new
+    # roles at the level recorded and mailed. Nothing queued by itself.
+    from scout import run as scout_run
+    scout_run.start()
 
 
 @app.get("/health")

@@ -293,6 +293,21 @@
   svg.logo { display: inline-block; vertical-align: -3px; overflow: visible; margin-right: 2px; }
   .asker .answer .a { white-space: pre-wrap; line-height: 1.5; margin-bottom: .4rem; }
   .empty { color: var(--muted); padding: 2rem 0; max-width: 60ch; }
+  .broken { display: inline-block; background: var(--red); color: #fff; font-weight: 700;
+            padding: .15rem .5rem; letter-spacing: .08em; text-transform: uppercase; font-size: 11px; }
+  .hit { padding: .7rem 1rem; border-bottom: 2px solid var(--line); }
+  .hit:last-child { border-bottom: 0; }
+  .hit .t { font-weight: 600; }
+  .hit .m { color: var(--muted); font-size: 12px; margin: .2rem 0 .4rem; }
+  .hit .v-ok { color: var(--green); } .hit .v-caution { color: var(--warn); } .hit .v-reject { color: var(--red); }
+  .hit pre.note { white-space: pre-wrap; font: 12px/1.5 inherit; margin: .4rem 0; padding: .5rem .75rem;
+                  border-left: 3px solid var(--purple); background: var(--panel); }
+  .hit.done { opacity: .55; }
+  .scout-form { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin: .6rem 0; }
+  .scout-form textarea { min-height: 2.6rem; }
+  .scout-form .wide { grid-column: 1 / -1; }
+  input.num { width: 4.5rem; padding: .4rem; border: 2px solid var(--line); background: var(--panel);
+              color: inherit; font: inherit; }
   .hint { color: var(--muted); font-size: 12px; }
 
   dialog {
@@ -311,6 +326,7 @@
     <button id="tabJobs" aria-current="true">Jobs</button>
     <button id="tabProfile" aria-current="false">Profile</button>
     <button id="tabProjects" aria-current="false">Projects</button>
+    <button id="tabScout" aria-current="false">Scout<span class="broken" id="scoutBroken" hidden style="margin-left:.5rem">Broken</span></button>
   </div>
   <span class="count" id="count"></span>
   <button class="pstat" id="profileStat" aria-current="false" hidden></button>
@@ -407,14 +423,17 @@ function switchView(name) {
   $("tabJobs").setAttribute("aria-current", name === "jobs");
   $("tabProfile").setAttribute("aria-current", name === "profile");
   $("tabProjects").setAttribute("aria-current", name === "projects");
+  $("tabScout").setAttribute("aria-current", name === "scout");
   if (name !== "profile") Profile.leave();
   if (name === "jobs") loadList();
   else if (name === "profile") Profile.open();
+  else if (name === "scout") Scout.open();
   else Projects.open();
 }
 $("tabJobs").onclick = () => switchView("jobs");
 $("tabProfile").onclick = () => switchView("profile");
 $("tabProjects").onclick = () => switchView("projects");
+$("tabScout").onclick = () => switchView("scout");
 
 async function loadList() {
   if (view !== "jobs") return;
@@ -951,9 +970,220 @@ setInterval(() => {
   if (!document.hidden && !$("rejectDialog").open) {
     if (view === "jobs") { loadList(); loadProfileStat(); }
     else if (view === "profile") Profile.poll();
+    else if (view === "scout") Scout.poll();
     else Projects.poll();
+    loadScoutBroken();
   }
 }, 5000);
+
+
+// ---------------------------------------------------------------- Scout --
+// Companies' own careers pages watched on a schedule; the new roles at the
+// level land here and in the mail. Nothing is queued until "Add to
+// autopilot" on a hit; a watch whose page cannot be read is BROKEN in red.
+const Scout = (() => {
+  let state = null;     // GET /scout
+  let viewing = null;   // watch id when its hits are shown; null = every hit
+  let busy = false;
+
+  async function open() { await refresh(); render(); }
+
+  async function refresh() {
+    try { state = await api("/scout"); } catch (err) { state = { error: err.message, watches: [], hits: [], mail: {} }; }
+  }
+
+  async function poll() {
+    if (busy || view !== "scout") return;
+    await refresh();
+    renderNav();
+    // Hits can appear at any time; redraw the list only when the count moved.
+    const shown = $("detail").dataset.hits;
+    if (shown !== undefined && shown !== String(state.hits.length)) render();
+  }
+
+  function fmt(iso) {
+    if (!iso) return "never";
+    if (iso === "now") return "now";
+    const d = new Date(iso); const mins = Math.round((d - Date.now()) / 60000);
+    if (Math.abs(mins) < 60) return mins <= 0 ? `${-mins} min ago` : `in ${mins} min`;
+    const h = Math.round(mins / 60);
+    return h <= 0 ? `${-h} h ago` : `in ${h} h`;
+  }
+
+  function tone(w) { return w.broken ? "stop" : !w.enabled ? "done" : "agent"; }
+
+  function renderNav() {
+    const ws = state?.watches || [];
+    const news = (state?.hits || []).filter((h) => h.status === "new");
+    $("count").textContent = ws.length ? `${ws.length} watched · ${news.length} new` : "";
+    $("list").innerHTML = `<button class="row" data-all aria-current="${viewing === null}" data-tone="you">
+        <span class="role">Every hit</span><span class="cov">${news.length} new</span></button>` +
+      (ws.length ? `<div class="group">Watching <span class="n">${ws.length}</span></div>` : "") +
+      ws.map((w) => `
+        <button class="row" data-id="${w.id}" data-tone="${tone(w)}" aria-current="${viewing === w.id}">
+          <span class="role">${escape(w.company)}</span>
+          <span class="cov">${w.broken ? '<span class="broken">Broken</span>' : !w.enabled ? "paused" :
+            `${w.last_matching} at level · next ${escape(fmt(w.next_check))}`}</span>
+        </button>`).join("");
+    $("list").querySelector("[data-all]").onclick = () => { viewing = null; render(); };
+    for (const b of $("list").querySelectorAll("button[data-id]")) b.onclick = () => { viewing = b.dataset.id; render(); };
+  }
+
+  function render() {
+    renderNav();
+    if (!state) return;
+    const w = viewing && state.watches.find((x) => x.id === viewing);
+    if (viewing && !w) { viewing = null; }
+    $("detail").dataset.hits = state.hits.length;
+    $("detail").innerHTML = (w ? renderWatch(w) : renderTop()) + renderHits(w);
+    wire(w);
+  }
+
+  function renderTop() {
+    const m = state.mail || {};
+    return `
+      <div class="head"><h2>Scout</h2></div>
+      <p>Paste a company's careers page. It is read ${state.checks_per_day} times a day; every new role at your
+      level is screened, listed here and mailed to you, with a note ready for the person who can refer you.
+      Nothing is applied to: a hit enters autopilot only when you add it.</p>
+      ${state.error ? `<div class="banner stop">${escape(state.error)}</div>` : ""}
+      ${state.watches.some((x) => x.broken) ? `<div class="banner stop" style="font-size:15px"><span class="broken">Broken</span>
+        <b>This company does not work: ${state.watches.filter((x) => x.broken).map((x) => escape(x.company)).join(", ")}.</b>
+        The page could not be read; nothing there is watched until it reads again. Open it in the list, press Verify, or paste its new URL.</div>` : ""}
+      <div class="card" style="padding:.6rem 1rem">
+        <div class="scout-form">
+          <textarea id="sUrl" class="wide" rows="1" placeholder="careers page URL, e.g. https://www.google.com/about/careers/applications/jobs/results?q=software+engineer&location=United+States"></textarea>
+          <textarea id="sCompany" rows="1" placeholder="company (optional)"></textarea>
+          <textarea id="sQuery" rows="1" placeholder="search text for the page (optional)"></textarea>
+          <textarea id="sRef" class="wide" rows="1" placeholder="who can refer you there, e.g. Priya (WhatsApp)"></textarea>
+        </div>
+        <div class="actions">
+          <button class="act primary" id="sAdd">Watch it</button>
+          <span class="hint" id="sNote">Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Oracle, Microsoft/Eightfold, Google, Amazon, Apple.</span>
+        </div>
+      </div>
+      <h3>Schedule and mail</h3>
+      <div class="card" style="padding:.6rem 1rem">
+        <div class="actions">
+          <label>Checks per day <input class="num" id="sFreq" type="number" min="1" max="48" value="${state.checks_per_day}"></label>
+          <button class="act" id="sFreqGo">Set</button>
+          <button class="act" id="sVerify">Verify every page</button>
+          <button class="act" id="sCheck">Check every page now</button>
+          <span class="hint" id="sStatus">${state.running ? "" : "the scout thread is off (AUTOPILOT_SCOUT=0)"}</span>
+        </div>
+        <p class="hint">Mail: ${m.configured ? `on, to ${escape((m.to || []).join(", "))} <button class="act small" id="sMail">Send a test</button>`
+          : "not set up. AUTOPILOT_SMTP_USER and AUTOPILOT_SMTP_PASS in .env (Gmail: an App Password), then restart the server."}</p>
+      </div>`;
+  }
+
+  function renderWatch(w) {
+    return `
+      <div class="head"><h2>${escape(w.company)}</h2></div>
+      ${w.broken ? `<div class="banner stop" style="font-size:15px"><span class="broken">Broken</span> <b>This company does not work.</b> ${escape(w.error)}</div>` :
+        `<p class="hint">${w.provider} · ${w.last_total} roles listed, ${w.last_matching} at your level ·
+         checked ${escape(fmt(w.last_checked))} · next ${escape(fmt(w.next_check))}</p>`}
+      <div class="card" style="padding:.6rem 1rem">
+        <table class="kv">
+          <tr><td>Page</td><td><a href="${escape(w.url)}" target="_blank" rel="noopener">${escape(w.url)}</a></td></tr>
+          <tr><td>Search text</td><td><textarea id="wQuery" rows="1" style="min-height:2.2rem">${escape(w.query)}</textarea></td></tr>
+          <tr><td>Referrer</td><td><textarea id="wRef" rows="1" style="min-height:2.2rem">${escape(w.referrer)}</textarea></td></tr>
+          <tr><td>Title must have one of</td><td><textarea id="wPos" rows="2">${escape(w.positive.join(", "))}</textarea></td></tr>
+          <tr><td>and none of</td><td><textarea id="wNeg" rows="2">${escape(w.negative.join(", "))}</textarea></td></tr>
+          <tr><td>Checks per day</td><td><input class="num" id="wFreq" type="number" min="1" max="48" value="${w.checks_per_day || ""}" placeholder="${w.checks_per_day_effective}"> <span class="hint">blank = the global ${state.checks_per_day}</span></td></tr>
+        </table>
+        <div class="actions">
+          <button class="act primary" id="wSave">Save</button>
+          <button class="act" id="wVerify">Verify</button>
+          <button class="act" id="wCheck">Check now</button>
+          <button class="act" id="wPause">${w.enabled ? "Pause" : "Resume"}</button>
+          <button class="act danger" id="wDel">Stop watching</button>
+          <span class="hint" id="wNote"></span>
+        </div>
+      </div>`;
+  }
+
+  function renderHits(w) {
+    const hits = (state.hits || []).filter((h) => !w || h.watch_id === w.id);
+    const fresh = hits.filter((h) => h.status === "new"), rest = hits.filter((h) => h.status !== "new");
+    const card = (h) => `
+      <div class="hit ${h.status !== "new" ? "done" : ""}" data-hit="${h.id}">
+        <div class="t"><a href="${escape(h.posting.url)}" target="_blank" rel="noopener">${escape(h.posting.title)}</a>
+          <span class="hint">· ${escape(h.company)}</span></div>
+        <div class="m">${escape(h.posting.location || "")}${h.posting.posted ? ` · posted ${escape(h.posting.posted)}` : ""}
+          · found ${escape(fmt(h.found_at))} · <span class="v-${escape(h.verdict)}">${escape(h.verdict || "not screened")}</span>
+          ${h.summary ? ` — ${escape(h.summary)}` : ""}${h.status === "queued" ? " · in autopilot" : h.status === "dismissed" ? " · dismissed" : ""}</div>
+        ${h.referrer ? `<pre class="note">${escape(h.note)}</pre>` : ""}
+        ${h.status === "new" ? `<div class="actions">
+          <button class="act primary" data-queue="${h.id}">Add to autopilot</button>
+          ${h.referrer ? `<button class="act" data-copy="${h.id}">Copy the note</button>` : ""}
+          <button class="act" data-dismiss="${h.id}">Dismiss</button></div>` :
+          h.job_id ? `<div class="actions"><button class="act" data-open="${h.job_id}">Open the job</button></div>` : ""}
+      </div>`;
+    return `<h3>New · ${fresh.length}</h3>
+      <div class="card">${fresh.map(card).join("") || `<p class="empty" style="padding:1rem">Nothing new${w ? "" : " on any page"}. The first check of a page only remembers what is there; from then on every new role at your level shows here.</p>`}</div>
+      ${rest.length ? `<details><summary>Handled · ${rest.length}</summary><div class="card">${rest.map(card).join("")}</div></details>` : ""}`;
+  }
+
+  async function call(path, options, note, onDone) {
+    busy = true;
+    if (note) note.textContent = "…";
+    try {
+      const out = await api(path, options);
+      if (note) note.textContent = "";
+      await onDone?.(out);
+    } catch (err) { if (note) note.textContent = err.message; else alert(err.message); }
+    busy = false;
+  }
+
+  function wire(w) {
+    if (!w) {
+      $("sAdd").onclick = () => {
+        const url = $("sUrl").value.trim();
+        if (!url) return;
+        call("/scout/watch", { method: "POST", body: JSON.stringify({ url, company: $("sCompany").value,
+          query: $("sQuery").value.trim() || null, referrer: $("sRef").value }) }, $("sNote"), async (out) => {
+            const v = out.verify;
+            if (v && !v.ok) alert(`Watching, but the page could not be read: ${v.error}`);
+            else if (v) alert(`Watching ${out.watch.company}: ${v.total} roles listed, ${v.matching} at your level.${v.matching ? "\n" + v.sample.slice(0, 5).join("\n") : "\nNone match the title filter; open the watch and loosen it."}`);
+            viewing = out.watch.id; await refresh(); render(); });
+      };
+      $("sFreqGo").onclick = () => call("/scout/frequency", { method: "POST", body: JSON.stringify({ checks_per_day: Number($("sFreq").value) }) }, $("sStatus"), async () => { await refresh(); render(); });
+      $("sVerify").onclick = () => call("/scout/verify", { method: "POST" }, $("sStatus"), async (out) => {
+        await refresh(); render();
+        $("sStatus").textContent = out.broken ? `${out.broken} broken` : `all ${out.results.length} pages read`; });
+      $("sCheck").onclick = () => call("/scout/check", { method: "POST" }, $("sStatus"), async (out) => {
+        await refresh(); render();
+        const fresh = Object.values(out.results).reduce((n, r) => n + (r.new || 0), 0);
+        $("sStatus").textContent = `${fresh} new` + (out.mail.sent ? `, mailed` : out.mail.reason ? ` (${out.mail.reason})` : ""); });
+      if ($("sMail")) $("sMail").onclick = () => call("/scout/mail/test", { method: "POST" }, null, (out) => alert(`Sent to ${out.to.join(", ")}`));
+    } else {
+      const lists = (id) => $(id).value.split(",").map((x) => x.trim()).filter(Boolean);
+      $("wSave").onclick = () => call(`/scout/watch/${w.id}`, { method: "PATCH", body: JSON.stringify({
+        query: $("wQuery").value.trim(), referrer: $("wRef").value.trim(), positive: lists("wPos"), negative: lists("wNeg"),
+        checks_per_day: $("wFreq").value ? Number($("wFreq").value) : null }) }, $("wNote"), async () => { await refresh(); render(); });
+      $("wVerify").onclick = () => call(`/scout/watch/${w.id}/verify`, { method: "POST" }, $("wNote"), async (out) => {
+        await refresh(); render();
+        $("wNote").textContent = out.ok ? `${out.total} listed, ${out.matching} at your level` + (out.sample.length ? `: ${out.sample.slice(0, 3).join(" · ")}` : "") : out.error; });
+      $("wCheck").onclick = () => call(`/scout/watch/${w.id}/check`, { method: "POST" }, $("wNote"), async (out) => {
+        await refresh(); render();
+        $("wNote").textContent = out.ok ? `${out.new} new` + (out.mail?.sent ? ", mailed" : "") : out.error; });
+      $("wPause").onclick = () => call(`/scout/watch/${w.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !w.enabled }) }, $("wNote"), async () => { await refresh(); render(); });
+      $("wDel").onclick = () => { if (confirm(`Stop watching ${w.company}? Its hits go too.`))
+        call(`/scout/watch/${w.id}`, { method: "DELETE" }, $("wNote"), async () => { viewing = null; await refresh(); render(); }); };
+    }
+    for (const b of $("detail").querySelectorAll("[data-queue]")) b.onclick = () =>
+      call(`/scout/hits/${b.dataset.queue}/queue`, { method: "POST" }, null, async () => { await refresh(); render(); });
+    for (const b of $("detail").querySelectorAll("[data-dismiss]")) b.onclick = () =>
+      call(`/scout/hits/${b.dataset.dismiss}/dismiss`, { method: "POST" }, null, async () => { await refresh(); render(); });
+    for (const b of $("detail").querySelectorAll("[data-copy]")) b.onclick = () => {
+      const hit = state.hits.find((h) => h.id === b.dataset.copy);
+      navigator.clipboard?.writeText(hit.note).then(() => { b.textContent = "Copied"; });
+    };
+    for (const b of $("detail").querySelectorAll("[data-open]")) b.onclick = () => { location.hash = b.dataset.open; switchView("jobs"); };
+  }
+
+  return { open, poll };
+})();
 
 
 // ------------------------------------------------------------- Projects --

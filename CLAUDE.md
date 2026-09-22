@@ -178,6 +178,7 @@ Specifically:
 | `review/index.html` | the whole UI, one file, no build step. **Opens on the first job in flight** (`loadList`: `inflight[0]`, list order needs-you first, then the agent's), never one from a closed shelf; nothing in flight = "Nothing in flight." in the pane. `/#<id>` (the banner's "Open in autopilot") is read at boot and on `hashchange`; it was ignored until 2026-09-19. Terminal look (mono, square, purple = agent, green = you, red = rejected); `BUCKET` / `VERB` / `ORDER` at the top drive the in-flight list and the two closed shelves; the floating `.fab` is the decision; nothing internal (models, pids, folders, commands) is shown. Holds the profile state pill in the header, the Profile tab (chat, seed files, documents) and the floating voice orb, always on: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is a flat SVG ring in the page's ink, page-colour fill, hard offset shadow: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; one flat core inside grows with the level, green only while listening, purple while speaking; thinking is an arc sweeping the rim with a bulge under it (peak at the head, fading to the tail, `ARC`/`BULGE`/`SOFT` in `Bubble`); paused is a red dashed ring with the word, error a red ring; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
 | `capture/background.js` | context menu, follows tabs off Jobright to inject the screen wherever Apply lands, and focuses/reuses the unpacked extension's existing Autopilot tab after capture |
 | `tools/sweep_failed.py` | moves `failed` application folders under `applications/failed/` and repoints queue rows; nothing deleted |
+| `scout/` + `server/scout.py` | the Scout tab (2026-09-20): companies' careers pages watched on a schedule, new entry-level roles screened, listed and mailed, never queued by themselves. `detect(url)` picks the provider from the host (`providers.py`, one function each over the public JSON: Greenhouse, Lever, Ashby, Workday CXS, SmartRecruiters, Oracle ORC, Eightfold pcsx incl. Microsoft; and the server-rendered pages of Google, Amazon, Apple) or raises `DetectError`, so a watch that can never list a role is not created (Meta needs a session token; refused by name). `filter.at_level` is word-bounded substring lists on the watch (`DEFAULT_POSITIVE` / `DEFAULT_NEGATIVE`; `III` is deliberately not negative, it is Google's new-grad level). `run.check` fetches, filters, drops `seen_ids`, screens each survivor through `server.screen.screen_url` (cached by URL), records `Hit`s, seeds seen on the first check without a hit or mail; ids no longer listed are dropped so a role that returns is news again. `run.verify` is the same read without writes; a raise or an empty list sets `Watch.error`, the red BROKEN on the tab. Thread `run.start` ticks every 60 s and checks what `due` (24 h / `checks_per_day`, per watch else `settings.scout_checks_per_day`); `AUTOPILOT_SCOUT=0` off. `mail.py` is stdlib `smtplib` with a personal account (`AUTOPILOT_SMTP_*`, `AUTOPILOT_MAIL_TO`); one digest per round for hits not `reject`, `referral_note` is a template, not a model. `run.queue_hit` is the same three steps as `/capture`. State in `data/scout.json` (`store.py`, atomic). `tools/scout_verify.py` prints OK / BROKEN per page and exits with the broken count. **A page that breaks is said three ways**: red `BROKEN` on the Scout tab button from every view (`loadScoutBroken`, `/scout` `broken`), the banner "This company does not work" on the tab, and one mail (`mail.broken_notice`, `Watch.broken_mailed`, reset when it reads again; never one per round) |
 
 Config lives in `.env` (gitignored). `AUTOPILOT_RESUME_FILENAME` and
 `AUTOPILOT_COVER_LETTER_FILENAME` there name the uploaded PDFs (spaces become
@@ -407,6 +408,21 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   back with zero commits on the first live scan; an owned repo with none
   attributed is now counted whole and noted, never skipped. `409` on
   `/commits` is an empty repository.
+- **`POST /settings` changes only the keys sent** (2026-09-20). It used
+  to take the whole `Settings` model with defaults, so the page's
+  `{use_profile: true}` would have reset `scout_checks_per_day` to 4.
+  `Optional` fields, `exclude_none`.
+- **Google's careers JSON is gone.** `careers.google.com/api/v3/search`,
+  the endpoint every 2025 scraper used, answers `{"detail":"Not Found"}`.
+  The results page under `google.com/about/careers/applications/jobs/results`
+  server-renders the rows into `AF_initDataCallback({key: 'ds:1' …})`,
+  positional arrays; `scout.providers._google_rows` reads them and
+  raises when the block is missing, which is the red BROKEN, not a
+  silent empty list. Field order was checked live 2026-09-20; when it
+  drifts, that function and its test are the place.
+- **Gmail refuses the account password over SMTP.** Only an App
+  Password logs in (2-step verification first). `mail.send` turns the
+  `SMTPAuthenticationError` into that sentence so the page says it.
 - **The preamble check is byte-exact** (`_check_frozen_sections`; only
   whitespace runs are collapsed). The model burned two of four attempts on a
   commented-out font line and a dropped space in a macro. `rules.md` now says
@@ -414,7 +430,7 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest` collects 512 tests. The suite stubs the model, browser, lualatex, and
+`pytest` collects 553 tests. The suite stubs the model, browser, lualatex, and
 speech binaries, so **passing tests do not mean it works** — every real bug so
 far survived a green suite and appeared on the first real run. On the current
 macOS / Python 3.13 environment, the full process aborts inside browser-use's
@@ -431,6 +447,12 @@ invariants first.
   submissions repo first (443 commits); the candidate unticks it. A
   weight against names like `submissions`/`dotfiles` is the next step if
   it keeps happening.
+- Scout (2026-09-20): built. Google's `careers.google.com/api/v3/search`
+  is gone; its results page embeds the rows (`AF_initDataCallback`
+  `ds:1`, positional: id 0, title 1, locations 9, description 10, posted
+  epoch 12, min quals 19) and `target_level=EARLY`, `location`, `q`
+  carry over from the pasted URL. Next if asked: Telegram, a weight on
+  the screen's verdict in the subject line, LinkedIn (no public API).
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

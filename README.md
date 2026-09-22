@@ -128,6 +128,21 @@ uv venv && uv pip install -e .
 cp .env.example .env                # add your OpenRouter key
 ```
 
+For the scout's mail, three more lines in `.env` (Gmail: 2-step
+verification on, then an App Password from
+<https://myaccount.google.com/apppasswords>; the account password itself
+is refused by Google):
+
+```
+AUTOPILOT_SMTP_USER=you@gmail.com
+AUTOPILOT_SMTP_PASS=xxxx xxxx xxxx xxxx
+AUTOPILOT_MAIL_TO=you@gmail.com
+```
+
+Restart the server after editing `.env`; the Scout tab then shows "Mail:
+on" and a **Send a test** button. Another provider: `AUTOPILOT_SMTP_HOST`
+and `AUTOPILOT_SMTP_PORT` (587 STARTTLS, 465 SSL).
+
 `base/applicant.md` (visa status, relocation, start date, the facts the
 screen and the fill need) is written by the Profile tab's first
 interview, eight spoken questions; `base/applicant.example.md` shows the
@@ -163,6 +178,11 @@ page. A posting already in autopilot is not queued again: the banner says
 where it stands and opens it on the review page. Add, Add anyway, and Open in
 autopilot focus the existing Autopilot tab and select that job; if there is no
 Autopilot tab, exactly one is opened.
+
+The server also runs the scout: every careers page on the Scout tab is
+read on its schedule while uvicorn is up, and a new role at your level is
+mailed to you. Set up the mail once (see "Scout" below) and check the
+pages any time with `python tools/scout_verify.py`.
 
 Put your master resume at `base/resume.tex`, along with any `.cls` or `.sty`
 it needs. `base/resume.example.tex` shows the shape and is what the test suite
@@ -492,6 +512,33 @@ the repository unless you change it (a store listing, a live site); it
 is what the tailored resume links when it swaps that project in. Public
 repositories only; no token needed, though `AUTOPILOT_GITHUB_TOKEN`
 raises GitHub's hourly limit past about fifty repositories.
+
+## Scout: a company's own careers page, watched
+
+The Scout tab takes the careers page you would open by hand and reads it
+on a schedule (four times a day by default; set it on the tab, globally
+or per page). Pasting the URL is the whole setup: Greenhouse, Lever,
+Ashby, Workday, SmartRecruiters, Oracle, Microsoft and other Eightfold
+sites, Google, Amazon and Apple are read through the public JSON or
+server-rendered page behind them, so no browser is involved. A page it
+cannot read is refused up front; a page that stops answering later is
+marked BROKEN in red on the tab until it reads again.
+
+Every role whose title reads as entry-level software (the word lists are
+on the watch and editable) and was not there on the last look is a hit:
+it is screened the way the banner screens a posting, listed on the tab
+with the verdict, and mailed to you, along with a short note ready to
+send to the person who can refer you there (the "referrer" line on the
+watch). The first look at a new page only remembers what is listed; the
+mail is for what appears from then on. Nothing is queued by itself: "Add
+to autopilot" on a hit puts it through the normal pipeline, checkpoints
+and all.
+
+Mail is plain SMTP from a personal account: `AUTOPILOT_SMTP_USER`,
+`AUTOPILOT_SMTP_PASS` (Gmail: an App Password), `AUTOPILOT_MAIL_TO` in
+`.env`. `python tools/scout_verify.py` checks every watched page from
+the terminal, or any URL passed to it, and exits with the number of
+broken pages.
 
 ## Fit assessment
 

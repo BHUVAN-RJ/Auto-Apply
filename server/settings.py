@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -24,14 +25,17 @@ SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", ROOT / "data" / "setti
 # the job approved and start the browser fill without waiting at checkpoint
 # 1. The clean verdict already queued the job by itself; the human's decision
 # moves to checkpoint 2, the filled form. A poor-fit verdict still waits.
-DEFAULTS = {"use_profile": True, "auto_fill": True}
+# scout_checks_per_day: how often every watched careers page is read, unless
+# the watch sets its own. 4 = every six hours.
+DEFAULTS = {"use_profile": True, "auto_fill": True, "scout_checks_per_day": 4}
 
 router = APIRouter()
 
 
 class Settings(BaseModel):
-    use_profile: bool = True
-    auto_fill: bool = True
+    use_profile: Optional[bool] = None
+    auto_fill: Optional[bool] = None
+    scout_checks_per_day: Optional[int] = None
 
 
 def load() -> dict:
@@ -66,4 +70,5 @@ def get_settings() -> dict:
 
 @router.post("/settings")
 def set_settings(update: Settings) -> dict:
-    return save(**update.model_dump())
+    # Only the keys sent change; the page posts one switch at a time.
+    return save(**update.model_dump(exclude_none=True))

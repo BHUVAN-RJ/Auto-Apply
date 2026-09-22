@@ -166,7 +166,10 @@ already has, not to hire. The tell is the shape, not any one line.
 - `caution` if flags exist and all are soft.
 - `ok` if there are no flags.
 - `not_a_job` if the text is not a single job posting (a search results
-  page, a company careers index, a login wall, an article).
+  page, a company careers index, a login wall, an article). A posting
+  that arrives as description and qualifications alone, with no page
+  around it, is still a single job posting: the scout hands over the
+  text a careers listing carried for one role, nothing else.
 
 ## Quotes
 
