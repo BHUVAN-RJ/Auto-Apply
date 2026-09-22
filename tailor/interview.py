@@ -223,7 +223,7 @@ def status() -> dict:
         "transcript": [m for m in transcript if m["role"] in ("user", "assistant")],
         "has_resume": profile.BASE_RESUME.exists(),
         "has_facts": facts_module.has_applicant(),
-        "facts": {"phase": facts.phase, "asked": min(facts.index, len(facts_module.QUESTIONS)),
+        "facts": {"phase": facts.phase, "asked": facts_module.settled(facts),
                   "total": len(facts_module.QUESTIONS)},
         "model": interview_model(),
     }

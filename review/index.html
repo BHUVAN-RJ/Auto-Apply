@@ -75,6 +75,22 @@
   @keyframes pulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--stop) 25%, transparent); } }
   .voicebar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center;
               color: var(--muted); font-size: .82rem; margin: .4rem 0; }
+  /* The chat fills the pane: bubbles the full width, the head one line,
+     mic and voice two dots in it, the status line only when something
+     needs downloading or installing. */
+  .chat .msg { max-width: none; }
+  /* While the chat is up the pane is a column the height of the window:
+     the transcript takes what is left and scrolls, the composer sits on
+     the bottom edge whatever the length of the conversation. */
+  section.detail.chatpane { display: flex; flex-direction: column; height: calc(100vh - 47px);
+                            padding-bottom: 1rem; overflow: hidden; box-sizing: border-box; }
+  .chatpane .head, .chatpane .voicebar { flex: none; }
+  .chatpane .chat { flex: 1; min-height: 0; overflow-y: auto; margin: .4rem 0; }
+  .chatpane .composer { flex: none; position: static; padding: .4rem 0 0; }
+  .head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .head .dot.ok { background: var(--green); }
+  .head .dot.bad { background: var(--red); }
+  .voicebar[hidden] { display: none; }
   .voicebar progress { width: 120px; height: 8px; }
   nav .cov { display: block; color: var(--muted); font-size: 11px; margin-top: .15rem;
              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -425,7 +441,7 @@ function switchView(name) {
   $("tabProfile").setAttribute("aria-current", name === "profile");
   $("tabProjects").setAttribute("aria-current", name === "projects");
   $("tabScout").setAttribute("aria-current", name === "scout");
-  if (name !== "profile") Profile.leave();
+  if (name !== "profile") { Profile.leave(); $("detail").classList.remove("chatpane"); }
   if (name === "jobs") loadList();
   else if (name === "profile") Profile.open();
   else if (name === "scout") Scout.open();
@@ -1352,6 +1368,7 @@ const Projects = (() => {
     const ticked = repos.filter((r) => r.picked && !r.slug);
     const added = repos.filter((r) => r.slug).length;
     const confirmable = started && !scanning && ticked.length && ticked.every((r) => r.state === "ready");
+    if (!started) api("/profile").then((p) => { if (p.phase !== "new") { started = true; render(); } }).catch(() => {});
     $("detail").innerHTML = `
       <div class="head"><h2>${escape(state.handle)}</h2>
         <span class="co">${scanning ? `reading · ${ready}/${repos.length}` : `${repos.length} repositories · ${added} in the interview`}</span></div>
@@ -1584,6 +1601,7 @@ const Profile = (() => {
     listenNext = false;
     Voice.interrupt();
     Voice.cancelListening();
+    $("detail").classList.remove("chatpane");
   }
 
   // Entering the chat: the open question is spoken, then the mic opens.
@@ -1615,6 +1633,7 @@ const Profile = (() => {
 
   function render() {
     renderNav();
+    $("detail").classList.remove("chatpane");
     if (!state) return;
     if (state.error) {
       $("detail").innerHTML = `<div class="banner stop">${escape(state.error)}</div>`;
@@ -1745,12 +1764,14 @@ const Profile = (() => {
       : (state.experiences.find((e) => e.slug === state.current) || {}).title || "Interview";
     const sub = { facts: `facts · ${state.facts?.asked || 0}/${state.facts?.total || 0}`, setup: "checking the list",
                   interviewing: "interviewing", open: "listening for updates" }[state.phase] || "";
+    $("detail").classList.add("chatpane");
     $("detail").innerHTML = `
       <div class="head"><h2>${escape(title)}</h2>
         <span class="co">${escape(sub)}</span>
+        <span class="dot" id="micdot" title="Mic"></span><span class="dot" id="voxdot" title="Voice"></span>
         ${state.phase === "facts" ? `<button class="act" id="skipFacts">Skip to the stories</button>` : ""}
-        <button class="act" id="openForm">Preliminary interview</button></div>
-      <div class="voicebar" id="voicebar"></div>
+        <button class="act" id="openForm">Form</button></div>
+      <div class="voicebar" id="voicebar" hidden></div>
       <div class="chat" id="chat">${state.transcript.map((m) =>
         `<div class="msg ${m.role === "user" ? "user" : "bot"}">${escape(m.content)}</div>`).join("")}</div>
       <div class="composer">
@@ -1886,7 +1907,7 @@ const Profile = (() => {
   function renderVoiceBar() {
     const bar = $("voicebar");
     if (!bar) return;
-    if (!voice) { bar.innerHTML = `<span>Voice status unavailable.</span>`; return; }
+    if (!voice) { bar.innerHTML = `<span>Voice status unavailable.</span>`; bar.hidden = false; return; }
     const stt = voice.stt.ready ? "ready" : Voice.browserSTT() ? "browser (speech model not set up)" : "unavailable";
     const tts = voice.tts.ready ? "ready" : "browser voice";
     let setup = "";
@@ -1899,6 +1920,15 @@ const Profile = (() => {
     }
     const install = voice.stt.install ? `<span>Speech recognition not installed: <code>${escape(voice.stt.install)}</code></span>` : "";
     bar.innerHTML = `<span>Mic: ${stt}</span><span>Voice: ${tts}</span>${setup}${install}`;
+    // Two dots in the head say ready; the line shows only when there is
+    // something to set up or install.
+    if ($("micdot")) {
+      $("micdot").className = `dot ${voice.stt.ready ? "ok" : Voice.browserSTT() ? "" : "bad"}`;
+      $("micdot").title = `Mic: ${stt}`;
+      $("voxdot").className = `dot ${voice.tts.ready ? "ok" : ""}`;
+      $("voxdot").title = `Voice: ${tts}`;
+      bar.hidden = !(setup || install);
+    }
     if ($("voiceSetup")) $("voiceSetup").onclick = async () => {
       voice = await api("/voice/setup", { method: "POST", body: "{}" });
       renderVoiceBar();

@@ -68,6 +68,8 @@ def script(tmp_path, monkeypatch):
     monkeypatch.setattr(interview.facts_module, "derived_lines", lambda: {"Location": "Austin, TX"})
     monkeypatch.setattr(interview.facts_module, "contacts", lambda: {"Phone": "+1 555"})
     monkeypatch.setattr(profile, "APPLICANT", tmp_path / "applicant.md")
+    # No preliminary interview on file: every fact is asked.
+    monkeypatch.setattr(interview.facts_module, "FORM", tmp_path / "form.json")
     return s
 
 
@@ -474,3 +476,31 @@ def test_facts_can_be_skipped_and_redone_from_the_stories(script, tmp_path):
     assert interview.State.load().phase == "interviewing"
     assert "Back to the stories" in shown(evs)
     assert (tmp_path / "applicant.md").exists()
+
+
+def test_facts_already_on_the_form_are_not_asked_again(script, tmp_path, monkeypatch):
+    form = tmp_path / "form.json"
+    form.write_text(json.dumps({"us_status": "F-1 OPT", "work_authorized": "Yes", "needs_sponsorship": "Yes",
+                                "citizenship": "India", "clearance": "None", "city": "Austin", "state": "Texas",
+                                "start_date": "Immediately", "graduation_year": "2026 May",
+                                "phone": "+1 555", "how_heard": "Other"}))
+    monkeypatch.setattr(interview.facts_module, "FORM", form)
+    script.replies.append("```json\n" + EXTRACTION + "\n```")
+    result = interview.start("")
+    facts = interview.facts_module.Facts.load()
+    assert facts.answers["authorisation"]["line"].startswith("authorised to work in the United States on F-1 OPT")
+    assert "sponsorship" in facts.answers["authorisation"]["line"]
+    assert facts.question()["key"] == "level"
+    assert "already cover 6 of 8" in result["message"]
+    assert result["status"]["facts"]["asked"] == 6
+    # Two answers finish it; the file carries the form's lines.
+    script.replies.append(facts_reply("entry level"))
+    events("entry level")
+    assert interview.facts_module.Facts.load().question()["key"] == "relocation"
+    script.replies.append(facts_reply("anywhere"))
+    events("anywhere")
+    text = (tmp_path / "applicant.md").read_text()
+    assert "- Work authorisation: authorised to work in the United States on F-1 OPT" in text
+    assert "- Location: Austin, Texas" in text
+    assert "- How did you hear about us: Other" in text
+    assert interview.State.load().phase == "setup"

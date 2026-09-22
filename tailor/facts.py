@@ -31,6 +31,10 @@ from typing import Iterator, Optional
 from . import llm, profile
 
 STATE_NAME = "_facts.json"
+# The preliminary interview's file (server/form.py). It already holds the
+# authorisation, clearance, location, start date and graduation lines,
+# so those questions are answered from it in code and never asked twice.
+FORM = profile.ROOT / "base" / "form.json"
 
 # One question per fact. `line` is the label in applicant.md; `derived`
 # names the derived-facts line to offer as a starting point, if any.
@@ -179,9 +183,76 @@ def contacts() -> dict:
 
 
 def opening(facts: Facts) -> str:
+    left = [q for q in QUESTIONS if q["key"] not in facts.answers]
+    if len(left) < len(QUESTIONS):
+        names = ", ".join(q["line"].lower() for q in left)
+        return (f"Before the stories, a few facts the resume cannot tell me. Your form details "
+                f"already cover {len(QUESTIONS) - len(left)} of {len(QUESTIONS)}; "
+                f"{len(left)} left: {names}. Say skip to leave one blank.")
     return ("Before the stories, a few facts the resume cannot tell me: work authorisation, "
             "clearance, the level you are after, relocation, start date. Eight short questions; "
             "say skip to leave one blank.")
+
+
+def _form(path: Optional[Path] = None) -> dict:
+    path = path or FORM
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: str(v).strip() for k, v in data.items() if isinstance(v, (str, int, float)) and str(v).strip()}
+
+
+def from_form(path: Optional[Path] = None) -> dict:
+    """Answers the preliminary interview already gave, as the literal lines
+    the facts file wants, key -> {"line", "raw"}. No model: the form's
+    values are fixed choices and short strings. Missing keys are asked."""
+    form = _form(path)
+    out: dict = {}
+    status = form.get("us_status", "")
+    authorised = form.get("work_authorized", "").lower()
+    sponsorship = form.get("needs_sponsorship", "").lower()
+    if status or authorised or sponsorship:
+        bits = []
+        if authorised in ("yes", "no"):
+            bits.append(("authorised" if authorised == "yes" else "not authorised")
+                        + " to work in the United States" + (f" on {status}" if status else ""))
+        elif status:
+            bits.append(status)
+        if form.get("citizenship"):
+            bits.append(f"citizen of {form['citizenship']}")
+        if sponsorship in ("yes", "no"):
+            bits.append("will need visa sponsorship now or in the future" if sponsorship == "yes"
+                        else "will not need visa sponsorship")
+        if form.get("authorization_expires"):
+            bits.append(f"current authorisation ends {form['authorization_expires']}")
+        out["authorisation"] = "; ".join(bits)
+    if form.get("clearance"):
+        out["clearance"] = form["clearance"].lower() if form["clearance"].lower().startswith("none") else form["clearance"]
+    if form.get("city") and form.get("state"):
+        out["location"] = f"{form['city']}, {form['state']}"
+    if form.get("start_date"):
+        out["start"] = form["start_date"]
+    if form.get("graduation_year"):
+        out["graduation"] = form["graduation_year"]
+    details = {label: form[key] for label, key in (("Phone", "phone"), ("LinkedIn", "linkedin"),
+                                                    ("GitHub", "github"), ("Portfolio", "website"),
+                                                    ("Pronouns", "pronouns"), ("How did you hear about us", "how_heard"))
+               if form.get(key)}
+    if details:
+        out["contact"] = details
+    return {key: {"line": line, "raw": "from the preliminary interview"} for key, line in out.items()}
+
+
+def settled(facts: Facts) -> int:
+    """How many of the questions have a line, asked or taken from the form."""
+    return sum(1 for q in QUESTIONS if q["key"] in facts.answers)
+
+
+def _advance(facts: Facts) -> None:
+    """Move `index` to the next question the form did not answer."""
+    while facts.index < len(QUESTIONS) and QUESTIONS[facts.index]["key"] in facts.answers:
+        facts.index += 1
 
 
 def question_text(facts: Facts) -> str:
@@ -207,6 +278,14 @@ def start() -> Facts:
         facts.contacts = contacts()
     except Exception:  # noqa: BLE001
         facts.contacts = {}
+    facts.answers = from_form()
+    _advance(facts)
+    if facts.question() is None:
+        facts.phase = "done"
+        facts.transcript = [{"role": "assistant", "content": "The form details cover every fact; file written."}]
+        facts.save()
+        write_applicant(facts)
+        return facts
     first = f"{opening(facts)}\n\n{question_text(facts)}"
     facts.transcript = [{"role": "assistant", "content": first}]
     facts.save()
@@ -246,6 +325,7 @@ def turn(facts: Facts, message: str) -> Iterator[dict]:
         return
     facts.answers[q["key"]] = {"line": result["line"] or "unknown", "raw": message}
     facts.index += 1
+    _advance(facts)
     facts.followups = 0
     if facts.question() is None:
         facts.phase = "done"
