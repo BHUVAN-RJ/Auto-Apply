@@ -485,11 +485,16 @@ def _begin_setup(state: State) -> Iterator[dict]:
     """Facts done or skipped: show the experiences found and ask what is
     missing, the way the interview used to open."""
     state.phase = "setup"
-    opening = _opening_message(state)
-    state.transcript = [{"role": "assistant", "content": opening}]
+    ack, note, ask = _opening_parts(state)
+    state.transcript = [{"role": "assistant", "content": _opening_message(state)}]
     state.save()
     yield {"type": "break"}
-    yield {"type": "delta", "text": opening, "part": "ask", "spoken": True}
+    # Labelled like a model reply: the lists are read, not read out. The
+    # whole opening as one `ask` had the voice reciting every bullet.
+    yield {"type": "delta", "text": ack + "\n\n", "part": "ack", "spoken": True}
+    if note:
+        yield {"type": "delta", "text": note + "\n\n", "part": "note", "spoken": False}
+    yield {"type": "delta", "text": ask, "part": "ask", "spoken": True}
     yield {"type": "phase", "phase": state.phase, "experiences": status()["experiences"]}
 
 
@@ -530,7 +535,7 @@ def skip_facts() -> dict:
     facts.phase = "skipped"
     facts.save()
     events = list(_begin_setup(state))
-    return {"message": next(e["text"] for e in events if e["type"] == "delta"), "status": status()}
+    return {"message": "".join(e["text"] for e in events if e["type"] == "delta"), "status": status()}
 
 
 def restart_facts() -> dict:
@@ -564,18 +569,25 @@ def _with_slugs(entries: list[dict], taken: set[str]) -> list[dict]:
     return out
 
 
-def _opening_message(state: State) -> str:
+def _opening_parts(state: State) -> tuple[str, str, str]:
+    """The opening in three parts: what is spoken before the lists, the
+    lists themselves (text only), and the spoken question after them."""
     roles = [e["title"] for e in state.experiences if e["kind"] == "role"]
     projects = [e["title"] for e in state.experiences if e["kind"] != "role"]
-    parts = ["Here is what I found on your resume."]
+    note = []
     if roles:
-        parts.append("Roles:\n" + "\n".join(f"- {t}" for t in roles))
+        note.append("Roles:\n" + "\n".join(f"- {t}" for t in roles))
     if projects:
-        parts.append("Projects:\n" + "\n".join(f"- {t}" for t in projects))
-    parts.append(f"The questions will target these kinds of roles: {TARGET_ROLES}.")
-    parts.append("Is anything missing from either list, or anything there that should not be? "
-                 "Say so, or say it looks right and we start.")
-    return "\n\n".join(parts)
+        note.append("Projects:\n" + "\n".join(f"- {t}" for t in projects))
+    note.append(f"The questions will target these kinds of roles: {TARGET_ROLES}.")
+    return ("Here is what I found on your resume.",
+            "\n\n".join(note),
+            "Is anything missing from either list, or anything there that should not be? "
+            "Say so, or say it looks right and we start.")
+
+
+def _opening_message(state: State) -> str:
+    return "\n\n".join(p for p in _opening_parts(state) if p)
 
 
 def turn(message: str) -> Iterator[dict]:

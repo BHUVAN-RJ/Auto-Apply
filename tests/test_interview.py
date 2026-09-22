@@ -504,3 +504,23 @@ def test_facts_already_on_the_form_are_not_asked_again(script, tmp_path, monkeyp
     assert "- Location: Austin, Texas" in text
     assert "- How did you hear about us: Other" in text
     assert interview.State.load().phase == "setup"
+
+
+def test_the_opening_speaks_the_greeting_and_the_question_not_the_lists(monkeypatch, tmp_path):
+    """The voice read every bullet of the resume lists (2026-09-21). The
+    opening is labelled like a reply: greeting and question spoken, the
+    lists text only."""
+    state = interview.State(phase="facts", experiences=[
+        {"kind": "role", "title": "Intern, Acme", "slug": "intern-acme"},
+        {"kind": "project", "title": "Hydra", "slug": "hydra"}])
+    monkeypatch.setattr(interview.State, "save", lambda self: None)
+    monkeypatch.setattr(interview, "status", lambda: {"experiences": []})
+    events = list(interview._begin_setup(state))
+    deltas = [(e["part"], e["spoken"]) for e in events if e["type"] == "delta"]
+    assert deltas == [("ack", True), ("note", False), ("ask", True)]
+    texts = {e["part"]: e["text"] for e in events if e["type"] == "delta"}
+    assert texts["ack"].strip() == "Here is what I found on your resume."
+    assert "- Intern, Acme" in texts["note"] and "- Hydra" in texts["note"]
+    assert "will target" in texts["note"] and "will target" not in texts["ask"]
+    assert texts["ask"].startswith("Is anything missing")
+    assert state.transcript[0]["content"] == "".join(texts[p] for p in ("ack", "note", "ask"))
