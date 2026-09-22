@@ -1,6 +1,7 @@
 """The scout: a careers URL becomes a watch, a check records only what is
-new at the level, the mail says so, and nothing is queued or applied to
-without the person's click."""
+new at the level, the mail says so. A notify watch (a referral is
+possible) never queues; every other watch sends what the screen does not
+reject into autopilot, and nothing is ever applied to by itself."""
 import json
 
 import pytest
@@ -12,6 +13,8 @@ from scout.filter import at_level
 from scout import DEFAULT_NEGATIVE, DEFAULT_POSITIVE
 from server import queue, runner, settings
 from server.app import app
+
+REAL_SCREEN = run._screen      # kept before the autouse fixture replaces it
 
 
 @pytest.fixture(autouse=True)
@@ -190,7 +193,7 @@ def test_mail_digest_names_the_role_the_verdict_and_the_referrer():
     hit = Hit(watch_id=watch.id, company="Acme", posting=posting(7, "Software Engineer II", location="Austin", posted="2026-09-20").to_dict(),
               verdict="ok", summary="fits")
     subject, text, html = mail.digest([(watch, hit)])
-    assert subject == "Scout: 1 new at Acme"
+    assert subject == "Scout: 1 to ask about at Acme"
     assert "Acme: Software Engineer II — Austin (posted 2026-09-20)" in text and "https://x/7" in text
     assert "screen: ok — fits" in text and "ask: Priya (WhatsApp)" in text
     assert "Hi Priya, Acme just posted Software Engineer II (Austin)" in mail.referral_note(watch, hit)
@@ -208,8 +211,8 @@ def test_mail_new_sends_one_digest_and_marks_them(monkeypatch):
         Hit(watch_id=watch.id, company="Acme", posting=posting(2, "SWE II").to_dict(), verdict="caution"),
         Hit(watch_id=watch.id, company="Acme", posting=posting(3, "SWE III").to_dict(), verdict="reject"),
     ])
-    assert run.mail_new() == {"sent": True, "count": 2, "subject": "Scout: 2 new at Acme"}
-    assert sent == ["Scout: 2 new at Acme"]
+    assert run.mail_new() == {"sent": True, "count": 2, "subject": "Scout: 2 to ask about at Acme"}
+    assert sent == ["Scout: 2 to ask about at Acme"]
     assert all(h.mailed for h in store.hits())           # the reject is marked too, never sent
     assert run.mail_new() == {"sent": False, "reason": "nothing new"}
 
@@ -225,7 +228,7 @@ def test_mail_not_set_up_is_said_not_raised():
 
 def test_api_adds_verifies_checks_and_queues(client, monkeypatch):
     listing(monkeypatch, [posting(1, "Software Engineer", text="first")])
-    res = client.post("/scout/watch", json={"url": "https://boards.greenhouse.io/acme", "referrer": "Sam"})
+    res = client.post("/scout/watch", json={"url": "https://boards.greenhouse.io/acme", "notify": True, "referrer": "Sam"})
     assert res.status_code == 200
     body = res.json()
     assert body["created"] and body["verify"]["ok"] and body["watch"]["company"] == "acme"
@@ -239,7 +242,7 @@ def test_api_adds_verifies_checks_and_queues(client, monkeypatch):
     state = client.get("/scout").json()
     assert len(state["hits"]) == 1
     hit = state["hits"][0]
-    assert hit["status"] == "new" and hit["referrer"] == "Sam" and "Hi Sam, acme just posted" in hit["note"]
+    assert hit["status"] == "new" and hit["notify"] and hit["referrer"] == "Sam" and "Hi Sam, acme just posted" in hit["note"]
     assert "text" not in hit["posting"]
 
     res = client.post(f"/scout/hits/{hit['id']}/queue").json()
@@ -310,3 +313,175 @@ def test_status_names_the_broken_companies(client, monkeypatch):
     monkeypatch.setattr(providers, "fetch", boom)
     client.post("/scout/watch", json={"url": "https://jobs.ashbyhq.com/acme"})
     assert client.get("/scout").json()["broken"] == ["acme"]
+
+
+# ------------------------------------------------- notify vs autopilot --
+
+def test_a_watch_without_notify_queues_what_the_screen_lets_through(monkeypatch):
+    verdicts = {"2": ("ok", "fits"), "3": ("reject", "senior"), "4": ("", "screen failed: boom"), "5": ("caution", "stretch")}
+    monkeypatch.setattr(run, "_screen", lambda posting, company: verdicts[posting.id])
+    listing(monkeypatch, [posting(1, "Software Engineer")])
+    watch, _ = store.add_watch(Watch(url="https://boards.greenhouse.io/acme", company="Acme", provider="greenhouse", args={"slug": "acme"}))
+    run.check(watch)
+    listing(monkeypatch, [posting(i, f"Software Engineer {i}", text="desc") for i in range(1, 6)])
+    result = run.check(store.get_watch(watch.id))
+    assert result["new"] == 4 and result["queued"] == 2
+    by_title = {h.posting["title"]: h for h in store.hits()}
+    assert by_title["Software Engineer 2"].status == "queued" and by_title["Software Engineer 5"].status == "queued"
+    # The reject and the failed screen wait for the person, never queued by the scout.
+    assert by_title["Software Engineer 3"].status == "new" and by_title["Software Engineer 4"].status == "new"
+    jobs = {j.url for j in queue.all_jobs()}
+    assert jobs == {"https://x/2", "https://x/5"}
+    for j in queue.all_jobs():
+        assert j.status.value == "queued" and j.source == "scout"
+
+
+def test_a_notify_watch_never_queues(monkeypatch):
+    listing(monkeypatch, [posting(1, "Software Engineer")])
+    watch, _ = store.add_watch(Watch(url="https://boards.greenhouse.io/acme", company="Acme", provider="greenhouse",
+                                     args={"slug": "acme"}, notify=True, referrer="Sam"))
+    run.check(watch)
+    listing(monkeypatch, [posting(1, "Software Engineer"), posting(2, "Software Engineer II", text="desc")])
+    result = run.check(store.get_watch(watch.id))
+    assert result["new"] == 1 and result["queued"] == 0
+    assert [h.status for h in store.hits()] == ["new"] and queue.all_jobs() == []
+
+
+def test_the_digest_separates_to_ask_from_in_autopilot():
+    ask = Watch(url="https://x", company="Acme", provider="lever", args={}, notify=True, referrer="Priya")
+    auto = Watch(url="https://y", company="Beta", provider="lever", args={})
+    rows = [
+        (auto, Hit(watch_id=auto.id, company="Beta", posting=posting(1, "SWE").to_dict(), verdict="ok", status="queued", job_id="ab12")),
+        (ask, Hit(watch_id=ask.id, company="Acme", posting=posting(2, "SWE II").to_dict(), verdict="ok")),
+    ]
+    subject, text, html = mail.digest(rows)
+    assert subject == "Scout: 1 to ask about and 1 in autopilot at Acme, Beta"
+    # The one to ask about comes first, with the note; the queued one says so.
+    assert text.index("Acme: SWE II") < text.index("Beta: SWE")
+    assert "Hi Priya, Acme just posted" in text and "screen: ok, in autopilot" in text
+    assert "ask:" not in text.split("Beta: SWE")[1]
+
+
+def test_prescreen_rejects_the_hard_cases_in_code():
+    assert level.prescreen("Requirements: 5+ years of experience in Java") == "asks for 5+ years of experience"
+    assert level.prescreen("Minimum 4 years of professional software experience") == "asks for 4+ years of experience"
+    assert level.prescreen("0-2 years of experience; new grads welcome") is None
+    assert level.prescreen("2+ years of industry experience") is None
+    assert level.prescreen("1-3 years of relevant experience and 5+ years of Python") is None
+    assert level.prescreen("Great team, 12 years in business") is None
+    assert level.prescreen("Must hold an active Secret clearance") == "needs a security clearance"
+    assert level.prescreen("US citizenship is required for this role") == "US citizenship required"
+    assert level.prescreen("") is None
+
+
+def test_prescreen_runs_before_the_model(monkeypatch):
+    from server import screen as screen_api
+
+    def model(*a, **k):
+        raise AssertionError("the model was called")
+    monkeypatch.setattr(screen_api, "screen_url", model)
+    monkeypatch.setattr(run, "_screen", REAL_SCREEN)   # the autouse fixture stubs it
+    verdict, summary = run._screen(posting(9, "Software Engineer", text="Requires 6+ years of experience"), "Acme")
+    assert (verdict, summary) == ("reject", "asks for 6+ years of experience")
+
+
+# ------------------------------------------- bamboohr and board discovery --
+
+class _Http:
+    """An httpx stand-in answering fixed bodies by URL substring."""
+    def __init__(self, pages): self.pages = pages
+    def get(self, url, **kw):
+        for key, body in self.pages.items():
+            if key in url:
+                return _Resp(body)
+        raise RuntimeError(f"no page for {url}")
+
+
+class _Resp:
+    def __init__(self, body): self.body = body
+    def raise_for_status(self): return self
+    def json(self): return self.body
+    @property
+    def text(self): return self.body
+
+
+def test_bamboohr_lists_the_board_and_reads_detail_once():
+    http = _Http({
+        "/careers/list": {"result": [
+            {"id": "112", "jobOpeningName": "Software Developer - Grippers", "location": {"city": "Suwanee", "state": "Georgia"}},
+            {"id": "7", "jobOpeningName": "Old one", "location": {}, "isRemote": True},
+        ]},
+        "/careers/112/detail": {"result": {"jobOpening": {"description": "<p>Build <b>grippers</b></p>", "datePosted": "2026-02-05"}}},
+    })
+    watch = Watch(url="https://mujin.bamboohr.com/careers", company="Mujin", provider="bamboohr", args={"slug": "mujin"}, seen_ids=["7"])
+    rows = providers.bamboohr(watch, http)
+    assert [p.title for p in rows] == ["Software Developer - Grippers", "Old one"]
+    assert rows[0].url == "https://mujin.bamboohr.com/careers/112" and rows[0].location == "Suwanee, Georgia"
+    assert rows[0].text.split() == ["Build", "grippers"] and rows[0].posted == "2026-02-05"
+    assert rows[1].text == "" and rows[1].location == "Remote"     # seen: no detail call
+    assert detect("https://mujin.bamboohr.com/careers")[:2] == ("bamboohr", {"slug": "mujin"})
+    with pytest.raises(DetectError):
+        detect("https://www.bamboohr.com/careers")
+
+
+def test_discover_finds_every_board_a_company_page_embeds():
+    html = ('<a href="https://jobs.lever.co/mujininc?">Japan</a> <script src="https://mujin.bamboohr.com/js/embed.js&quot;">'
+            '<iframe src="https://boards.greenhouse.io/embed/job_board?for=acme&b=x"> https://jobs.lever.co/mujininc/again')
+    assert providers.discover("https://mujin-corp.com/careers", _Http({"mujin-corp.com": html})) == [
+        "https://boards.greenhouse.io/acme", "https://jobs.lever.co/mujininc", "https://mujin.bamboohr.com/careers"]
+    assert providers.discover("https://x.com/careers", _Http({"x.com": "<p>nothing</p>"})) == []
+
+
+def test_api_turns_a_company_page_into_one_watch_per_board(client, monkeypatch):
+    listing(monkeypatch, [posting(1, "Software Engineer")])
+    monkeypatch.setattr(providers, "discover", lambda url, http=None: ["https://jobs.lever.co/mujininc", "https://mujin.bamboohr.com/careers"])
+    res = client.post("/scout/watch", json={"url": "https://mujin-corp.com/careers", "company": "Mujin"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["found"] == ["https://jobs.lever.co/mujininc", "https://mujin.bamboohr.com/careers"]
+    assert [w["company"] for w in body["watches"]] == ["Mujin (lever)", "Mujin (bamboohr)"]
+    assert body["watch"]["provider"] == "lever" and body["created"]
+    assert [w["provider"] for w in client.get("/scout").json()["watches"]] == ["lever", "bamboohr"]
+
+    monkeypatch.setattr(providers, "discover", lambda url, http=None: [])
+    res = client.post("/scout/watch", json={"url": "https://nothing.example/jobs"})
+    assert res.status_code == 400 and "names no board" in res.json()["detail"]
+
+
+# ------------------------------------------------ us only and the list --
+
+def test_us_only_drops_roles_abroad_before_anything_else():
+    assert level.outside_us("Tokyo, Japan (MJHQ)") and level.outside_us("Best, Netherlands")
+    assert level.outside_us("London or Berlin") and level.outside_us("Bengaluru, India")
+    assert not level.outside_us("Suwanee, Georgia") and not level.outside_us("") and not level.outside_us("Remote")
+    assert not level.outside_us("Austin, TX; Toronto, ON, Canada")     # one of them is here
+    assert not level.outside_us("Remote - US") and not level.outside_us("Mountain View, CA, USA")
+    rows = [posting(1, "Software Engineer", location="Tokyo, Japan"), posting(2, "Software Engineer", location="Austin, TX")]
+    us = Watch(url="https://x", company="A", provider="lever", args={})
+    assert [p.id for p in level.matching(us, rows)] == ["2"]
+    assert [p.id for p in level.matching(us.model_copy(update={"us_only": False}), rows)] == ["1", "2"]
+
+
+def test_the_watch_keeps_every_role_at_the_level_and_one_can_be_added_by_hand(monkeypatch):
+    listing(monkeypatch, [posting(1, "Software Engineer", location="Austin, TX"), posting(2, "Software Engineer", location="Tokyo, Japan"),
+                          posting(3, "Staff Engineer")])
+    watch, _ = store.add_watch(Watch(url="https://boards.greenhouse.io/acme", company="Acme", provider="greenhouse", args={"slug": "acme"}))
+    run.check(watch)
+    saved = store.get_watch(watch.id)
+    assert [r["title"] for r in saved.listed] == ["Software Engineer"] and saved.listed[0]["id"] == "1"
+    assert saved.seen_ids == ["1"]
+    result = run.add_listed(watch.id, "1")
+    assert result["ok"] and result["created"]
+    assert [h.status for h in store.hits()] == ["queued"] and queue.all_jobs()[0].url == "https://x/1"
+    assert run.add_listed(watch.id, "9")["ok"] is False
+
+
+def test_api_add_from_the_list_and_us_only_patch(client, monkeypatch):
+    listing(monkeypatch, [posting(1, "Software Engineer", location="Austin, TX")])
+    wid = client.post("/scout/watch", json={"url": "https://boards.greenhouse.io/acme"}).json()["watch"]["id"]
+    state = client.get("/scout").json()["watches"][0]
+    assert state["us_only"] and [r["id"] for r in state["listed"]] == ["1"]
+    assert client.post(f"/scout/watch/{wid}/add", json={"posting_id": "1"}).json()["ok"]
+    assert client.post(f"/scout/watch/{wid}/add", json={"posting_id": "1"}).json()["created"] is False   # same job, not twice
+    assert client.post(f"/scout/watch/{wid}/add", json={"posting_id": "x"}).status_code == 404
+    assert client.patch(f"/scout/watch/{wid}", json={"us_only": False}).json()["us_only"] is False

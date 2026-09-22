@@ -518,21 +518,40 @@ raises GitHub's hourly limit past about fifty repositories.
 The Scout tab takes the careers page you would open by hand and reads it
 on a schedule (four times a day by default; set it on the tab, globally
 or per page). Pasting the URL is the whole setup: Greenhouse, Lever,
-Ashby, Workday, SmartRecruiters, Oracle, Microsoft and other Eightfold
-sites, Google, Amazon and Apple are read through the public JSON or
-server-rendered page behind them, so no browser is involved. A page it
+Ashby, BambooHR, Workday, SmartRecruiters, Oracle, Microsoft and other
+Eightfold sites, Google, Amazon and Apple are read through the public
+JSON or server-rendered page behind them, so no browser is involved. A
+company's own careers page is fine too: it is read once and every board
+it embeds becomes a watch (one company, two boards, two watches). Each
+watch's page lists every role at your level on the board right now, in
+the US only by default (a role whose location names another country is
+dropped before anything else), with "Add to autopilot" on each. A page it
 cannot read is refused up front; a page that stops answering later is
 marked BROKEN in red on the tab until it reads again.
 
-Every role whose title reads as entry-level software (the word lists are
-on the watch and editable) and was not there on the last look is a hit:
-it is screened the way the banner screens a posting, listed on the tab
-with the verdict, and mailed to you, along with a short note ready to
-send to the person who can refer you there (the "referrer" line on the
-watch). The first look at a new page only remembers what is listed; the
-mail is for what appears from then on. Nothing is queued by itself: "Add
-to autopilot" on a hit puts it through the normal pipeline, checkpoints
-and all.
+Every role whose title reads as entry-level software or the roles next
+door (data, backend, full stack, platform, ML; the word lists are on the
+watch and editable) and was not there on the last look is a hit. The
+hard cases are dropped in code before any model reads them (four or
+more years of experience, a security clearance, citizenship required);
+the rest is screened the way the banner screens a posting. The first
+look at a new page only remembers what is listed; hits are what appears
+from then on.
+
+A watch is one of two kinds, and the tab has a view for each:
+
+- **Autopilot** (the default): a hit the screen does not reject goes
+  straight into the pipeline, tailored, filled, and waits for your
+  Submit like any other job. A reject, or a screen that could not run,
+  waits on the tab for you.
+- **Notifications** (tick "Notify only" on the watch): companies where
+  you can get a referral. Hits are listed and mailed with the link and a
+  short note ready to send to the person who can refer you (the
+  "referrer" line); nothing is applied to until you press "Add to
+  autopilot".
+
+The digest mail says which is which: the ones to ask about first, then
+the ones already in autopilot. Nothing ever presses Submit.
 
 Mail is plain SMTP from a personal account: `AUTOPILOT_SMTP_USER`,
 `AUTOPILOT_SMTP_PASS` (Gmail: an App Password), `AUTOPILOT_MAIL_TO` in

@@ -55,7 +55,8 @@ MATCH: <one sentence on why this candidate fits>
 ```
 
 ```markdown
-<one bullet per change, twelve words at most, `where: "old" -> "new" (why)`.
+<one line starting "Asks:" with the posting's top five terms, comma separated.
+Then one bullet per change, twelve words at most, `where: "old" -> "new" (why)`.
 Then one line starting "Gaps:" listing posting requirements the candidate
 genuinely does not meet, comma separated.>
 ```

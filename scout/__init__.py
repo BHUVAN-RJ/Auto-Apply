@@ -8,9 +8,14 @@ of Google, Amazon, Apple) so that pasting the page you would open by
 hand is the whole setup. Every provider returns the same `Posting`;
 `scout.run` filters titles by level, drops what the watch has already
 seen, screens the rest with the same on-page screen the banner uses,
-records hits and mails a digest. Nothing here opens a browser, queues a
-job on its own, or applies: a hit becomes a job only when the person
-presses "Add to autopilot" on it.
+records hits and mails a digest. A watch is one of two kinds
+(2026-09-21): `notify` watches are the companies where the person can
+get a referral, so their hits are only listed and mailed with the link,
+for the person to ask; every other watch's hits go straight into
+autopilot when the screen does not reject them (`run.check` calls
+`queue_hit`, the same three steps as `/capture`), and the pipeline
+takes them from there. Nothing here presses Submit: the fill stops at
+the filled form as it does for any job.
 """
 from __future__ import annotations
 
@@ -42,18 +47,29 @@ class Posting:
         return asdict(self)
 
 
-# Entry-level software titles. `positive`: at least one must appear in the
-# title; `negative`: none may. Case-insensitive substring matches; a watch
-# can override both lists.
+# Entry-level software titles and the roles next door (data, backend,
+# full stack, platform, ML, infrastructure). `positive`: at least one
+# must appear in the title; `negative`: none may. Case-insensitive
+# substring matches; a watch can override both lists.
 DEFAULT_POSITIVE = [
     "software engineer", "software developer", "software development engineer",
-    "swe", "sde", "new grad", "early career", "university grad", "engineer i",
-    "engineer ii", "associate engineer", "junior", "entry level", "graduate",
+    "software engineering", "swe", "sde", "new grad", "early career", "university grad",
+    "engineer i", "engineer ii", "associate engineer", "junior", "entry level", "graduate",
+    "data engineer", "backend engineer", "back-end engineer", "back end engineer",
+    "full stack", "full-stack", "fullstack", "frontend engineer", "front-end engineer",
+    "platform engineer", "infrastructure engineer", "machine learning engineer",
+    "ml engineer", "ai engineer", "cloud engineer", "site reliability", "devops engineer",
+    "member of technical staff", "applied scientist", "data scientist",
+    "frontend developer", "front-end developer", "backend developer", "back-end developer",
+    "full stack developer", "full-stack developer", "web developer", "application developer",
 ]
 DEFAULT_NEGATIVE = [
     "senior", "staff", "principal", "lead", "manager", "director", "head of",
     "vp", "vice president", "architect", "intern", "sr.", "sr ", "distinguished",
     "fellow",
+    # Not software: "Electrical Controls Engineer II" passed on "engineer ii".
+    "electrical", "mechanical", "controls", "technician", "sales", "recruiter",
+    "accountant", "marketing", "counsel", "field service",
 ]
 # "III" is not in the list on purpose: Google's Software Engineer III is
 # its new-grad level. A watch on a company where III means mid-level adds
@@ -74,6 +90,9 @@ class Watch(BaseModel):
     negative: list[str] = Field(default_factory=lambda: list(DEFAULT_NEGATIVE))
     checks_per_day: Optional[int] = None       # None = the global setting
     enabled: bool = True
+    notify: bool = False                       # True: list and mail only, the person asks for a referral; False: hits go into autopilot
+    us_only: bool = True                       # drop roles whose location names another country before anything else
+    listed: list[dict] = Field(default_factory=list)   # the roles at the level on the last check: title, url, location, posted, id
     referrer: str = ""                         # who to ask for a referral, free text
     added_at: str = Field(default_factory=utcnow)
     last_checked: Optional[str] = None
@@ -137,6 +156,11 @@ def detect(url: str) -> tuple[str, dict, str]:
         if not parts:
             raise DetectError("Ashby URL has no board name")
         return "ashby", {"slug": parts[0]}, parts[0]
+    if host.endswith("bamboohr.com"):
+        sub = host.split(".")[0]
+        if not sub or sub in ("www", "bamboohr"):
+            raise DetectError("BambooHR URL needs the company subdomain, e.g. https://acme.bamboohr.com/careers")
+        return "bamboohr", {"slug": sub}, sub
     if host.endswith("lever.co"):
         if not parts:
             raise DetectError("Lever URL has no board name")
@@ -178,5 +202,5 @@ def detect(url: str) -> tuple[str, dict, str]:
         if not domain:
             raise DetectError("Eightfold URL needs ?domain=<company domain>")
         return "eightfold", {"host": host, "domain": domain}, domain.split(".")[0]
-    raise DetectError(f"No provider for {host}. Supported: Greenhouse, Lever, Ashby, Workday, "
+    raise DetectError(f"No provider for {host}. Supported: Greenhouse, Lever, Ashby, BambooHR, Workday, "
                       "SmartRecruiters, Oracle, Eightfold/Microsoft, Google, Amazon, Apple")

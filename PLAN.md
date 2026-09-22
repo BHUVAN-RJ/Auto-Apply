@@ -105,9 +105,11 @@ archive/   Application folder writer plus index.csv.
 scout/     Companies' own careers pages, watched on a schedule. detect()
            picks a provider from the URL, providers.py reads the public
            JSON (or server-rendered page) behind it, run.py filters titles
-           by level, screens what is new, records hits, mails a digest.
-           Never a browser, never a queue write of its own; a hit enters
-           the pipeline only by the person's click. Phase 17.
+           by level, pre-screens in code, screens what is new, records
+           hits, mails a digest. Never a browser. A notify watch (a
+           referral is possible) queues nothing; every other watch queues
+           a hit the screen does not reject, through the same steps as
+           /capture. Phase 17, 17b.
 ```
 
 ## Flow
@@ -203,10 +205,11 @@ leak; a deny-list in code does not.
   "Remove file" whose label has gone through `describes_submit`.
 - A fill works in one tab per job, found by the whole URL minus visitor
   tags (`autofill.same_page`), never by host and path alone.
-- The scout reads and writes nothing but its own file. It queues no job,
-  opens no browser, presses nothing; `run.queue_hit` runs only from the
-  "Add to autopilot" button and does exactly what `/capture` does, so a
-  scouted job meets the same two checkpoints as a captured one.
+- The scout opens no browser and presses nothing. `run.queue_hit` does
+  exactly what `/capture` does, so a scouted job meets the same two
+  checkpoints as a captured one; it runs from the "Add to autopilot"
+  button, and from `run.check` for a watch that is not `notify` when the
+  verdict is `ok` or `caution` (Phase 17b). A notify watch never queues.
 - The code filler (`browser/forms/`) clicks no option, radio or button
   without `describes_submit` refusing first, fills no field that reads as
   a visa question whatever the profile holds, and records nothing about
@@ -1403,4 +1406,84 @@ deliberately wrong SmartRecruiters company came up BROKEN on the tab
 button, the banner and the row. Mail not yet configured on the
 author's machine; the digest and the broken notice are tested with the
 sender stubbed. `tools/scout_verify.py` exits with the broken count.
-Not yet: a real hit arriving on the schedule, and a mail received.
+Mail configured 2026-09-21 (Gmail App Password), test mails received.
+Not yet: a real hit arriving on the schedule.
+
+## Phase 17b — scout feeds autopilot; notify watches for referrals (built, 2026-09-21)
+
+Phase 17 listed every hit and waited for a click. In use, the click was
+the same click every time for most companies, and the only companies
+where the person wanted to be asked first were the ones where a referral
+was possible. So the watch got a kind.
+
+### Decisions
+
+- **`Watch.notify`.** True: the company is one where the person can get a
+  referral. Its hits are listed under the Scout tab's Notifications view
+  and mailed with the link and the note for the referrer; the scout
+  never queues them. False (default): the hit goes into autopilot from
+  `run.check` the moment its verdict is in `run.QUEUE_VERDICTS` (`ok`,
+  `caution`), through `queue_hit`, i.e. `/capture`'s three steps. The
+  pipeline, checkpoint 1 (auto when `auto_fill`), the fill and the
+  never-submit rule are unchanged; the scout only replaced the click.
+- **A reject, or a screen that could not run, waits.** `verdict == ""`
+  (no description, screen failure) is not a verdict; those stay on the
+  Autopilot view with Add and Dismiss, as before.
+- **Pre-screen in code before the model** (`filter.prescreen`). In bulk,
+  most of what the title filter passes is still not entry level. Three
+  cheap, high-precision reasons: `YEARS_MIN` (4) or more years of
+  experience, taking the first number of a range so "0-2" and "2-4"
+  pass and "1-3 … and 5+ years of Python" passes too; a security
+  clearance; citizenship as a requirement. Everything softer is the
+  model's. Wider `DEFAULT_POSITIVE`: data engineer, backend, full stack,
+  frontend, platform, infrastructure, ML/AI engineer, SRE, DevOps, MTS,
+  applied scientist, data scientist.
+- **The add form is company and URL**, plus the notify box; the referrer
+  field appears when it is ticked. Query, filters and frequency stay on
+  the watch's page.
+- **The digest says which is which.** Subject "N to ask about and M in
+  autopilot at …"; the referral rows first, the queued rows marked "in
+  autopilot"; rejects still never mailed.
+- **A company's own page resolves to its boards** (same day). Mujin's
+  `mujin-corp.com/careers` is a shell over a Lever board (Japan) and a
+  BambooHR one (US). No provider for the host: `providers.discover`
+  reads the page once, `BOARD_LINKS` finds every board link, and
+  `/watch` makes one watch per board, "Mujin (lever)", "Mujin
+  (bamboohr)". BambooHR provider added: `/careers/list` for the board,
+  `/careers/<id>/detail` for the description of ids not yet seen.
+- **The watch page is the board at the level, now** (same day). Hits are
+  what appeared since the last look; the person also wanted to see what
+  is there today. `Watch.listed` keeps the matching rows per check, the
+  page lists them with Add; `add_listed` makes a hit and queues it.
+- **US only in code** (`Watch.us_only`, `filter.outside_us`). A location
+  that names another country, in every listed place, is out before the
+  count; unknown places stay and the screen reads the posting. Mujin's
+  Lever board went from 3 at level to 0, all Tokyo and Best.
+- **Notifications first** in the sidebar; the watched list grows, the
+  to-ask list is what needs the person.
+
+## Phase 18 — the tailoring prompt, a method instead of a list of don'ts (2026-09-21)
+
+The rules said what may not change and how long each line is; they did
+not say how to decide what to change. Runs came back safe and flat. The
+prompt now carries the method the 2026 guides, the XYZ-bullet advice and
+the grounded-optimisation paper agree on: read the posting into a
+ranked term list (title and level, required, preferred, responsibilities,
+what repeats), in the posting's own spelling; map each term to the
+resume line or profile story that proves it, or call it a gap; spend the
+edits in order (summary in the posting's words, the two or three bullets
+that prove the top terms with the term front-loaded and result, measure,
+method when the pieces are already on the page, skills order and
+spelling, entry order); check the reply against the checker's rules
+before sending. Nothing the checker enforces changed. The rationale
+opens with `Asks:`, the top five terms, so the reader sees what the
+model read the posting as. Judged on the next real runs; the profile is
+still empty, and the prompt already treats stories as evidence.
+
+Tests: `tests/test_scout.py` (24): a non-notify watch queues `ok` and
+`caution` only, a notify watch never queues, the digest orders and
+labels, the pre-screen cases, and the pre-screen answering before the
+model is reached. Verified on the page over CDP: both views render, the
+tab badge is hidden when nothing is broken (it was shown always: the
+badge's `display` beat the `hidden` attribute and its loader was never
+written; both fixed the same day).

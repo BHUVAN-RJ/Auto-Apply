@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from scout import DetectError, Watch, detect, mail, run, store
+from scout import DetectError, Watch, detect, mail, providers, run, store
 from server import settings
 
 router = APIRouter(prefix="/scout")
@@ -23,6 +23,7 @@ class WatchRequest(BaseModel):
     url: str
     company: str = ""
     query: Optional[str] = None
+    notify: bool = False          # True: list and mail only (a referral is coming); False: hits go into autopilot
     referrer: str = ""
     checks_per_day: Optional[int] = None
 
@@ -30,6 +31,8 @@ class WatchRequest(BaseModel):
 class WatchUpdate(BaseModel):
     company: Optional[str] = None
     query: Optional[str] = None
+    notify: Optional[bool] = None
+    us_only: Optional[bool] = None
     referrer: Optional[str] = None
     checks_per_day: Optional[int] = None
     enabled: Optional[bool] = None
@@ -51,7 +54,7 @@ def watch_row(w: Watch) -> dict:
 def hit_row(h, watches: dict[str, Watch]) -> dict:
     row = h.model_dump()
     w = watches.get(h.watch_id)
-    row.update(id=h.id, referrer=w.referrer if w else "",
+    row.update(id=h.id, referrer=w.referrer if w else "", notify=w.notify if w else False,
                note=mail.referral_note(w, h) if w else "")
     row["posting"] = {k: v for k, v in h.posting.items() if k != "text"}
     return row
@@ -72,17 +75,13 @@ def get_status() -> dict:
     }
 
 
-@router.post("/watch")
-def add_watch(req: WatchRequest) -> dict:
-    try:
-        provider, args, company = detect(req.url)
-    except DetectError as exc:
-        raise HTTPException(400, str(exc))
+def _add_one(url: str, req: WatchRequest, company: str = "") -> dict:
+    provider, args, guess = detect(url)
     query = args.pop("query", "")
     if req.query is not None:
         query = req.query
-    watch = Watch(url=req.url.strip(), company=req.company.strip() or company, provider=provider, args=args,
-                  query=query, referrer=req.referrer.strip(), checks_per_day=req.checks_per_day)
+    watch = Watch(url=url.strip(), company=company or req.company.strip() or guess, provider=provider, args=args,
+                  query=query, notify=req.notify, referrer=req.referrer.strip(), checks_per_day=req.checks_per_day)
     watch, created = store.add_watch(watch)
     if not created:
         return {"created": False, "watch": watch_row(watch), "verify": None}
@@ -94,6 +93,37 @@ def add_watch(req: WatchRequest) -> dict:
     else:
         run._broken(watch, result["error"])
     return {"created": True, "watch": watch_row(store.get_watch(watch.id) or watch), "verify": result}
+
+
+@router.post("/watch")
+def add_watch(req: WatchRequest) -> dict:
+    """One watch for a board URL. A company's own careers page (no
+    provider for the host) is read once and every board it embeds
+    becomes a watch, named "<company> (<provider>)" when there is more
+    than one; `watches` carries them all, `watch` the first."""
+    try:
+        return _add_one(req.url, req)
+    except DetectError as exc:
+        reason = str(exc)
+    try:
+        boards = providers.discover(req.url)
+    except Exception as exc:  # noqa: BLE001 - the page's own failure is the message
+        raise HTTPException(400, f"{reason}; and the page could not be read: {str(exc)[:120]}")
+    if not boards:
+        raise HTTPException(400, f"{reason}; the page names no board either")
+    rows = []
+    for board in boards:
+        try:
+            provider = detect(board)[0]
+        except DetectError:
+            continue
+        name = req.company.strip()
+        if name and len(boards) > 1:
+            name = f"{name} ({provider})"
+        rows.append(_add_one(board, req, company=name))
+    if not rows:
+        raise HTTPException(400, f"{reason}; the boards on the page are not supported")
+    return {**rows[0], "watches": [r["watch"] for r in rows], "found": boards}
 
 
 @router.patch("/watch/{watch_id}")
@@ -164,6 +194,19 @@ def set_frequency(req: FrequencyRequest) -> dict:
         raise HTTPException(400, "checks per day: 1 to 48")
     settings.save(scout_checks_per_day=req.checks_per_day)
     return {"checks_per_day": req.checks_per_day}
+
+
+class AddListed(BaseModel):
+    posting_id: str
+
+
+@router.post("/watch/{watch_id}/add")
+def add_listed(watch_id: str, req: AddListed) -> dict:
+    """A role from the watch's own list, into autopilot by hand."""
+    result = run.add_listed(watch_id, req.posting_id)
+    if not result["ok"]:
+        raise HTTPException(404, result["reason"])
+    return result
 
 
 @router.post("/hits/{hit_id}/queue")

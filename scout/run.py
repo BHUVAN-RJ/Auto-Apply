@@ -15,8 +15,17 @@ verifier script and the page's "Verify" run, and what turns a watch
 red: a fetch that raises, or a page that lists nothing.
 
 The thread wakes every minute and checks what is due; a watch is due
-when 24 h / checks_per_day has passed since its last check. Nothing here
-opens a browser or queues a job; `queue_hit` does that only on request.
+when 24 h / checks_per_day has passed since its last check.
+
+Two kinds of watch (2026-09-21). A `notify` watch is a company where
+the person can get a referral: its hits are listed and mailed with the
+link, never queued by the scout. Every other watch feeds autopilot:
+`level.prescreen` throws out the hard cases in code (years, clearance,
+citizenship), the model screen reads the rest, and a hit the screen
+does not reject is queued at once through `queue_hit`, the same three
+steps as `/capture`. A reject, or a screen that could not run, stays on
+the page for the person. Nothing here opens a browser or presses
+anything; the pipeline and the fill take it from the queue as usual.
 """
 from __future__ import annotations
 
@@ -35,6 +44,8 @@ log = logging.getLogger("autopilot.scout")
 ENV = "AUTOPILOT_SCOUT"
 TICK = 60.0                 # seconds between looks at what is due
 SCREEN_LIMIT = 25           # new roles screened per check; the rest wait for the next round
+QUEUE_VERDICTS = ("ok", "caution")   # what a non-notify watch sends into autopilot; reject and "" wait for the person
+LISTED_KEEP = 100           # roles at the level kept on the watch row for the page, per check
 TEXT_KEEP = 6000            # characters of description kept on the hit
 
 _thread: Optional[threading.Thread] = None
@@ -73,6 +84,29 @@ def next_check(watch: Watch) -> Optional[str]:
     return datetime.fromtimestamp(last.timestamp() + interval(watch), tz=timezone.utc).isoformat(timespec="seconds")
 
 
+def listed_row(p: Posting) -> dict:
+    """What the page shows for a role at the level: no description."""
+    return {"id": p.id, "title": p.title, "url": p.url, "location": p.location, "posted": p.posted}
+
+
+def add_listed(watch_id: str, posting_id: str) -> dict:
+    """Put one of the roles listed on the watch into autopilot by hand:
+    a hit is recorded for it (unscreened; the pipeline screens) and
+    queued the usual way."""
+    watch = store.get_watch(watch_id)
+    if watch is None:
+        return {"ok": False, "reason": "no such watch"}
+    row = next((r for r in watch.listed if r["id"] == posting_id), None)
+    if row is None:
+        return {"ok": False, "reason": "not on the list any more; check the page again"}
+    posting = Posting(id=row["id"], title=row["title"], url=row["url"], location=row.get("location", ""),
+                      posted=row.get("posted", ""))
+    hit = Hit(watch_id=watch.id, company=watch.company, posting=posting.to_dict())
+    store.add_hits([hit])
+    store.update_watch(watch.id, seen_ids=sorted(set(watch.seen_ids) | {posting.id}))
+    return queue_hit(hit.id)
+
+
 def verify(watch: Watch) -> dict:
     """Can the page be read, and does it list roles at the level. No writes."""
     started = time.monotonic()
@@ -90,8 +124,9 @@ def verify(watch: Watch) -> dict:
 
 
 def _screen(posting: Posting, company: str) -> tuple[str, str]:
-    """Verdict and summary from the on-page screen; ("", reason) when it
-    cannot run. A screen failure never loses the hit."""
+    """Verdict and summary: the code pre-screen first, then the on-page
+    screen; ("", reason) when neither can run. A screen failure never
+    loses the hit."""
     from server import screen as screen_api
     text = posting.text
     if not text.strip():
@@ -100,6 +135,9 @@ def _screen(posting: Posting, company: str) -> tuple[str, str]:
             text = fetch.fetch(posting.url).text
         except Exception as exc:  # noqa: BLE001
             return "", f"no description: {str(exc)[:120]}"
+    reason = level.prescreen(text)
+    if reason:
+        return "reject", reason
     try:
         result, _ = screen_api.screen_url(posting.url, text, title=f"{posting.title} @ {company}")
     except Exception as exc:  # noqa: BLE001
@@ -152,6 +190,7 @@ def _check(watch: Watch, screen: bool) -> dict:
     first_run = watch.last_ok is None and not seen
     fresh = [p for p in matching if p.id not in seen]
     hits: list[Hit] = []
+    queued: list[str] = []
     if not first_run:
         for posting in fresh[:SCREEN_LIMIT]:
             verdict, summary = _screen(posting, watch.company) if screen else ("", "")
@@ -160,6 +199,14 @@ def _check(watch: Watch, screen: bool) -> dict:
                             verdict=verdict, summary=summary))
         added = store.add_hits(hits)
         seen |= {p.id for p in fresh[:SCREEN_LIMIT]}
+        if not watch.notify:
+            for hit in added:
+                if hit.verdict in QUEUE_VERDICTS:
+                    try:
+                        queue_hit(hit.id)
+                        queued.append(hit.id)
+                    except Exception:  # noqa: BLE001 - the hit stays on the page
+                        log.exception("scout queue %s", hit.id)
     else:
         added = []
         seen |= {p.id for p in matching}
@@ -168,18 +215,19 @@ def _check(watch: Watch, screen: bool) -> dict:
     listed = {p.id for p in rows}
     store.update_watch(watch.id, last_checked=now, last_ok=now, last_total=len(rows),
                        last_matching=len(matching), error=None, broken_mailed=False,
-                       seen_ids=sorted(seen & listed))
+                       seen_ids=sorted(seen & listed), listed=[listed_row(p) for p in matching[:LISTED_KEEP]])
     return {"checked": True, "ok": True, "total": len(rows), "matching": len(matching),
-            "new": len(added), "first_run": first_run, "hits": [h.id for h in added]}
+            "new": len(added), "queued": len(queued), "first_run": first_run, "hits": [h.id for h in added]}
 
 
 def mail_new() -> dict:
-    """One digest for every hit not yet mailed. Rejects stay on the page
-    and out of the mail; the mail is the "go ask now" signal."""
+    """One digest for every hit not yet mailed: the ones to ask a referral
+    for, with the link, and the ones already in autopilot. Rejects stay
+    on the page and out of the mail."""
     if not mail.configured():
         return {"sent": False, "reason": "mail not set up"}
     watches = {w.id: w for w in store.watches()}
-    pending = [h for h in store.hits() if not h.mailed and h.status == "new"]
+    pending = [h for h in store.hits() if not h.mailed and h.status in ("new", "queued")]
     rows = [(watches[h.watch_id], h) for h in pending if h.watch_id in watches and h.verdict != "reject"]
     for h in pending:
         if h.verdict == "reject" or h.watch_id not in watches:

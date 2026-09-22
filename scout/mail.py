@@ -93,11 +93,18 @@ def referral_note(watch: Watch, hit: Hit) -> str:
 def digest(rows: list[tuple[Watch, Hit]]) -> tuple[str, str, str]:
     """(subject, text, html) for one round's new hits."""
     companies = sorted({h.company for _, h in rows})
-    subject = f"Scout: {len(rows)} new at {', '.join(companies[:3])}{'…' if len(companies) > 3 else ''}"
+    ask = sum(1 for _, h in rows if h.status != "queued")
+    auto = len(rows) - ask
+    what = " and ".join(x for x in [f"{ask} to ask about" if ask else "", f"{auto} in autopilot" if auto else ""] if x)
+    subject = f"Scout: {what} at {', '.join(companies[:3])}{'…' if len(companies) > 3 else ''}"
     text_lines, html_rows = [], []
+    # The referral ones first: those need the person; the rest is news.
+    rows = sorted(rows, key=lambda r: r[1].status == "queued")
     for watch, hit in rows:
         p = hit.posting
         verdict = hit.verdict or "not screened"
+        if hit.status == "queued":
+            verdict += ", in autopilot"
         line = f"{hit.company}: {p['title']}"
         if p.get("location"):
             line += f" — {p['location']}"
@@ -107,7 +114,7 @@ def digest(rows: list[tuple[Watch, Hit]]) -> tuple[str, str, str]:
         if watch.referrer:
             text_lines += [f"  ask: {watch.referrer}", "  " + referral_note(watch, hit).replace("\n", "\n  ")]
         text_lines.append("")
-        colour = {"ok": "#2a7", "caution": "#c90", "reject": "#c33"}.get(verdict, "#888")
+        colour = {"ok": "#2a7", "caution": "#c90", "reject": "#c33"}.get(hit.verdict, "#888")
         html_rows.append(
             f"<p style='margin:0 0 14px'><b>{escape(hit.company)}</b>: "
             f"<a href='{escape(p['url'])}'>{escape(p['title'])}</a>"

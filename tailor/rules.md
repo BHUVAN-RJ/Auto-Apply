@@ -61,10 +61,98 @@ replaced by it, whole:
 
 Replacing is the exception. Reordering existing entries is usually enough.
 
+## The method, in order
+
+Work through these steps before writing a line of LaTeX. The steps are
+the difference between a resume that reads as the same document and a
+resume that reads as the same document *written for this job*.
+
+### 1. Read the posting like a recruiter's checklist
+
+Pull out, in this order of weight:
+
+1. The title and the level ("Software Engineer II", "New Grad", "Backend").
+2. Requirements stated as required, minimum, or must: languages, systems,
+   domains, methods, degrees, years.
+3. Requirements stated as preferred, nice-to-have, bonus, or ideally.
+4. The responsibilities: what the person will do day to day, which is what
+   the hiring manager reads the bullets against.
+5. Terms that recur. A word the posting uses three times is what the
+   screen and the reader look for.
+
+Keep the top ten to fifteen terms, in the posting's exact spelling and
+casing ("PostgreSQL", not "Postgres"; "CI/CD", not "continuous
+integration", unless the posting itself expands it). Required terms
+outrank preferred; repeated terms outrank single mentions; terms in the
+responsibilities outrank terms in the boilerplate.
+
+### 2. Map every term to evidence, or to a gap
+
+For each term, find the line on the resume, or the story in the candidate
+profile, that proves it: the bullet, project, skill, or coursework where
+the candidate did that work. Write the map for yourself before editing:
+
+    term -> resume line (or profile story) that proves it, or GAP
+
+A term with no line is a gap. A gap stays a gap. It goes in the rationale
+under "Gaps", never into the resume. "Adjacent" is not evidence: Flask is
+not Django, MySQL is not PostgreSQL, a course is not production work,
+and one script in a language is not that language on the skills line
+unless it is already there.
+
+Where the candidate profile carries stories, they are evidence of the
+same standing as the resume: a story's bullets may sharpen a resume
+bullet about the same work, and a story with a `Link:` line may replace
+a project (below). A story about work not on the resume does not create
+a new bullet; it can only replace a project entry, whole.
+
+### 3. Rewrite where the evidence is strongest
+
+Spend the edits where they change the read, in this priority:
+
+1. **Summary.** Say the title's level and domain in the posting's words,
+   then the two or three strongest matched terms. A summary that could
+   head any application is not tailored.
+2. **The two or three bullets that prove the top required terms.** Put the
+   matched term in the first half of the bullet, in the posting's
+   spelling. Where the bullet already carries a result, a measure and a
+   method, arrange it as result first, measured how, done by what
+   ("Cut p95 latency 40% by moving the hot path to Redis"), because that
+   is how the strongest bullets on any engineering resume read. Use only
+   numbers already on the page. A bullet with no number stays without
+   one; do not estimate.
+3. **Skills lines.** Reorder inside each category so the posting's terms
+   come first, spelled as the posting spells them. Drop an item only when
+   the posting makes it clearly irrelevant and the length needs it.
+4. **Order of entries.** The project or role with the most matched terms
+   goes first under its heading.
+
+Bullets that prove nothing in the posting are left as they are. Do not
+polish for its own sake; every edit should trace to a term in the map.
+
+### 4. Check before you answer
+
+Go through the tailored text once more:
+
+- Every term you added or changed appears on the master resume or in the
+  profile. If it does not, take it out.
+- Every number is the number that was there.
+- Every bullet, the summary, and every skills line is within its length
+  window (below).
+- Nothing above `\begin{document}` changed; nothing outside the four
+  editable sections changed; no entry, bullet, line or category was added
+  or removed; no URL appears that the rules do not allow.
+- The rationale lists every change and every gap.
+
+A reply that fails any of these is rejected by the checker, and the
+attempt is wasted.
+
 ## How much may change
 
-Little. This is a tailoring pass, not a rewrite. The tailored resume should
-read as the same document with a different emphasis.
+Enough to be read as written for this job; never more than the evidence
+supports. The tailored resume should read as the same document with a
+different emphasis: same facts, same numbers, same entries, the
+posting's words wherever they are true.
 
 - Never invent. Do not add a skill, tool, employer, metric, credential, or
   achievement that is not already present in the resume. Every number stays
@@ -77,6 +165,13 @@ read as the same document with a different emphasis.
   says "scalable, fault-tolerant platform", using the posting's term is correct
   because the work is the same. If the posting says "Kubernetes" and the resume
   never mentions it, the gap stays.
+- Match spelling and casing to the posting, since the first reader is
+  often a search: "Node.js" not "NodeJS", "REST APIs" not "RESTful
+  services", when the resume already shows that work. Where the posting
+  uses both an acronym and its expansion, keep whichever the resume has.
+- Never write a term as a bare keyword. A skill named in a bullet is
+  attached to the work that used it; a list of technologies with no
+  verb is stuffing and reads as such.
 - Within `TECHNICAL SKILLS` you may reorder items inside a category so the most
   relevant appear first, and you may drop an item to make room only if the
   posting makes it clearly irrelevant. You may not add a technology the
@@ -127,6 +222,7 @@ in caveman style, after github.com/juliusbrussee/caveman: drop articles,
 filler, and pleasantries; fragments are fine; short synonyms; every
 technical term exact. Compress the style, never the substance.
 
+- First line: `Asks: <the top five terms from step 1, comma separated>`.
 - One line per change, at most twelve words, in this shape:
   `Summary: "scalable" -> "high-throughput" (posting term)`. Location first,
   then old to new, then the posting requirement in brackets. No prose.

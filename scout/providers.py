@@ -6,7 +6,7 @@ client, and raises on failure: the caller records the error on the watch
 and shows it red. A provider never returns half a list quietly.
 
 The endpoints are the public JSON the pages themselves call (Greenhouse,
-Lever, Ashby, Workday, SmartRecruiters, Oracle, Eightfold) or the
+Lever, Ashby, BambooHR, Workday, SmartRecruiters, Oracle, Eightfold) or the
 server-rendered search page where there is none (Google, Amazon, Apple).
 Google's old `careers.google.com/api/v3/search` answers `Not Found` since
 2026; its results page embeds the same rows, description included, in
@@ -83,6 +83,37 @@ def lever(watch: Watch, http: httpx.Client) -> list[Posting]:
             text += "\n" + strip_html(block.get("text", "")) + "\n" + strip_html(block.get("content", ""))
         out.append(Posting(id=str(j.get("id")), title=j.get("text", ""), url=j.get("hostedUrl", ""),
                            location=cats.get("location", ""), posted=_date(j.get("createdAt")), text=text))
+    out.sort(key=lambda p: p.posted, reverse=True)
+    return out
+
+
+def bamboohr(watch: Watch, http: httpx.Client) -> list[Posting]:
+    """`<sub>.bamboohr.com/careers/list` is the JSON the board page
+    itself loads; the description is one more call per role
+    (`/careers/<id>/detail`), made only for the ids not yet seen so a
+    board of thirty is not thirty calls a check."""
+    sub = watch.args["slug"]
+    base = f"https://{sub}.bamboohr.com/careers"
+    data = http.get(f"{base}/list", headers={"Accept": "application/json"}).raise_for_status().json()
+    seen = set(watch.seen_ids)
+    out = []
+    for j in data.get("result") or []:
+        jid = str(j.get("id"))
+        loc = j.get("location") or {}
+        location = ", ".join(x for x in (loc.get("city"), loc.get("state")) if x)
+        if j.get("isRemote"):
+            location = (location + "; " if location else "") + "Remote"
+        text, posted = "", ""
+        if jid not in seen:
+            try:
+                detail = http.get(f"{base}/{jid}/detail", headers={"Accept": "application/json"}).raise_for_status().json()
+                opening = (detail.get("result") or {}).get("jobOpening") or {}
+                text = strip_html(opening.get("description") or "")
+                posted = opening.get("datePosted") or ""
+            except Exception:  # noqa: BLE001 - the listing is enough; the screen fetches the page
+                pass
+        out.append(Posting(id=jid, title=(j.get("jobOpeningName") or "").strip(), url=f"{base}/{jid}",
+                           location=location, posted=posted, text=text))
     out.sort(key=lambda p: p.posted, reverse=True)
     return out
 
@@ -281,7 +312,7 @@ def apple(watch: Watch, http: httpx.Client) -> list[Posting]:
 
 
 PROVIDERS: dict[str, Callable[[Watch, httpx.Client], list[Posting]]] = {
-    "greenhouse": greenhouse, "lever": lever, "ashby": ashby, "workday": workday,
+    "greenhouse": greenhouse, "lever": lever, "ashby": ashby, "bamboohr": bamboohr, "workday": workday,
     "smartrecruiters": smartrecruiters, "oracle": oracle, "eightfold": eightfold,
     "google": google, "amazon": amazon, "apple": apple,
 }
@@ -296,3 +327,48 @@ def fetch(watch: Watch, http: httpx.Client | None = None) -> list[Posting]:
         return provider(watch, http)
     with client() as http:
         return provider(watch, http)
+
+
+# ------------------------------------------------------------- discover --
+# A company's own careers page is usually a shell around one of the
+# boards above: Mujin's `mujin-corp.com/careers` embeds a Lever board
+# (Japan) and a BambooHR one (US). When the host is not a board, the
+# page is read once and every board link in it is a watch.
+BOARD_LINKS = [
+    re.compile(r"https?://(?:boards|job-boards)\.greenhouse\.io/(?:embed/job_board\?for=)?([A-Za-z0-9_-]+)", re.I),
+    re.compile(r"https?://jobs\.lever\.co/([A-Za-z0-9_-]+)", re.I),
+    re.compile(r"https?://jobs\.ashbyhq\.com/([A-Za-z0-9_-]+)", re.I),
+    re.compile(r"https?://([A-Za-z0-9-]+)\.bamboohr\.com/(?:careers|js/embed)", re.I),
+    re.compile(r"https?://[A-Za-z0-9-]+\.wd\d+\.myworkdayjobs\.com/[A-Za-z0-9_/-]+", re.I),
+    re.compile(r"https?://(?:jobs|careers)\.smartrecruiters\.com/([A-Za-z0-9_-]+)", re.I),
+]
+BOARD_URL = {
+    0: "https://boards.greenhouse.io/{}", 1: "https://jobs.lever.co/{}", 2: "https://jobs.ashbyhq.com/{}",
+    3: "https://{}.bamboohr.com/careers", 5: "https://careers.smartrecruiters.com/{}",
+}
+EMBED_ONLY = {"embed", "js"}       # matches that are the script, not a board
+
+
+def discover(url: str, http: httpx.Client | None = None) -> list[str]:
+    """Board URLs found in the page at `url`, in page order, each once.
+    Empty when the page names none. Raises when the page cannot be read."""
+    def read(h: httpx.Client) -> str:
+        return h.get(url).raise_for_status().text
+    html = read(http) if http is not None else None
+    if html is None:
+        with client() as h:
+            html = read(h)
+    html = unescape(html)
+    found: list[str] = []
+    for i, pattern in enumerate(BOARD_LINKS):
+        for m in pattern.finditer(html):
+            if i in BOARD_URL:
+                slug = m.group(1)
+                if slug.lower() in EMBED_ONLY:
+                    continue
+                board = BOARD_URL[i].format(slug)
+            else:
+                board = m.group(0).rstrip("/")
+            if board not in found:
+                found.append(board)
+    return found

@@ -254,4 +254,6 @@ def set_status(job_id: str, update: StatusUpdate) -> dict:
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(REVIEW_DIR / "index.html")
+    # One file, no build step, edited often: Chrome's heuristic cache kept
+    # an old copy for a whole session once. Always revalidate.
+    return FileResponse(REVIEW_DIR / "index.html", headers={"Cache-Control": "no-cache"})
