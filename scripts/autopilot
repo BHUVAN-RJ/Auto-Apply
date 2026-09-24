@@ -2,6 +2,7 @@
 # Start Autopilot: the server, the Autopilot Chrome, the injector, the page.
 #
 #   scripts/autopilot          start what is not running, open the page
+#   scripts/autopilot server   the server only: no Chrome, no injector
 #   scripts/autopilot stop     stop the server and the injector (never Chrome:
 #                              it holds the person's logins and open forms)
 #   scripts/autopilot status   what is running, on which port
@@ -66,6 +67,7 @@ start() {
   fi
 
   local page="http://127.0.0.1:$port/"
+  if [ "${1:-}" = "server" ]; then echo "server on $page"; return; fi
   if ! alive "$RUN/inject.pid"; then
     # The injector launches the Autopilot Chrome when it is not running and
     # opens the page in it.
@@ -81,8 +83,9 @@ start() {
 
 case "${1:-start}" in
   start) start ;;
+  server) start server ;;
   stop) stop ;;
   restart) stop; sleep 1; start ;;
   status) status ;;
-  *) echo "usage: $0 [start|stop|restart|status]" >&2; exit 2 ;;
+  *) echo "usage: $0 [start|server|stop|restart|status]" >&2; exit 2 ;;
 esac

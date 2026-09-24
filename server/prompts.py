@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 import paths
 from browser import chrome
-from tailor import prompts, workshop
+from tailor import prompts, tailor, workshop
 
 router = APIRouter()
 
@@ -135,10 +135,12 @@ def setup_status() -> dict:
     """What the first-run card lists. Each item is done or not; nothing
     here blocks the page."""
     resume = paths.BASE / "resume.tex"
+    problems = tailor.master_problems(resume.read_text(errors="replace")) if resume.exists() else []
     return {
         "home": str(paths.HOME),
         "key": key_is_set(),
-        "resume": resume.exists(),
+        "resume": resume.exists() and not problems,
+        "resume_problems": problems,
         "resume_path": str(resume),
         "chrome": chrome.find_browser() is not None,
     }

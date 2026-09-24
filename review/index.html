@@ -1654,8 +1654,11 @@ const Setup = (() => {
           <div class="keyrow"><input id="orKey" type="password" autocomplete="off" placeholder="sk-or-v1-…">
           <button class="act primary" id="orSave" disabled>Save key</button></div>
           <span class="hint" id="orMsg">Kept on this Mac only, in ${escape(s.home)}/.env.</span>`)}
-        ${item(s.resume, s.resume ? "Master resume in place." : `Put your master resume (LaTeX) at
-          <code>${escape(s.resume_path)}</code>. Ask Claude Code to do it from a PDF if you do not have one.`)}
+        ${item(s.resume, s.resume ? "Master resume in place." : s.resume_problems?.length
+          ? `The master resume is not in Autopilot's layout, so it cannot be tailored: ${escape(s.resume_problems.join("; "))}.
+             Ask Claude Code to rewrite it in <code>base/resume.template.tex</code> (INSTALL.md, step 4).`
+          : `Put your master resume (LaTeX) at <code>${escape(s.resume_path)}</code>. Ask Claude Code to do it
+             from your PDF or Word file (INSTALL.md, step 4).`)}
         ${item(s.chrome, s.chrome ? "Google Chrome found." : "Install Google Chrome; the forms are filled in it.")}
       </ol>`;
     const input = $("orKey");

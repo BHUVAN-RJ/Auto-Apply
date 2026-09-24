@@ -21,10 +21,10 @@ INVARIANTS=(tests/test_invariants.py tests/test_guard.py tests/test_forms.py
             tests/test_screen.py tests/test_tailor.py tests/test_prompts.py)
 
 echo "== invariants"
-"$PY" -m pytest -q "${INVARIANTS[@]}" || { echo "INVARIANTS FAILED: undo the change that broke them." >&2; exit 1; }
+"$PY" -m pytest -q -p no:warnings "${INVARIANTS[@]}" || { echo "INVARIANTS FAILED: undo the change that broke them." >&2; exit 1; }
 
 [ "${1:-}" = "--quick" ] && exit 0
 
 echo "== whole suite"
 # test_fill.py needs browser-use, which the app no longer installs.
-"$PY" -m pytest -q --ignore=tests/test_fill.py
+"$PY" -m pytest -q -p no:warnings --ignore=tests/test_fill.py

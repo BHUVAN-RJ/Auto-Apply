@@ -1,0 +1,231 @@
+% Autopilot's resume template. The master resume (in the data folder,
+% base/resume.tex) is written in this layout: INSTALL.md, step 4.
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{fontawesome5}
+\usepackage{multicol}
+\usepackage{graphicx}%\setmainfont{Times New Roman}
+\setlength{\multicolsep}{-3.0pt}
+\setlength{\columnsep}{-1pt}
+\input{glyphtounicode}
+
+\RequirePackage{tikz}
+\RequirePackage{xcolor}
+
+\definecolor{cvblue}{HTML}{0E5484}
+\definecolor{darkcolor}{HTML}{0F4539}
+\definecolor{cvgreen}{HTML}{3BD80D}
+\definecolor{taggreen}{HTML}{00E278}
+\definecolor{SlateGrey}{HTML}{2E2E2E}
+\definecolor{LightGrey}{HTML}{666666}
+\colorlet{name}{black}
+\colorlet{tagline}{darkcolor}
+\colorlet{heading}{darkcolor}
+\colorlet{headingrule}{cvblue}
+\colorlet{accent}{darkcolor}
+\colorlet{emphasis}{SlateGrey}
+\colorlet{body}{LightGrey}
+
+%----------FONT OPTIONS----------
+% sans-serif
+% \usepackage[sfdefault]{FiraSans}
+% \usepackage[sfdefault]{roboto}
+% \usepackage[sfdefault]{noto-sans}
+% \usepackage[default]{sourcesanspro}
+
+% \usepackage[T1]{fontenc}
+% \usepackage[T1]{fontenc}
+% \usepackage{cochineal}
+% \usepackage{fourier}
+
+% \usepackage{fontspec}
+% \usepackage{polyglossia}
+% \setmainlanguage{german}
+% \setmainfont{Times New Roman}
+
+% serif
+% \usepackage{CormorantGaramond}
+\usepackage{charter}
+
+% \pagestyle{fancy}
+% \fancyhf{} % clear all header and footer fields
+% \fancyfoot{}
+% \renewcommand{\headrulewidth}{0pt}
+% \renewcommand{\footrulewidth}{0pt}
+
+%========== SPACING KNOBS: tune only these four ==========
+\newlength{\secgap}    \setlength{\secgap}{3pt}
+\newlength{\secdrop}   \setlength{\secdrop}{2pt}
+\newlength{\entrygap}  \setlength{\entrygap}{2pt}
+\newlength{\bulletgap} \setlength{\bulletgap}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1.0in}
+\addtolength{\topmargin}{-0.5in}
+\addtolength{\textheight}{1.0in}
+\urlstyle{same}
+
+\definecolor{airforceblue}{rgb}{0.36, 0.54, 0.66}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+\setlength{\parskip}{0pt}
+% Sections formatting
+\titleformat{\section}
+  {\scshape\raggedright\large\bfseries}{}{0em}{}
+  [\vspace{0pt}\color{black}\titlerule]
+\titlespacing*{\section}{0pt}{\secgap}{\secdrop}
+
+
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{\item{#1}}
+
+
+\newcommand{\classesList}[4]{
+    \item\small{
+        {#1 #2 #3 #4 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{%
+  \vspace{\entrygap}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & \textbf{\small #2} \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}%
+}
+
+
+\newcommand{\resumeSingleSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{\large#1} & \textbf{\small #2} \\
+      
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small#1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{1.001\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & \textbf{\small #2}\\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+
+\renewcommand\labelitemi{$\vcenter{\hbox{\tiny$\bullet$}}$}
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{%
+  \begin{itemize}[leftmargin=0in, label={}, itemsep=0pt, parsep=0pt, topsep=0pt]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{%
+  \begin{itemize}[leftmargin=0.15in, itemsep=\bulletgap, parsep=0pt, topsep=2pt]}
+\newcommand{\resumeItemListEnd}{\end{itemize}}
+
+\newcommand\sbullet[1][.5]{\mathbin{\vcenter{\hbox{\scalebox{#1}{$\bullet$}}}}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+%----------HEADING----------
+% The template every master resume is written in: the tailor reads its
+% section headings (\section{\texorpdfstring{\color{airforceblue}NAME}{}})
+% and its \resumeItem bullets, so keep both exactly as they are. Everything
+% else (names, entries, the number of bullets) is yours.
+
+\begin{center}
+    \textbf{{\huge ALEX MORGAN}} \\ \vspace{3pt}
+    {(555) 010-0100}
+    \small{-}
+    {alex.morgan@example.com}
+    \small{-}
+    {Austin, TX (Open to Relocation)} \\ \vspace{2pt}
+    \href{https://example.com}{\color{blue}{Portfolio}} ~
+    \small{-}
+    \href{https://www.linkedin.com/in/example}{\color{blue}{LinkedIn}} ~
+    \small{-}
+    \href{https://github.com/example}{\color{blue}{GitHub}}
+        \vspace{-5pt}
+
+\end{center}
+%-----------SUMMARY-----------
+\section{\texorpdfstring{\color{airforceblue}SUMMARY}{}}
+{\normalsize Software engineer with two years building backend services in Python and Go, from design through on-call, plus data pipelines and a published open-source developer tool.}
+%-----------EDUCATION-----------
+\section{\texorpdfstring{\color{airforceblue}EDUCATION}{}}
+\begin{itemize}[leftmargin=0in, label={}, itemsep=1pt, parsep=0pt, topsep=0pt]
+  \item \textbf{B.S. in Computer Science}, University of Texas at Austin, May 2024
+\end{itemize}\vspace{-4pt}
+
+ %-----------EXPERIENCE-----------
+  \section{\texorpdfstring{\color{airforceblue}EXPERIENCE}{}}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {EXAMPLE CORP}{}
+      {Software Engineer}{June 2024 - Present}
+      \resumeItemListStart
+           \resumeItem{\normalsize{Built a Go payments reconciliation service processing 2M records a day, replacing a nightly batch job and cutting settlement delays from 24 hours to 15 minutes}}
+           \resumeItem{\normalsize{Cut p99 API latency 40\% (500ms to 300ms) by adding request coalescing and a Redis read-through cache in front of PostgreSQL}}
+           \resumeItem{\normalsize{Wrote the team's first load-test suite and CI gate, catching two capacity regressions before release}}
+      \resumeItemListEnd
+    \resumeSubheading
+      {SAMPLE LABS}{}
+      {Software Engineering Intern}{May 2023 - August 2023}
+      \resumeItemListStart
+            \resumeItem{\normalsize{Built a Python ETL pipeline on Airflow that loads 50GB of event data a day into BigQuery for the analytics team}}
+            \resumeItem{\normalsize{Reduced dashboard query cost 30\% by partitioning and clustering the three largest tables}}
+      \resumeItemListEnd
+
+  \resumeSubHeadingListEnd
+
+ %-----------PROJECTS-----------
+ \section{\texorpdfstring{\color{airforceblue}PROJECTS}{}}
+    \resumeItemListStart
+    \resumeItem{\normalsize{\href{https://github.com/example/queue}{\textbf{\color{blue}\underline{Durable Queue (Rust, Raft):}}} Built a replicated message queue with at-least-once delivery on a Raft log; sustains 40K messages a second across three nodes and survives the loss of any one}}
+    \resumeItem{\normalsize{\href{https://github.com/example/lint}{\textbf{\color{blue}\underline{SQL Linter (TypeScript, npm):}}} Published an open-source SQL linter with 30 rules and editor integration; 1,200 weekly downloads}}
+    \resumeItemListEnd
+
+%-----------PROGRAMMING SKILLS-----------
+\section{\texorpdfstring{\color{airforceblue}TECHNICAL SKILLS}{}}
+\begin{itemize}[leftmargin=0in, label={}, itemsep=0pt, parsep=0pt, topsep=0pt]
+\small{\item{
+    \textbf{\normalsize{Languages:}}{ \normalsize{Python, Go, TypeScript, SQL, Rust}} \\
+    \textbf{\normalsize{Frameworks:}}{ \normalsize{FastAPI, gRPC, React}} \\
+    \textbf{\normalsize{Data \& Cloud:}}{ \normalsize{PostgreSQL, Redis, BigQuery, Airflow, AWS, Docker, Kubernetes}} \\
+    \textbf{\normalsize{Practices:}}{ \normalsize{Distributed Systems, CI/CD, Observability, Load Testing}} \\
+      }}
+ \end{itemize}
+%-----------ACHIEVEMENTS---------------
+ \section{\texorpdfstring{\color{airforceblue}ACHIEVEMENTS}{}}
+  \resumeItemListStart
+    \resumeItem{\normalsize{Dean's List, University of Texas at Austin, 2022-2024}}
+  \resumeItemListEnd
+
+\end{document}

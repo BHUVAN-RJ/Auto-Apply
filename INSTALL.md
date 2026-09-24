@@ -72,19 +72,42 @@ missing; fix that and rerun.
 
 ## 4. The master resume
 
-Ask the person for their resume.
+The tailor reads exactly one layout: `base/resume.template.tex` (also
+copied into the data folder). Its section headings
+(`\section{\texorpdfstring{\color{airforceblue}SUMMARY}{}}` and the same
+for EDUCATION, EXPERIENCE, PROJECTS, TECHNICAL SKILLS) and its
+`\resumeItem{...}` bullets are what the checker counts and measures. A
+resume in any other layout, even valid LaTeX, cannot be tailored: every
+attempt is rejected. So whatever the person hands you, the master resume
+is **their content in this template**.
 
-- **A `.tex` file:** copy it (and any `.cls` / `.sty` / font beside it) to
-  `~/Library/Application Support/Autopilot/base/`, the main file named
-  `resume.tex`.
-- **A PDF or a Word file:** write the LaTeX yourself. Start from
-  `base/resume.example.tex`, keep every word, date, number and link from
-  their file, keep it to the same number of pages, and put it at
-  `.../Autopilot/base/resume.tex`. Compile it (`scripts/install.sh` does,
-  or `.venv/bin/python -c "import paths; from tex import compile as c; c.compile_pdf(paths.BASE/'resume.tex', paths.BASE/'resume.pdf')"`
-  with `AUTOPILOT_HOME` set), `open` the PDF, and ask them to compare it
-  with their original. Fix what they point out. The tailor rewrites this
-  file for every job, so it has to be right.
+Ask the person for their resume (PDF, Word or `.tex`), then:
+
+1. Copy `base/resume.template.tex` to
+   `~/Library/Application Support/Autopilot/base/resume.tex`.
+2. Replace the made-up person (Alex Morgan) with theirs: header, summary,
+   education, every role with its bullets as `\resumeItem`, projects
+   (a link goes in the `\href` of the project's title), the skills as
+   `\textbf{Category:}` lines, anything else under ACHIEVEMENTS or a new
+   section of the same heading form. Keep every word, date, number and
+   link from their file; invent nothing; drop nothing without asking.
+   A section they do not have (no projects yet) stays, with one honest
+   entry from their coursework or work, after asking them for it.
+3. Keep it to one page (two if theirs was two). Compile it and check:
+
+   ```bash
+   AUTOPILOT_HOME="$HOME/Library/Application Support/Autopilot" .venv/bin/python -c "
+   import paths; from tex import compile as c; from tailor import tailor
+   tex = (paths.BASE / 'resume.tex').read_text()
+   print(tailor.master_problems(tex) or 'layout ok')
+   out = c.compile_pdf(paths.BASE / 'resume.tex', paths.BASE / 'resume.pdf')
+   print(out, c.page_count(out), 'page(s)')"
+   open "$HOME/Library/Application Support/Autopilot/base/resume.pdf"
+   ```
+
+   `layout ok` is required. Ask them to compare the PDF with their
+   original and fix what they point out; the tailor rewrites this file for
+   every job, so it has to be right.
 
 Rerun `scripts/install.sh` once the file is there: it compiles
 `resume.pdf`, which the tailor measures line widths from.

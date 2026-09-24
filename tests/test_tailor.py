@@ -1,5 +1,7 @@
 """Tailoring: block extraction, the frozen-section and length gates, retries."""
 
+from pathlib import Path
+
 import pytest
 
 from tailor import layout, tailor
@@ -399,3 +401,10 @@ def test_an_untouched_preamble_is_left_exactly_as_it_was():
     after = ORIGINAL.replace("scalable Python service", "scalable Python backend")
     spliced, restored = tailor.restore_preamble(ORIGINAL, after)
     assert spliced == after and restored is False
+
+
+def test_the_template_is_a_master_the_checker_can_read():
+    root = Path(__file__).resolve().parent.parent
+    assert tailor.master_problems((root / "base" / "resume.template.tex").read_text()) == []
+    problems = tailor.master_problems((root / "base" / "resume.example.tex").read_text())
+    assert any("EXPERIENCE" in p for p in problems)

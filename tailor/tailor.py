@@ -150,6 +150,25 @@ def split_sections(tex: str) -> dict[str, str]:
 SECTION_START = re.compile(r"\\section\{")
 
 
+def master_problems(tex: str) -> list[str]:
+    """Why this master resume cannot be tailored, or nothing.
+
+    The checker reads one layout: `base/resume.template.tex`. A resume in
+    any other (a plain `\\section{Experience}`, bullets as `\\item`) has
+    no sections it can find, so every reply reads as a changed preamble and
+    every attempt is rejected. Said at install and on the setup bar, before
+    the first job fails four times.
+    """
+    sections = split_sections(tex)
+    problems = [f"no {name} section written as \\section{{\\texorpdfstring{{\\color{{airforceblue}}{name}}}{{}}}}"
+                for name in EDITABLE_SECTIONS if name not in sections]
+    if "EXPERIENCE" in sections and not bullets(sections["EXPERIENCE"]):
+        problems.append("no \\resumeItem bullets under EXPERIENCE")
+    if "TECHNICAL SKILLS" in sections and not _skill_lines(tex):
+        problems.append("no \\textbf{Category:} lines under TECHNICAL SKILLS")
+    return problems
+
+
 def restore_preamble(original: str, tailored: str) -> tuple[str, bool]:
     """Put the master's preamble back on a tailored resume.
 

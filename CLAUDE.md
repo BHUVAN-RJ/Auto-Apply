@@ -240,6 +240,15 @@ which now include a relocation line, and the banner says so).
 
 Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
+- **The tailor reads one resume layout** (2026-09-24, found on the first
+  fresh install). `split_sections` wants
+  `\section{\texorpdfstring{\color{...}NAME}{}}` headings and the bullets
+  are `\resumeItem`; any other resume is all PREAMBLE, so every reply is
+  "modified PREAMBLE" and all four attempts fail. A friend's resume is
+  ported into `base/resume.template.tex` (INSTALL.md, step 4);
+  `tailor.master_problems` says what is missing, on install and on the
+  setup bar. Generalising the parser is the other fix, not built.
+
 - **BasicTeX is minimal.** A new template will be missing packages. The compile
   error parses the names and prints the `tlmgr` command. `fullpage` lives in
   `preprint`, not a package of its own.
