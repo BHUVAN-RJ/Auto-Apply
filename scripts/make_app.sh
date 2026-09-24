@@ -20,7 +20,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Autopilot</string>
   <key>CFBundleIdentifier</key><string>local.autopilot.launcher</string>
   <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>$(git -C "$REPO" describe --tags --always 2>/dev/null || echo dev)</string>
+  <key>CFBundleShortVersionString</key><string>$(git -C "$REPO" describe --tags --match 'v*' --always 2>/dev/null || echo dev)</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>Autopilot</string>
   <key>CFBundleIconFile</key><string>Autopilot</string>

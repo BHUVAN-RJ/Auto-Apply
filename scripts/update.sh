@@ -61,7 +61,7 @@ finish() {
     say "Restarting Autopilot (the first start merges your prompt edits onto the new ones)"
     scripts/autopilot restart
   fi
-  say "Updated to $(git describe --tags --always)"
+  say "Updated to $(git describe --tags --match 'v*' --always)"
 }
 
 case "${1:-}" in

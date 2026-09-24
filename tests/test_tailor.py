@@ -408,3 +408,9 @@ def test_the_template_is_a_master_the_checker_can_read():
     assert tailor.master_problems((root / "base" / "resume.template.tex").read_text()) == []
     problems = tailor.master_problems((root / "base" / "resume.example.tex").read_text())
     assert any("EXPERIENCE" in p for p in problems)
+
+
+def test_a_heading_in_a_comment_is_not_a_section():
+    tex = ("% like \\section{\\texorpdfstring{\\color{airforceblue}NAME}{}}\n"
+           "\\section{\\texorpdfstring{\\color{airforceblue}SUMMARY}{}}\nHello\n")
+    assert list(tailor.split_sections(tex)) == ["PREAMBLE", "SUMMARY"]

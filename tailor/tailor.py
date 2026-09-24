@@ -136,7 +136,9 @@ def split_sections(tex: str) -> dict[str, str]:
     pattern = re.compile(
         r"\\section\{\\texorpdfstring\{(?:\\color\{[^}]*\})?\s*([A-Z][A-Z &/]*[A-Z])\}\{\}\}"
     )
-    matches = list(pattern.finditer(tex))
+    # A heading quoted in a comment is not a heading: the template's own
+    # comment once made a section called NAME.
+    matches = [m for m in pattern.finditer(tex) if not _commented(tex, m.start())]
     if not matches:
         return {"PREAMBLE": tex}
 
@@ -145,6 +147,12 @@ def split_sections(tex: str) -> dict[str, str]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(tex)
         sections[match.group(1).strip()] = tex[match.end(): end]
     return sections
+
+
+def _commented(tex: str, index: int) -> bool:
+    """Whether `index` sits after an unescaped % on its line."""
+    line = tex[tex.rfind("\n", 0, index) + 1:index]
+    return re.search(r"(?<!\\)%", line) is not None
 
 
 SECTION_START = re.compile(r"\\section\{")
