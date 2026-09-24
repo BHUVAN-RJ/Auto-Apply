@@ -1,5 +1,6 @@
 """lualatex wrapper. The compile tests skip cleanly when TeX is not installed."""
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ def test_a_missing_engine_gives_an_actionable_error(tmp_path, monkeypatch):
     monkeypatch.setattr(texc, "find_engine", lambda name: None)
     src = tmp_path / "doc.tex"
     src.write_text(MINIMAL)
-    with pytest.raises(texc.CompileError, match="basictex"):
+    with pytest.raises(texc.CompileError, match="brew install tectonic"):
         texc.compile_pdf(src, tmp_path / "out.pdf")
 
 
@@ -83,3 +84,23 @@ def test_missing_package_error_names_the_tlmgr_command():
 
 def test_missing_packages_is_empty_for_an_unrelated_failure():
     assert texc.missing_packages("! Undefined control sequence.") == []
+
+
+def test_tectonic_when_the_wanted_engine_is_missing(tmp_path, monkeypatch):
+    from tex import compile as texc
+    source = tmp_path / "r.tex"
+    source.write_text("\\input{glyphtounicode}\\pdfgentounicode=1\n\\documentclass{article}")
+    monkeypatch.delenv("AUTOPILOT_TEX_ENGINE", raising=False)
+    monkeypatch.setattr(texc, "find_engine", lambda name: "/bin/tectonic" if name == "tectonic" else None)
+    seen = {}
+
+    def run(args, cwd, **kwargs):
+        seen["args"] = args
+        seen["source"] = (cwd / "document.tex").read_text()
+        (cwd / "document.pdf").write_bytes(b"%PDF")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(texc.subprocess, "run", run)
+    texc.compile_pdf(source, tmp_path / "out.pdf")
+    assert seen["args"][:3] == ["/bin/tectonic", "-X", "compile"]
+    assert seen["source"].startswith(texc.PDFTEX_SHIM)
+    assert (tmp_path / "out.pdf").read_bytes() == b"%PDF"

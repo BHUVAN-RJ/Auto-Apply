@@ -26,9 +26,11 @@ import re
 from pathlib import Path
 from typing import Optional
 
+import paths
+
 ROOT = Path(__file__).resolve().parent.parent
-BASE_PDF = ROOT / "base" / "resume.pdf"
-CACHE = Path(os.environ.get("AUTOPILOT_LINE_CACHE", ROOT / "data" / "line_width.json"))
+BASE_PDF = paths.BASE / "resume.pdf"
+CACHE = Path(os.environ.get("AUTOPILOT_LINE_CACHE", paths.DATA / "line_width.json"))
 
 # Measured on the master this project was built around; only used when the
 # compiled master cannot be read.

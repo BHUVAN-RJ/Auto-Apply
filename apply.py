@@ -16,8 +16,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
-
+import paths
 from archive import store
 from browser import fill as filler
 from tailor import answers, profile, tailor
@@ -27,7 +26,7 @@ from server.models import Job, Status
 ROOT = Path(__file__).resolve().parent
 # browser-use happens to load .env itself, but only once imported, which is
 # after the settings below are read. Load it here so nothing depends on that.
-load_dotenv(ROOT / ".env")
+paths.load_env()
 
 # The file name the recruiter sees. The archive keeps `resume.pdf` as its
 # artifact; the upload is a copy under this name. Personal, so it comes from

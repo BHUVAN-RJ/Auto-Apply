@@ -14,10 +14,11 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import paths
 from server.models import Job, Status, utcnow
 
 ROOT = Path(__file__).resolve().parent.parent
-APPLICATIONS = Path(os.environ.get("AUTOPILOT_APPLICATIONS", ROOT / "applications"))
+APPLICATIONS = Path(os.environ.get("AUTOPILOT_APPLICATIONS", paths.APPLICATIONS))
 INDEX_PATH = APPLICATIONS / "index.csv"
 
 INDEX_FIELDS = [

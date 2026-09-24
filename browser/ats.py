@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tailor import prompts
+
 RULES = Path(__file__).resolve().parent / "ats_rules.md"
 
 # Order matters only where markers overlap; each pattern is tried on the
@@ -33,7 +35,7 @@ def detect(url: str) -> str:
 
 
 def sections(path: Path | None = None) -> dict[str, str]:
-    text = (path or RULES).read_text()
+    text = path.read_text() if path else prompts.text("ats")
     out: dict[str, str] = {}
     for match in re.finditer(r"^## (\w+)\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M):
         out[match.group(1).lower()] = match.group(2).strip()

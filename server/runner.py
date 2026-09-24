@@ -18,12 +18,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+import paths
 
 ROOT = Path(__file__).resolve().parent.parent
 # The server is started from a shell that has not sourced .env; the scripts
 # it launches load it themselves, but this module's own switch lives there.
-load_dotenv(ROOT / ".env")
+paths.load_env()
 
 # Approval marks the job; it does not launch the browser. Filling is started
 # explicitly, from the review page's button or apply.py, so that a run can be
@@ -51,7 +51,7 @@ def launch(script: str, job_id: str, log_dir: Optional[Path] = None) -> Optional
     if script == "apply.py" and fill_pid(job_id):
         return None
 
-    log_path = (log_dir or ROOT / "data") / f"{script.replace('.py', '')}_{job_id}.log"
+    log_path = (log_dir or paths.DATA) / f"{script.replace('.py', '')}_{job_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = open(log_path, "a")
     log.write(f"\n--- {script} {job_id} ---\n")

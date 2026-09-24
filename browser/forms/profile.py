@@ -24,8 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import paths
+
 ROOT = Path(__file__).resolve().parent.parent.parent
-FORM = ROOT / "base" / "form.json"
+FORM = paths.BASE / "form.json"
 
 # Keys the adapters and the label mapping can name. Anything else in the
 # file is ignored, so a typo is a blank field rather than a crash.

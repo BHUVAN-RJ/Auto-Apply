@@ -17,6 +17,7 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
+import paths
 from archive import store
 from browser import autofill, chrome
 from server import postings, queue, runner, seen, settings
@@ -35,10 +36,10 @@ def base_page_count() -> int:
     Falls back to 1, since a one-page resume is the assumption this project is
     built around.
     """
-    base_pdf = ROOT / "base" / "resume.pdf"
+    base_pdf = paths.BASE / "resume.pdf"
     if base_pdf.exists():
         return texc.page_count(base_pdf) or 1
-    base_tex = ROOT / "base" / "resume.tex"
+    base_tex = paths.BASE / "resume.tex"
     if not base_tex.exists():
         return 1
     with tempfile.TemporaryDirectory() as tmp:
@@ -179,7 +180,7 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     store.write(app_dir, "posting.md", posting.to_markdown())
     write_screen(app_dir, job, posting)
 
-    base_tex = ROOT / "base" / "resume.tex"
+    base_tex = paths.BASE / "resume.tex"
     target = base_page_count()
     stories = pick_stories(app_dir, posting)
     try:

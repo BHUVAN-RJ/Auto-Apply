@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from . import llm, profile
+from . import llm, profile, prompts
 
 ROOT = Path(__file__).resolve().parent.parent
 RULES = Path(__file__).resolve().parent / "screen_rules.md"
@@ -105,7 +105,7 @@ def load_facts() -> tuple[str, str]:
 
 
 def system_prompt() -> str:
-    return RULES.read_text() + "\n" + REPLY_FORMAT
+    return prompts.text("screen") + "\n" + prompts.text("screen.format")
 
 
 def build_user_message(text: str, facts: str, title: str = "", url: str = "") -> str:

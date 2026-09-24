@@ -36,8 +36,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import paths
+
 ROOT = Path(__file__).resolve().parent.parent
-THREADS = Path(os.environ.get("AUTOPILOT_THREADS", ROOT / "data" / "threads"))
+THREADS = Path(os.environ.get("AUTOPILOT_THREADS", paths.DATA / "threads"))
 
 # How much of the conversation is put in front of the model with a new
 # question. Enough for "make that shorter" to mean something, not so much
@@ -152,6 +154,10 @@ def start_change(job_id: str, instruction: str, run) -> dict:
             folder = run()
             set_fields(job_id, result["id"], state="done", folder=str(folder),
                        text="Re-tailored. The resume and the letter above are the new ones.")
+            # A request the person keeps making on every job belongs in the
+            # prompts; the Workshop proposes it once enough have piled up.
+            from tailor import workshop
+            workshop.maybe_learn()
         except Exception as exc:  # noqa: BLE001 - the turn carries the failure
             traceback.print_exc()
             set_fields(job_id, result["id"], state="error", kind="error",

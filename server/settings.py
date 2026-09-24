@@ -15,8 +15,10 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+import paths
+
 ROOT = Path(__file__).resolve().parent.parent
-SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", ROOT / "data" / "settings.json"))
+SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", paths.DATA / "settings.json"))
 
 # use_profile: feed the applicant's facts and story documents to the models.
 # Off, or on with nothing written yet, means the resume alone, which is how
@@ -31,9 +33,12 @@ SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", ROOT / "data" / "setti
 # Jobright fixed the autofill it was correcting for, so the rows are noise
 # and nothing on file is applied. The table on the Profile tab stays
 # readable either way.
+# learn_prompts: the Workshop reads the re-tailor requests across jobs once a
+# few new ones have piled up, and proposes prompt edits for what the person
+# keeps asking for. A proposal is never applied without their click.
 # scout_checks_per_day: how often every watched careers page is read, unless
 # the watch sets its own. 4 = every six hours.
-DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "scout_checks_per_day": 4}
+DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True, "scout_checks_per_day": 4}
 
 router = APIRouter()
 
@@ -42,6 +47,7 @@ class Settings(BaseModel):
     use_profile: Optional[bool] = None
     auto_fill: Optional[bool] = None
     auto_learn: Optional[bool] = None
+    learn_prompts: Optional[bool] = None
     scout_checks_per_day: Optional[int] = None
 
 

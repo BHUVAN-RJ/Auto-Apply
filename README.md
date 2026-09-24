@@ -9,6 +9,31 @@ minutes of copying, pasting, re-compiling, and re-uploading that sits between
 "this job looks good" and a submitted application, while keeping you in the
 loop at the two moments that actually matter.
 
+## Install
+
+Apple Silicon Mac, Google Chrome, [Homebrew](https://brew.sh), and
+[Claude Code](https://claude.com/claude-code). Open Claude Code and paste:
+
+> Install Autopilot from https://github.com/BHUVAN-RJ/Auto-Apply. Follow INSTALL.md in that repository.
+
+It clones this repository, installs what it needs, turns your resume into
+the LaTeX the tailor works on, and builds `Autopilot.app`. Then you do
+three things yourself, in the app: paste your
+[OpenRouter key](https://openrouter.ai/settings/keys) into the bar at the
+top (it is checked with OpenRouter and kept on your Mac, nowhere else),
+sign in to Jobright in the app's Chrome, and answer the profile
+interview. [INSTALL.md](INSTALL.md) has every step.
+
+Your copy is yours to change. The **Prompts** tab shows every prompt the
+models are sent, editable; its **Workshop** takes a change in your own
+words ("shorter cover letters") and proposes the edit, and learns the
+things you keep asking for on every job. Anything else, ask Claude Code in
+the app's folder. Updates keep all of it: [UPDATING.md](UPDATING.md).
+
+Free, and you bring your own OpenRouter key; nothing is sent anywhere but
+OpenRouter. You use it at your own risk (see the [licence](LICENSE)): it
+never submits, and what you submit is yours.
+
 ## The workflow it replaces
 
 Done by hand, applying to one job looks like this:
@@ -129,11 +154,18 @@ pytest                        # 525 tests
 
 ## Setup
 
+`scripts/install.sh` does all of it (INSTALL.md). By hand, for a
+development checkout that keeps its data in the clone:
+
 ```sh
-brew install --cask basictex        # needs sudo
-uv venv && uv pip install -e .
+brew install uv tectonic espeak-ng whisper-cpp
+uv sync --extra voice --extra dev
 cp .env.example .env                # add your OpenRouter key
 ```
+
+`AUTOPILOT_HOME` moves the data (base/, data/, applications/, .env) out of
+the clone; the installed app sets it to
+`~/Library/Application Support/Autopilot`.
 
 For the scout's mail, three more lines in `.env` (Gmail: 2-step
 verification on, then an App Password from

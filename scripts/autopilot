@@ -1,0 +1,88 @@
+#!/bin/bash
+# Start Autopilot: the server, the Autopilot Chrome, the injector, the page.
+#
+#   scripts/autopilot          start what is not running, open the page
+#   scripts/autopilot stop     stop the server and the injector (never Chrome:
+#                              it holds the person's logins and open forms)
+#   scripts/autopilot status   what is running, on which port
+#   scripts/autopilot restart  stop, then start (after an update or an edit)
+#
+# Autopilot.app runs this. Everything the person owns lives in
+# $AUTOPILOT_HOME (default ~/Library/Application Support/Autopilot); the
+# clone this script sits in is code only.
+
+set -u
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+export AUTOPILOT_HOME="${AUTOPILOT_HOME:-$HOME/Library/Application Support/Autopilot}"
+RUN="$AUTOPILOT_HOME/run"
+LOGS="$AUTOPILOT_HOME/logs"
+PY="$REPO/.venv/bin/python"
+mkdir -p "$RUN" "$LOGS"
+
+alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+healthy() { curl -fsS -m 2 "http://127.0.0.1:$1/health" >/dev/null 2>&1; }
+
+# 8787 unless something else holds it (Caveman's proxy has); the port is
+# kept, so the injector and the page agree with the server.
+pick_port() {
+  if [ -f "$RUN/port" ] && alive "$RUN/server.pid"; then cat "$RUN/port"; return; fi
+  for p in 8787 8788 8789 8790 8791 8792 8793 8794 8795 8796; do
+    if ! lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "$p"; return; fi
+  done
+  echo "no free port between 8787 and 8796" >&2; exit 1
+}
+
+stop() {
+  for name in inject server; do
+    if alive "$RUN/$name.pid"; then kill "$(cat "$RUN/$name.pid")" 2>/dev/null; echo "stopped $name"; fi
+    rm -f "$RUN/$name.pid"
+  done
+}
+
+status() {
+  local port; port="$(cat "$RUN/port" 2>/dev/null || echo "?")"
+  alive "$RUN/server.pid" && echo "server  running on $port" || echo "server  stopped"
+  alive "$RUN/inject.pid" && echo "inject  running" || echo "inject  stopped"
+  curl -fsS -m 2 http://127.0.0.1:9333/json/version >/dev/null 2>&1 && echo "chrome  running (9333)" || echo "chrome  stopped"
+  echo "data    $AUTOPILOT_HOME"
+}
+
+start() {
+  if [ ! -x "$PY" ]; then
+    osascript -e 'display alert "Autopilot is not installed yet" message "Ask Claude Code to install it: see INSTALL.md in the Autopilot folder."' >/dev/null 2>&1
+    echo "no .venv: run scripts/install.sh first" >&2; exit 1
+  fi
+  local port; port="$(pick_port)"
+  echo "$port" > "$RUN/port"
+  export AUTOPILOT_SERVER_URL="http://127.0.0.1:$port"
+  cd "$REPO" || exit 1
+
+  if ! alive "$RUN/server.pid" || ! healthy "$port"; then
+    nohup "$PY" -m uvicorn server.app:app --host 127.0.0.1 --port "$port" \
+      >> "$LOGS/server.log" 2>&1 < /dev/null &
+    echo $! > "$RUN/server.pid"
+    for _ in $(seq 1 60); do healthy "$port" && break; sleep 0.5; done
+    healthy "$port" || { echo "the server did not start; see $LOGS/server.log" >&2; exit 1; }
+  fi
+
+  local page="http://127.0.0.1:$port/"
+  if ! alive "$RUN/inject.pid"; then
+    # The injector launches the Autopilot Chrome when it is not running and
+    # opens the page in it.
+    nohup "$PY" -m browser.inject --open "$page" >> "$LOGS/inject.log" 2>&1 < /dev/null &
+    echo $! > "$RUN/inject.pid"
+  else
+    # Already running: a new tab on the page in the same Chrome.
+    curl -fsS -m 3 -X PUT "http://127.0.0.1:9333/json/new?$page" >/dev/null 2>&1 || open "$page"
+    osascript -e 'tell application "Google Chrome" to activate' >/dev/null 2>&1
+  fi
+  echo "Autopilot on $page (data in $AUTOPILOT_HOME)"
+}
+
+case "${1:-start}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; sleep 1; start ;;
+  status) status ;;
+  *) echo "usage: $0 [start|stop|restart|status]" >&2; exit 2 ;;
+esac

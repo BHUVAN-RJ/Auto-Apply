@@ -18,13 +18,14 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import paths
 from tailor import quality
 from tailor import screen as screener
 
 from . import postings, seen
 
 ROOT = Path(__file__).resolve().parent.parent
-CACHE_PATH = Path(os.environ.get("AUTOPILOT_SCREENS", ROOT / "data" / "screens.json"))
+CACHE_PATH = Path(os.environ.get("AUTOPILOT_SCREENS", paths.DATA / "screens.json"))
 
 router = APIRouter()
 

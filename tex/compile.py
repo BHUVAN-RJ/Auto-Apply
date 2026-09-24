@@ -1,9 +1,16 @@
-"""lualatex wrapper.
+r"""LaTeX wrapper.
 
 Compiles a .tex file to PDF in an isolated directory so the aux, log, and out
 files never land next to the archived artifacts. Runs twice, because resume
 templates that use page-total references or tabular width calculations need a
 second pass to settle.
+
+Tectonic is the engine an installed app gets: one binary, packages fetched on
+first use, no TeX distribution to install. It is used when the engine the
+document wants is not installed (or `AUTOPILOT_TEX_ENGINE=tectonic`). It runs
+XeTeX, so the pdfTeX-only lines the common templates carry
+(`\input{glyphtounicode}`, `\pdfgentounicode=1`) are given harmless
+definitions first; they only tune copy-paste out of the PDF.
 """
 
 from __future__ import annotations
@@ -26,6 +33,14 @@ TIMEOUT = 120
 # they use \input{glyphtounicode} and \pdfgentounicode, which are pdfTeX
 # primitives that LuaTeX does not provide.
 ENGINES = ("pdflatex", "lualatex", "xelatex")
+
+TECTONIC = "tectonic"
+# Ahead of \documentclass under Tectonic: the pdfTeX primitives resume
+# templates use for text extraction, defined to do nothing under XeTeX.
+PDFTEX_SHIM = (
+    "\\ifdefined\\pdfgentounicode\\else\\newcount\\pdfgentounicode\\fi\n"
+    "\\ifdefined\\pdfglyphtounicode\\else\\def\\pdfglyphtounicode#1#2{}\\fi\n"
+)
 
 # Packages that only work under an engine with native Unicode font handling.
 UNICODE_ENGINE_MARKERS = (
@@ -113,9 +128,12 @@ def compile_pdf(
     tex_path = Path(tex_path).resolve()
     engine_name = choose_engine(tex_path.read_text(errors="replace"))
     engine = find_engine(engine_name)
+    if engine is None and engine_name != TECTONIC:
+        engine = find_engine(TECTONIC)
+        engine_name = TECTONIC if engine else engine_name
     if engine is None:
         raise CompileError(
-            f"{engine_name} not found. Install it with: brew install --cask basictex"
+            f"{engine_name} not found. Install it with: brew install tectonic"
         )
 
     out_pdf = Path(out_pdf).resolve()
@@ -142,7 +160,20 @@ def compile_pdf(
         env["PATH"] = f"{TEXBIN}:{env.get('PATH', '')}"
 
         log = ""
-        for _ in range(PASSES):
+        if engine_name == TECTONIC:
+            source.write_text(PDFTEX_SHIM + source.read_text(errors="replace"))
+            # Tectonic reruns until the document settles by itself. The
+            # first run downloads the packages it needs, hence the timeout.
+            proc = subprocess.run(
+                [engine, "-X", "compile", "--keep-logs", "document.tex"],
+                cwd=work, env=env, capture_output=True, text=True,
+                timeout=TIMEOUT * 5,
+            )
+            log_file = work / "document.log"
+            log = log_file.read_text(errors="replace") if log_file.exists() else proc.stderr
+            if proc.returncode != 0:
+                raise CompileError(f"tectonic failed on {tex_path.name}", log + proc.stderr)
+        for _ in range(0 if engine_name == TECTONIC else PASSES):
             proc = subprocess.run(
                 [
                     engine,

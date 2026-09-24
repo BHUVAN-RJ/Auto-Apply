@@ -363,6 +363,27 @@
               color: inherit; font: inherit; }
   .hint { color: var(--muted); font-size: 12px; }
 
+  /* First-run bar and the Prompts tab */
+  .setupbar { border-bottom: 2px solid var(--line); padding: .7rem 16px; background: var(--warnbg); color: var(--ink); }
+  .setupbar[hidden] { display: none; }
+  .setupbar ol { margin: .3rem 0 0; padding-left: 1.4rem; }
+  .setupbar li.done { color: var(--green); }
+  .setupbar li.done::marker { content: "✓ "; }
+  .setupbar .keyrow { display: flex; gap: .5rem; margin: .4rem 0; max-width: 60ch; }
+  .setupbar .keyrow input { flex: 1; padding: .45rem; border: 2px solid var(--line); background: var(--bg);
+                            color: inherit; font: inherit; }
+  .setupbar a { color: inherit; }
+  textarea.promptedit { width: 100%; min-height: 60vh; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace;
+                        white-space: pre; overflow-wrap: normal; overflow-x: auto; tab-size: 2; }
+  .proposal { border: 2px solid var(--line); padding: .7rem .9rem; margin: .8rem 0; }
+  .proposal[data-source="learned"] { border-color: var(--purple); }
+  .proposal .req { white-space: pre-wrap; font-weight: 600; }
+  .proposal .msg2 { white-space: pre-wrap; margin: .4rem 0; }
+  .proposal .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .proposal[data-source="learned"] .tag { color: var(--purple); }
+  .proposal .diff { border: 1px solid var(--line); margin: .4rem 0; max-height: 50vh; overflow-y: auto; }
+  .history button.act { font-size: 11px; padding: .2rem .5rem; }
+
   dialog {
     border: 2px solid var(--line); background: var(--panel);
     color: inherit; padding: 1.25rem; width: min(420px, 92vw);
@@ -380,10 +401,15 @@
     <button id="tabProfile" aria-current="false">Profile</button>
     <button id="tabProjects" aria-current="false">Projects</button>
     <button id="tabScout" aria-current="false">Scout<span class="broken" id="scoutBroken" hidden style="margin-left:.5rem">Broken</span></button>
+    <button id="tabPrompts" aria-current="false">Prompts</button>
   </div>
   <span class="count" id="count"></span>
   <button class="pstat" id="profileStat" aria-current="false" hidden></button>
 </header>
+
+<!-- First run: what is still missing before the first job. Shown on every
+     tab until it is all there; the key is typed here, never in a terminal. -->
+<div class="setupbar" id="setupbar" hidden></div>
 
 <main>
   <nav id="list"></nav>
@@ -477,16 +503,19 @@ function switchView(name) {
   $("tabProfile").setAttribute("aria-current", name === "profile");
   $("tabProjects").setAttribute("aria-current", name === "projects");
   $("tabScout").setAttribute("aria-current", name === "scout");
+  $("tabPrompts").setAttribute("aria-current", name === "prompts");
   if (name !== "profile") { Profile.leave(); $("detail").classList.remove("chatpane"); }
   if (name === "jobs") loadList();
   else if (name === "profile") Profile.open();
   else if (name === "scout") Scout.open();
+  else if (name === "prompts") Prompts.open();
   else Projects.open();
 }
 $("tabJobs").onclick = () => switchView("jobs");
 $("tabProfile").onclick = () => switchView("profile");
 $("tabProjects").onclick = () => switchView("projects");
 $("tabScout").onclick = () => switchView("scout");
+$("tabPrompts").onclick = () => switchView("prompts");
 
 async function loadList() {
   if (view !== "jobs") return;
@@ -1129,8 +1158,10 @@ function pollNow() {
   if (view === "jobs") { loadList(); loadProfileStat(); }
   else if (view === "profile") Profile.poll();
   else if (view === "scout") Scout.poll();
+  else if (view === "prompts") Prompts.poll();
   else Projects.poll();
   loadScoutBroken();
+  Setup.poll();
 }
 setInterval(pollNow, 5000);
 // The tab is hidden while the person is on the form; a submission is
@@ -1589,6 +1620,283 @@ A project can carry several links — the repository, a store
       const text = await fetch(`/projects/${encodeURIComponent(r.name)}/scaffold`).then((x) => x.text());
       if ($("doc") && viewing === r.name) $("doc").innerHTML = Profile.docMarkdown(text);
     }
+  }
+
+  return { open, poll };
+})();
+
+// ---------------------------------------------------------------- Setup --
+// What is missing before the first job: the OpenRouter key (typed here and
+// checked against OpenRouter, never in a terminal or a chat), the master
+// resume, Chrome. The bar goes away once all three are there.
+const Setup = (() => {
+  let last = null;
+  let busy = false;
+
+  async function poll() {
+    if (busy) return;
+    try { last = await api("/setup"); } catch (_) { return; }
+    render();
+  }
+
+  function render() {
+    const s = last;
+    const bar = $("setupbar");
+    if (!s || (s.key && s.resume && s.chrome)) { bar.hidden = true; return; }
+    if (!bar.hidden && bar.contains(document.activeElement)) return;
+    bar.hidden = false;
+    const item = (done, text) => `<li class="${done ? "done" : ""}">${text}</li>`;
+    bar.innerHTML = `<b>Before the first job</b>
+      <ol>
+        ${item(s.key, s.key ? "OpenRouter key saved." : `Paste your OpenRouter key. Make one at
+          <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">openrouter.ai/settings/keys</a>
+          and add a few dollars of credit; a job costs a few cents.
+          <div class="keyrow"><input id="orKey" type="password" autocomplete="off" placeholder="sk-or-v1-…">
+          <button class="act primary" id="orSave" disabled>Save key</button></div>
+          <span class="hint" id="orMsg">Kept on this Mac only, in ${escape(s.home)}/.env.</span>`)}
+        ${item(s.resume, s.resume ? "Master resume in place." : `Put your master resume (LaTeX) at
+          <code>${escape(s.resume_path)}</code>. Ask Claude Code to do it from a PDF if you do not have one.`)}
+        ${item(s.chrome, s.chrome ? "Google Chrome found." : "Install Google Chrome; the forms are filled in it.")}
+      </ol>`;
+    const input = $("orKey");
+    if (!input) return;
+    input.oninput = () => { $("orSave").disabled = !input.value.trim(); };
+    $("orSave").onclick = async () => {
+      busy = true; $("orSave").disabled = true; $("orMsg").textContent = "Checking with OpenRouter…";
+      try { last = await api("/setup/key", { method: "POST", body: JSON.stringify({ key: input.value }) }); input.value = ""; }
+      catch (err) { $("orMsg").textContent = err.message; $("orSave").disabled = false; busy = false; return; }
+      busy = false; render();
+    };
+  }
+
+  return { poll };
+})();
+Setup.poll();
+
+// -------------------------------------------------------------- Prompts --
+// Every system prompt, editable, plus the Workshop: say what should work
+// differently and a model proposes the edit. Nothing a model proposes is
+// applied without Apply; every save is in the prompt's history; Reset
+// brings the stock text back. An update that changed a prompt the person
+// had edited is merged at startup; a merge that conflicts is red here.
+const Prompts = (() => {
+  let list = [];          // GET /prompts
+  let shop = null;        // GET /workshop
+  // ?view=prompts&prompt=<name> opens one prompt directly.
+  let viewing = new URLSearchParams(location.search).get("prompt") || "workshop";
+  let detail = null;      // GET /prompts/<name> for the open prompt
+  let busy = false;
+  let showDiff = false;
+
+  async function open() {
+    await refresh();
+    if (viewing !== "workshop") await load(viewing);
+    render();
+  }
+
+  async function refresh() {
+    try { list = (await api("/prompts")).prompts; } catch (_) { list = []; }
+    try { shop = await api("/workshop"); } catch (err) { shop = { proposals: [], unseen: 0, error: err.message }; }
+  }
+
+  async function load(name) {
+    try { detail = await api(`/prompts/${encodeURIComponent(name)}`); showDiff = false; }
+    catch (_) { viewing = "workshop"; detail = null; }
+  }
+
+  async function poll() {
+    // A learned proposal lands on its own after a re-tailor; show it, but
+    // never redraw under an edit in progress.
+    if (busy || view !== "prompts" || viewing !== "workshop") return;
+    const before = JSON.stringify(shop?.proposals?.map((p) => p.id + p.state));
+    await refresh();
+    renderNav();
+    if (JSON.stringify(shop?.proposals?.map((p) => p.id + p.state)) !== before) render();
+  }
+
+  function renderNav() {
+    const pending = (shop?.proposals || []).filter((p) => p.state === "pending").length;
+    const edited = list.filter((p) => p.edited).length;
+    $("count").textContent = `${list.length} prompts · ${edited} edited`;
+    const groups = [...new Set(list.map((p) => p.group))];
+    $("list").innerHTML = `<button class="row" data-name="workshop-view" data-tone="agent" aria-current="${viewing === "workshop"}">
+        <span class="role">Workshop</span><span class="cov">${pending ? `${pending} to review` : "ask for a change"}</span></button>` +
+      groups.map((g) => `<div class="group">${escape(g)} <span class="n">${list.filter((p) => p.group === g).length}</span></div>` +
+        list.filter((p) => p.group === g).map((p) => `
+          <button class="row" data-name="${escape(p.name)}" data-tone="${p.conflict ? "stop" : p.edited ? "you" : "done"}"
+                  aria-current="${viewing === p.name}">
+            <span class="role">${escape(p.title)}</span>
+            <span class="cov">${p.conflict ? '<span class="err">update conflict</span>' : p.edited ? '<span class="ok">edited</span>' : "stock"} · ${escape(p.name)}</span>
+          </button>`).join("")).join("");
+    for (const b of $("list").querySelectorAll("button[data-name]")) {
+      b.onclick = async () => {
+        if (dirty() && !confirm("Leave without saving this prompt?")) return;
+        viewing = b.dataset.name === "workshop-view" ? "workshop" : b.dataset.name;
+        if (viewing !== "workshop") await load(viewing);
+        render();
+      };
+    }
+  }
+
+  function dirty() {
+    const box = $("promptText");
+    return box && detail && box.value !== detail.text;
+  }
+
+  function diffHtml(text) {
+    return `<div class="diff">${text.split("\n").map((line) => {
+      const cls = line.startsWith("@@") ? "h" : line.startsWith("+++") || line.startsWith("---") ? "h"
+        : line.startsWith("+") ? "a" : line.startsWith("-") ? "d" : "";
+      return `<div class="${cls}">${escape(line) || " "}</div>`;
+    }).join("")}</div>`;
+  }
+
+  // A line diff in the browser, for "changes from stock": longest common
+  // subsequence over lines, fine for prompts of a few hundred lines.
+  function lineDiff(a, b) {
+    const x = a.split("\n"), y = b.split("\n");
+    const n = x.length, m = y.length;
+    const t = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+      t[i][j] = x[i] === y[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+    const out = []; let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (x[i] === y[j]) { out.push(" " + x[i]); i++; j++; }
+      else if (t[i + 1][j] >= t[i][j + 1]) out.push("-" + x[i++]);
+      else out.push("+" + y[j++]);
+    }
+    while (i < n) out.push("-" + x[i++]);
+    while (j < m) out.push("+" + y[j++]);
+    // Only the changed lines and two either side.
+    const keep = new Set();
+    out.forEach((l, k) => { if (l[0] !== " ") for (let d = -2; d <= 2; d++) keep.add(k + d); });
+    const lines = []; let gap = false;
+    out.forEach((l, k) => { if (keep.has(k)) { lines.push(l); gap = false; } else if (!gap) { lines.push("@@"); gap = true; } });
+    return lines.join("\n");
+  }
+
+  function render() {
+    renderNav();
+    $("detail").innerHTML = viewing === "workshop" ? renderWorkshop() : renderPrompt();
+    if (viewing === "workshop") wireWorkshop(); else wirePrompt();
+  }
+
+  // ---------------------------------------------------------- one prompt --
+  function renderPrompt() {
+    const d = detail;
+    if (!d) return `<p class="empty">Loading…</p>`;
+    return `<div class="head"><h2>${escape(d.title)}</h2><span class="hint">${escape(d.name)}</span>
+        ${d.edited ? '<span class="state go">edited</span>' : '<span class="state">stock</span>'}</div>
+      ${d.note ? `<p class="hint">${escape(d.note)}</p>` : ""}
+      ${d.conflict ? `<div class="banner stop"><b>An update changed this prompt where you had changed it too.</b>
+        Your version is still the one in use. Below is the merge with both sides marked; edit it into one text and Save,
+        or keep yours as it is and Save.
+        <div class="actions"><button class="act" id="useMerge">Load the marked-up merge into the editor</button></div></div>` : ""}
+      <textarea class="promptedit" id="promptText" spellcheck="false">${escape(d.text)}</textarea>
+      <div class="actions">
+        <button class="act primary" id="promptSave" disabled>Save</button>
+        <button class="act" id="promptDiff" ${d.edited ? "" : "disabled"}>${showDiff ? "Hide" : "Show"} changes from stock</button>
+        <button class="act danger" id="promptReset" ${d.edited || d.conflict ? "" : "disabled"}>Reset to stock</button>
+        <span class="hint" id="promptMsg"></span>
+      </div>
+      ${showDiff ? diffHtml(lineDiff(d.stock, d.text)) : ""}
+      ${d.history.length ? `<h3>History</h3><table class="kv history">${d.history.map((h) => `
+        <tr><td>${escape(h.when.replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d).*/, "$1-$2-$3 $4:$5"))} · ${escape(h.why)}</td>
+        <td><button class="act" data-restore="${escape(h.version)}">Restore</button></td></tr>`).join("")}</table>
+        <p class="hint">Each entry is the text as it was before that change.</p>` : ""}`;
+  }
+
+  function wirePrompt() {
+    const box = $("promptText");
+    if (!box) return;
+    box.oninput = () => { $("promptSave").disabled = box.value === detail.text || !box.value.trim(); };
+    box.onkeydown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (!$("promptSave").disabled) $("promptSave").click(); }
+    };
+    $("promptSave").onclick = () => act(`/prompts/${detail.name}`, { text: box.value }, "Saved. The next job uses it.");
+    $("promptReset").onclick = () => {
+      if (confirm("Put the stock text back? Your version stays in the history.")) act(`/prompts/${detail.name}/reset`, {}, "Back to stock.");
+    };
+    $("promptDiff").onclick = () => { showDiff = !showDiff; const text = box.value; render(); $("promptText").value = text; $("promptText").oninput(); };
+    if ($("useMerge")) $("useMerge").onclick = () => { box.value = detail.conflict_text; box.oninput(); };
+    for (const b of $("detail").querySelectorAll("[data-restore]")) {
+      b.onclick = () => {
+        if (!dirty() || confirm("Discard what is in the editor?")) act(`/prompts/${detail.name}/restore`, { version: b.dataset.restore }, "Restored.");
+      };
+    }
+  }
+
+  async function act(path, body, done) {
+    busy = true;
+    try { detail = await api(path, { method: "POST", body: JSON.stringify(body) }); }
+    catch (err) { busy = false; $("promptMsg").textContent = err.message; return; }
+    busy = false;
+    await refresh();
+    render();
+    $("promptMsg").textContent = done;
+  }
+
+  // ------------------------------------------------------------ Workshop --
+  function renderWorkshop() {
+    const s = shop || { proposals: [], unseen: 0 };
+    const rows = [...s.proposals].reverse();
+    return `<div class="head"><h2>Workshop</h2></div>
+      <p>Say what the assistant should do differently, in your words: "shorter cover letters", "never call me passionate",
+      "treat hybrid three days a week as fine". It finds the prompts that decide that and proposes the edit; nothing changes
+      until you press Apply, and every applied edit can be undone from that prompt's history.</p>
+      <p class="hint">What the prompts cannot change, whatever they say: nothing is ever submitted for you, visa questions are
+      never answered, and the resume keeps its sections, links and length. A new button or a new website is a code change:
+      ask Claude Code in the app's folder.</p>
+      ${s.error ? `<div class="banner stop">${escape(s.error)}</div>` : ""}
+      <textarea id="shopText" placeholder="What should work differently?"></textarea>
+      <div class="actions">
+        <button class="act primary" id="shopAsk" disabled>Propose the edit</button>
+        <button class="act" id="shopLearn" ${s.unseen ? "" : "disabled"}>Learn from my re-tailor requests${s.unseen ? ` (${s.unseen} new)` : ""}</button>
+        <label class="hint"><input type="checkbox" id="shopAuto"> learn by itself after every ${s.learn_every || 3} new requests</label>
+        <span class="hint" id="shopMsg"></span>
+      </div>
+      ${rows.length ? rows.map(renderProposal).join("") : '<p class="empty">No requests yet.</p>'}`;
+  }
+
+  function renderProposal(p) {
+    const label = { pending: "", applied: "applied", dismissed: "dismissed", failed: "could not be applied",
+                    stale: "out of date", empty: "no change" }[p.state] ?? p.state;
+    return `<div class="proposal" data-source="${p.source}">
+      <div class="tag">${p.source === "learned" ? "learned from your requests" : "you asked"} · ${escape((p.when || "").slice(0, 16).replace("T", " "))}${label ? ` · ${escape(label)}` : ""}</div>
+      <div class="req">${escape(p.source === "learned" ? (p.evidence || []).map((e) => "“" + e.text + "”").join("  ") : p.request)}</div>
+      ${p.message ? `<div class="msg2">${escape(p.message)}</div>` : ""}
+      ${p.error ? `<div class="banner stop">${escape(p.error)}</div>` : ""}
+      ${Object.entries(p.diffs || {}).map(([name, d]) => diffHtml(d)).join("")}
+      ${p.state === "pending" ? `<div class="actions">
+        <button class="act primary" data-apply="${p.id}">Apply</button>
+        <button class="act" data-dismiss="${p.id}">Dismiss</button></div>` : ""}
+    </div>`;
+  }
+
+  function wireWorkshop() {
+    const box = $("shopText");
+    box.oninput = () => { $("shopAsk").disabled = !box.value.trim(); };
+    api("/settings").then((s) => { $("shopAuto").checked = s.learn_prompts !== false; }).catch(() => {});
+    $("shopAuto").onchange = (e) => api("/settings", { method: "POST", body: JSON.stringify({ learn_prompts: e.target.checked }) });
+    $("shopAsk").onclick = () => run(() => api("/workshop", { method: "POST", body: JSON.stringify({ request: box.value }) }),
+                                     "Reading the prompts and writing the edit… this takes up to a minute.");
+    $("shopLearn").onclick = () => run(() => api("/workshop/learn", { method: "POST" }),
+                                       "Reading your re-tailor requests across jobs…");
+    for (const b of $("detail").querySelectorAll("[data-apply]"))
+      b.onclick = () => run(() => api(`/workshop/${b.dataset.apply}/apply`, { method: "POST" }), "Applying…");
+    for (const b of $("detail").querySelectorAll("[data-dismiss]"))
+      b.onclick = () => run(() => api(`/workshop/${b.dataset.dismiss}/dismiss`, { method: "POST" }), "");
+  }
+
+  async function run(call, note) {
+    busy = true;
+    for (const b of $("detail").querySelectorAll("button")) b.disabled = true;
+    $("shopMsg").textContent = note;
+    try { await call(); }
+    catch (err) { busy = false; await refresh(); render(); $("shopMsg").textContent = err.message; return; }
+    busy = false;
+    await refresh();
+    render();
   }
 
   return { open, poll };

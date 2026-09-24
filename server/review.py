@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
+import paths
 from archive import store
 from browser import chrome, guard
 from server import corrections, queue, runner, seen, thread as job_thread
@@ -30,7 +31,7 @@ from tailor import answers, llm, profile, tailor
 router = APIRouter(prefix="/review", tags=["review"])
 
 # Where apply.py writes its per-job logs.
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = paths.DATA
 
 # Artifacts the review page may request. An allow-list rather than a path join,
 # so a crafted name cannot walk out of the application folder.

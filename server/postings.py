@@ -26,6 +26,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+import paths
+
 ROOT = Path(__file__).resolve().parent.parent
 DIR_ENV = "AUTOPILOT_POSTINGS"
 
@@ -46,7 +48,7 @@ class Saved(BaseModel):
 
 
 def directory() -> Path:
-    return Path(os.environ.get(DIR_ENV, ROOT / "data" / "postings"))
+    return Path(os.environ.get(DIR_ENV, paths.DATA / "postings"))
 
 
 def _safe(key: str) -> str:

@@ -19,7 +19,7 @@ from typing import Optional
 
 from browser import guard
 
-from . import cover, llm
+from . import cover, llm, prompts
 
 RULES = Path(__file__).resolve().parent / "answer_rules.md"
 
@@ -114,7 +114,7 @@ class AnswerError(RuntimeError):
 
 
 def system_prompt() -> str:
-    return RULES.read_text() + "\n" + REPLY_FORMAT
+    return prompts.text("answers") + "\n" + prompts.text("answers.format")
 
 
 def problems(text: str) -> list[str]:

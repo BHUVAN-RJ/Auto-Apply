@@ -16,10 +16,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
+import paths
 from .models import Job, Status
 
 ROOT = Path(__file__).resolve().parent.parent
-QUEUE_PATH = Path(os.environ.get("AUTOPILOT_QUEUE", ROOT / "data" / "queue.json"))
+QUEUE_PATH = Path(os.environ.get("AUTOPILOT_QUEUE", paths.DATA / "queue.json"))
 LOCK_PATH = QUEUE_PATH.with_suffix(".lock")
 LOCK_TIMEOUT = 10.0
 

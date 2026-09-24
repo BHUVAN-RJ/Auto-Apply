@@ -1500,3 +1500,71 @@ model is reached. Verified on the page over CDP: both views render, the
 tab badge is hidden when nothing is broken (it was shown always: the
 badge's `display` beat the `hidden` attribute and its loader was never
 written; both fixed the same day).
+
+## Phase 19 — built by each person's Claude Code; prompts theirs to change (2026-09-24)
+
+The one-click thesis, revised. A signed, notarised download was the plan;
+it is deferred. The app is shared by pointing a friend's Claude Code at
+this repository: `INSTALL.md` is written for that Claude, and it clones,
+installs (`scripts/install.sh`), converts the person's resume to LaTeX
+when they only have a PDF, and builds `~/Applications/Autopilot.app` on
+their Mac. Built locally, the app is never quarantined, so nothing needs
+signing. Only three things are the person's: the OpenRouter key (typed
+into the app's first-run bar, checked with OpenRouter, written to their
+data folder's `.env`, never in a chat), the Jobright sign-in, and the
+profile interview.
+
+### Decisions
+
+- **Code and data apart.** `paths.py`: `AUTOPILOT_HOME` holds `base/`,
+  `data/`, `applications/` and `.env`; the installer sets it to
+  `~/Library/Application Support/Autopilot`; unset, it is the clone, as a
+  development checkout always was. `git pull` can then never touch a
+  resume, and a push can never publish one.
+- **Every prompt is the person's.** `tailor/prompts.py` is the one place a
+  prompt is read: 27 of them (the `*_rules.md` files and the reply
+  formats and small prompts that lived as Python constants). An edit is a
+  file in `data/prompts/`, with the stock text it was made against beside
+  it; `sync()` at startup three-way merges it onto the new stock text
+  (`git merge-file`), and a conflict leaves the edit in use and the
+  marked-up merge on the Prompts tab. Every save is in history.
+- **The Workshop, and learning.** `tailor/workshop.py`: a request in words
+  → a cheap call picks the prompts → the premium model returns
+  search/replace edits (never whole prompts: a model rewriting 17k
+  characters to add a line drops things) → a diff → Apply or Dismiss.
+  `learn()` reads the re-tailor requests across every job thread and
+  proposes what the person keeps asking for; it runs by itself after
+  every three new ones (`learn_prompts`, on). Learning is prompt edits
+  only, and only on a click.
+- **The invariants stay in code**, which is why the prompts can be given
+  away whole: never submit, the visa guard, the checker's sections, lines
+  and links. `tests/test_invariants.py` and `scripts/check.sh --quick` are
+  what a user's Claude runs after any change it makes.
+- **Local code changes are merged, not overwritten.** The person's copy is
+  the branch `mine`; each change is a commit plus an intent line in
+  `LOCAL_CHANGES.md`; `scripts/update.sh` merges the newest release tag
+  into it with rerere on, takes the release's side for the files that
+  hold invariants, and hands the rest to Claude with the intent to
+  resolve against (UPDATING.md). A backup tag before every merge.
+- **Tectonic** is the TeX of an installed copy (`tex/compile.py` falls back
+  to it when the wanted engine is missing): one Homebrew package, packages
+  fetched on first compile (35-65 s once, seconds after). pdfTeX-only
+  lines are shimmed. The real resume renders the same as under pdflatex.
+- **No browser-use** in an installed copy: `AUTOPILOT_AGENT=0` has been the
+  default since 2026-09-18, and dropping it takes the environment from
+  413 MB to 149 MB. `pip install browser-use` brings the agent back.
+- **Voice:** whisper.cpp in, Kokoro out (Homebrew's espeak-ng). Fish
+  Audio's terms forbid sharing a free key ("personal, non-commercial, not
+  on behalf of any third party"; no transferring keys), so it stays a key
+  the person brings.
+
+### Roadmap
+
+- A packaged app (Electron or Tauri around the same server, signed and
+  notarised with the Developer ID account) for people without Claude
+  Code, if the friend-to-friend test says it is wanted.
+- The Workshop's preview: re-run the tailor on the last two or three jobs
+  with the proposed prompt and show the resume diff before Apply.
+- The Workshop by voice, through the orb.
+- The maintainer's own agent reading bug reports; the in-app report is a
+  prefilled GitHub issue with nothing personal in it.

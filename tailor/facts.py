@@ -28,13 +28,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator, Optional
 
-from . import llm, profile
+import paths
+
+from . import llm, profile, prompts
 
 STATE_NAME = "_facts.json"
 # The preliminary interview's file (server/form.py). It already holds the
 # authorisation, clearance, location, start date and graduation lines,
 # so those questions are answered from it in code and never asked twice.
-FORM = profile.ROOT / "base" / "form.json"
+FORM = paths.BASE / "form.json"
 
 # One question per fact. `line` is the label in applicant.md; `derived`
 # names the derived-facts line to offer as a starting point, if any.
@@ -174,7 +176,7 @@ def derived_lines() -> dict:
 
 
 def contacts() -> dict:
-    reply = llm.complete(CONTACT_PROMPT, profile.BASE_RESUME.read_text(), model=facts_model(),
+    reply = llm.complete(prompts.text("facts.contact"), profile.BASE_RESUME.read_text(), model=facts_model(),
                          temperature=0.0, max_tokens=500, reasoning={"enabled": False})
     try:
         return {k: str(v).strip() for k, v in _parse(reply).items() if str(v).strip()}
@@ -299,7 +301,7 @@ def normalise(facts: Facts, answer: str) -> dict:
     user = (f"Question: {q['ask']}\nLabel: {q['line']}\n"
             f"Resume suggested: {facts.derived.get(q.get('derived', ''), '')}\n"
             f"Answer: {answer}")
-    reply = llm.complete(NORMALISE_PROMPT, user, model=facts_model(), temperature=0.0,
+    reply = llm.complete(prompts.text("facts.normalise"), user, model=facts_model(), temperature=0.0,
                          max_tokens=400, reasoning={"enabled": False})
     data = _parse(reply)
     return {"line": data.get("line", ""), "ask": str(data.get("ask") or "").strip()}

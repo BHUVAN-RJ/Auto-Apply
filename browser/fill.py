@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import paths
 from server import settings
 
 from . import ats, autofill, chrome, forms, guard
@@ -237,7 +238,7 @@ def applicant_details() -> str:
     Read from base/applicant.md so nothing personal is hard-coded, and so this
     file stays safe to publish.
     """
-    path = ROOT / "base" / "applicant.md"
+    path = paths.BASE / "applicant.md"
     text = path.read_text().strip() if path.exists() else ""
     # base/form.json, from the preliminary interview: the same details in
     # one line each, so the agent has a phone number even when the prose

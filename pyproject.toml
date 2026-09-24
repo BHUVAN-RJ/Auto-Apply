@@ -2,7 +2,7 @@
 name = "job-autopilot"
 version = "0.1.0"
 description = "Semi-autonomous job application pipeline with mandatory human checkpoints"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -28,3 +28,9 @@ packages = ["server", "tailor", "tex", "browser", "archive", "voice"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv]
+# The app runs from this folder; uv installs its dependencies, not the app.
+package = false
+# Apple Silicon Macs only; the lock need not solve for anything else.
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]

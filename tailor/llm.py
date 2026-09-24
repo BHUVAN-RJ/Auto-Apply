@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from dotenv import load_dotenv
+
+import paths
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+paths.load_env()
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "z-ai/glm-5.3"

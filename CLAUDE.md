@@ -6,6 +6,30 @@ is not obvious from the code.
 
 Repo: `~/Desktop/job-autopilot`, pushed to `github.com/BHUVAN-RJ/Auto-Apply`.
 
+## If this is someone's installed copy
+
+Autopilot is shared by pointing a person's own Claude Code at this
+repository (INSTALL.md). If you are that Claude, on a clone whose branch
+is `mine`:
+
+- Install and first run: **INSTALL.md**. Changing their code and updating
+  it: **UPDATING.md**. Follow them; they are how a change survives the
+  next release.
+- Their data (resume, profile, stories, applications, edited prompts, the
+  OpenRouter key) is in `~/Library/Application Support/Autopilot`
+  (`AUTOPILOT_HOME`), never in the clone. Never copy it in, commit it or
+  push it; the repository is public.
+- Commit their changes on `mine`, one per request, logged in
+  `LOCAL_CHANGES.md` with the intent. `scripts/check.sh` after every
+  change; a failing invariant means the change is undone.
+- A request about *how the models write or judge* (tone, length, what
+  counts as a reject) is a prompt change: point them to the Prompts tab
+  and its Workshop, or make it there, rather than editing a stock
+  `*_rules.md` in the clone (that one conflicts on every update).
+- The rule below holds on every copy, whoever asks.
+
+The rest of this file is the maintainer's notes on how the code works.
+
 ## The rule the whole project exists to protect
 
 **The agent never submits an application, and never closes a job.** Both are
@@ -158,6 +182,11 @@ Specifically:
 
 | Path | What |
 |---|---|
+| `paths.py` | **code and data apart** (2026-09-24). `ROOT` is the clone; `HOME` is `AUTOPILOT_HOME` (the installed app: `~/Library/Application Support/Autopilot`), else the clone. `BASE`, `DATA`, `APPLICATIONS`, `PROMPTS`, `ENV_FILE` hang off `HOME`; nothing else may build a `base/` or `data/` path from `ROOT`. `load_env()` reads `HOME/.env` first, then the clone's |
+| `tailor/prompts.py` | **every system prompt, through one door** (2026-09-24). `CATALOG` names 27: the `*_rules.md` files and the reply formats and small prompts that are Python constants. `text(name)` is what every call site sends: the person's edit (`data/prompts/<name>.md`) else the stock text, read at call time so a test's monkeypatched `RULES` still counts. `save` keeps the replaced text in `.history/`, the stock text the edit was made against in `.base/`; `sync()` at server start three-way merges edits onto changed stock text (`git merge-file`); a conflict leaves the edit in use and writes `.conflict/<name>.md`. Adding a prompt: a `Prompt` row here, `prompts.text()` at the call site, never `RULES.read_text()` |
+| `tailor/workshop.py` + `workshop_rules.md`, `learn_rules.md` | **the self-improving part** (2026-09-24). `propose(request)`: the cheap model picks ≤3 prompts (`workshop.pick`), the premium model (`OPENROUTER_WORKSHOP_MODEL` overrides) returns SEARCH/REPLACE blocks, applied in code (exactly one match each, one retry with the misses named), a unified diff stored as a `pending` proposal in `data/workshop.json`. `apply` re-applies against the prompts as they are then (`stale` if they moved) through `prompts.save`. `learn()` reads every thread's `change` turns (not the fixed Opus instruction), new ones plus 20 earlier, and proposes standing preferences with the quotes as evidence; `maybe_learn()` runs it in the background after a re-tailor once `LEARN_EVERY` (3) new ones exist, behind `settings.learn_prompts`. Nothing applies without a click. Measured live: a two-rule cover-letter request, 4 s, one clean edit |
+| `server/prompts.py` | `/prompts` (list, detail, save, reset, restore), `/workshop` (list, propose, learn, apply, dismiss), `/setup` (key / resume / chrome, the first-run bar) and `POST /setup/key` (shape check, `GET openrouter.ai/api/v1/key`, written to `paths.ENV_FILE` 0600 and `os.environ`, so the scripts the server starts see it) |
+| `scripts/` | `install.sh` (Apple Silicon + Homebrew + Chrome checks; brew `uv tectonic espeak-ng whisper-cpp`; `uv sync`; the data folder with templates and a `.env` with `AUTOPILOT_AGENT=0`; compiles the master resume; builds the app; quick check), `autopilot` (start/stop/restart/status: server on 8787 or the next free port, recorded in `run/port`; the injector, which launches Chrome and opens the page; logs in `logs/`), `make_app.sh` (`~/Applications/Autopilot.app`, a login-shell stub that runs `autopilot start`; built locally so never quarantined), `check.sh` (invariants, then the suite without `test_fill.py`), `update.sh` (a release tag merged into `mine`, backup tag first, rerere, the invariant files take the release's side, `--continue` / `--abort`) |
 | `pipeline.py` | queued job → scrape → tailor → compile → cover letter → archive → checkpoint 1. Started by `/capture`. `process(..., keep_status=True)` (2026-09-23, through `retailor`) is the re-tailor of a job that is already filled or submitted: new folder, new documents, the queue row pointed at them, the status **left where it was**, no `auto_approve`, no fill. The new resume is there to be handed over by hand |
 | `apply.py` | approved job → named copies of resume/letter → fill form → screenshot → stop (checkpoint 2). Started by approve |
 | `server/thread.py` | **one conversation per job** (2026-09-23), in `data/threads/<job_id>.json`, not in the application folder: a re-tailor writes a *new* folder and the thread is about the job. A turn is a `question` (answered by `tailor/answers.py`, same context as the fill's `answer_question`, the earlier turns added to `Context.thread` — context, never the question, so a visa word said earlier cannot make the next question look protected; still appended to `answers.md`) or a `change` (`pipeline.retailor(..., keep_status=True)` on a worker thread, the turn kept at `running` and polled by the page, one at a time per job). `GET/POST /review/{id}/thread`, and `detail` carries `thread` / `thread_running` |
@@ -495,7 +524,10 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest` collects 533 tests. The suite stubs the model, browser, lualatex, and
+`pytest` collects 628 tests (573 without `test_fill.py`); `tests/test_invariants.py` is the short list
+every copy runs after any change (`scripts/check.sh --quick`), and
+`tests/conftest.py` points prompt edits and the Workshop store at a
+temporary folder for every test. The suite stubs the model, browser, lualatex, and
 speech binaries, so **passing tests do not mean it works** — every real bug so
 far survived a green suite and appeared on the first real run. On the current
 macOS / Python 3.13 environment, the full process aborts inside browser-use's
@@ -574,6 +606,12 @@ invariants first.
   verify (the sycophancy entry's falsification gaps, Auto-Apply's
   "100+ jobs in a week"). Links and counts are checked; figures are not.
   Read them before a job goes out.
+- **Shared through Claude Code (2026-09-24).** INSTALL.md / UPDATING.md,
+  `scripts/`, `paths.py`, the Prompts tab and its Workshop, learning from
+  re-tailor requests, Tectonic, no browser-use. Not built: the Workshop's
+  before/after preview on past jobs, the Workshop by voice, a packaged
+  and notarised app (Electron or Tauri) if friends without Claude Code
+  want it, the in-app bug report. PLAN.md Phase 19.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

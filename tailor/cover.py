@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from . import llm
+from . import llm, prompts
 from .fetch import Posting
 
 RULES = Path(__file__).resolve().parent / "cover_rules.md"
@@ -55,7 +55,7 @@ class CoverLetterError(RuntimeError):
 
 
 def system_prompt() -> str:
-    return RULES.read_text() + "\n" + REPLY_FORMAT
+    return prompts.text("cover") + "\n" + prompts.text("cover.format")
 
 
 def _user_message(posting: Posting, resume_tex: str, profile: str, extra: str) -> str:

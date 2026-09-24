@@ -23,16 +23,17 @@ import re
 from pathlib import Path
 from typing import Optional
 
+import paths
 from server import settings
 
-from . import llm
+from . import llm, prompts
 
 ROOT = Path(__file__).resolve().parent.parent
-PROFILE = ROOT / "base" / "profile.md"
-APPLICANT = ROOT / "base" / "applicant.md"
-STORIES = ROOT / "base" / "stories"
-BASE_RESUME = ROOT / "base" / "resume.tex"
-DERIVED_FACTS = ROOT / "data" / "derived_facts.md"
+PROFILE = paths.BASE / "profile.md"
+APPLICANT = paths.BASE / "applicant.md"
+STORIES = paths.BASE / "stories"
+BASE_RESUME = paths.BASE / "resume.tex"
+DERIVED_FACTS = paths.DATA / "derived_facts.md"
 
 INDEX_NAME = "index.md"
 TAILOR_DOC = "tailor.md"
@@ -138,7 +139,7 @@ def pick(posting_text: str, directory: Optional[Path] = None,
         return []
     known = {p.name for p in story_dirs(directory)}
     reply = llm.complete(
-        PICK_PROMPT.format(n=limit),
+        prompts.text("profile.pick").replace("{n}", str(limit)),
         f"## Index\n\n{listing}\n\n## Posting\n\n{posting_text[:12_000]}",
         model=model or derive_model(), temperature=0.0, max_tokens=400,
         reasoning={"enabled": False},
@@ -205,7 +206,7 @@ def derived_facts(resume_path: Optional[Path] = None, cache: Optional[Path] = No
         if cached.startswith(stamp):
             return cached.split("\n", 1)[1].strip()
     reply = llm.complete(
-        DERIVE_PROMPT, resume_path.read_text(), model=model or derive_model(),
+        prompts.text("profile.derive"), resume_path.read_text(), model=model or derive_model(),
         temperature=0.0, max_tokens=2000, reasoning={"enabled": False},
     )
     facts = "\n".join(line for line in reply.splitlines() if line.startswith("- ")).strip()

@@ -21,6 +21,7 @@ from . import postings, queue, runner, seen, settings, watch
 from .models import Job, Status
 from .form import router as form_router
 from .profile import router as profile_router
+from .prompts import router as prompts_router
 from .github import router as github_router
 from .review import router as review_router
 from .scout import router as scout_router
@@ -81,10 +82,17 @@ app.include_router(form_router)
 app.include_router(voice_router)
 app.include_router(github_router)
 app.include_router(scout_router)
+app.include_router(prompts_router)
 
 
 @app.on_event("startup")
 def _start_watch() -> None:
+    # The first start after an update: the person's prompt edits merged
+    # onto the new stock text, before any job reads them.
+    from tailor import prompts
+    for row in prompts.sync():
+        state = "merged" if row["merged"] else "conflict, their version kept"
+        print(f"prompt {row['name']}: {state}")
     # The server's own look at every filled form: form state for the
     # correction loop, and submitted when the page turns into a
     # confirmation. Independent of the script in the tab.

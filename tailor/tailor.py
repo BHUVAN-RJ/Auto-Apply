@@ -18,12 +18,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import layout, llm, profile as profile_module
+import paths
+
+from . import layout, llm, profile as profile_module, prompts
 from .fetch import Posting
 
 ROOT = Path(__file__).resolve().parent.parent
-BASE_RESUME = ROOT / "base" / "resume.tex"
-PROFILE = ROOT / "base" / "profile.md"
+BASE_RESUME = paths.BASE / "resume.tex"
+PROFILE = paths.BASE / "profile.md"
 RULES = Path(__file__).resolve().parent / "rules.md"
 
 # Sections the model is allowed to rewrite. Anything else must come back
@@ -99,7 +101,7 @@ class Mismatch(TailorError):
 
 
 def system_prompt() -> str:
-    return RULES.read_text() + "\n" + REPLY_FORMAT
+    return prompts.text("tailor") + "\n" + prompts.text("tailor.format")
 
 
 def _extract_block(text: str, languages: tuple[str, ...]) -> Optional[str]:

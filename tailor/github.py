@@ -40,7 +40,7 @@ from typing import Optional
 
 import httpx
 
-from . import llm, profile
+from . import llm, profile, prompts
 
 STATE_NAME = "_github.json"
 SCAFFOLD_DIR = "_github"
@@ -381,7 +381,7 @@ def fetch_tarball(full_name: str, client: httpx.Client) -> Optional[bytes]:
 
 
 def _rules() -> str:
-    return RULES.read_text()
+    return prompts.text("github")
 
 
 def _parse_json_block(reply: str) -> dict:

@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator, Optional
 
-from . import facts as facts_module
+from . import facts as facts_module, prompts
 from . import llm, profile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -421,7 +421,8 @@ def _entry_text(experience: Experience) -> str:
 
 def system_prompt(experience: Experience, experienced: bool) -> str:
     return (
-        RULES.read_text() + REPLY_FORMAT + (GITHUB_NOTE if experience.questions else "")
+        prompts.text("interview") + prompts.text("interview.format")
+        + (prompts.text("interview.github") if experience.questions else "")
         + f"\n\n## This experience\n\nTitle: {experience.title}\nKind: {experience.kind}\n"
         f"\nChecklist lines for it:\n\n{checklist_text(experience, experienced)}\n"
         f"\nQuestions asked so far: {experience.asked} of {experience.max_questions()}."
@@ -474,7 +475,7 @@ def start(seed: str = "") -> dict:
     user = f"## Resume\n\n{resume_body()}"
     if seed.strip():
         user += f"\n\n## Extra notes from the candidate\n\n{seed.strip()[:SEED_CHAR_CAP]}"
-    reply = llm.complete(EXTRACT_PROMPT, user, model=interview_model(),
+    reply = llm.complete(prompts.text("interview.extract"), user, model=interview_model(),
                          temperature=0.0, max_tokens=8000, reasoning=llm.minimal_reasoning(interview_model()))
     data = _parse_json_block(reply)
     found = data.get("experiences") or []
@@ -746,7 +747,7 @@ def _stream_reply(messages: list[dict], model: Optional[str] = None) -> Iterator
 def _setup_turn(state: State, message: str) -> Iterator[dict]:
     state.transcript.append({"role": "user", "content": message})
     listing = json.dumps([{k: e[k] for k in ("title", "kind", "resume_entry")} for e in state.experiences])
-    messages = [{"role": "system", "content": SETUP_PROMPT},
+    messages = [{"role": "system", "content": prompts.text("interview.setup")},
                 {"role": "user", "content": f"## Current list\n\n{listing}"}]
     messages += state.transcript
     reply = None
@@ -916,7 +917,7 @@ def _grade(experience: Experience, state: State, answer: str) -> str:
             break
     try:
         return llm.complete(
-            GRADE_PROMPT,
+            prompts.text("interview.grade"),
             f"## Checklist\n\n{checklist_text(experience, state.experienced)}\n\n"
             f"## Question\n\n{question}\n\n## Answer\n\n{answer}",
             model=interview_model(), temperature=0.0, max_tokens=200, reasoning=llm.minimal_reasoning(interview_model()),
@@ -939,7 +940,7 @@ def _close(state: State, experience: Experience) -> Iterator[dict]:
 def _open_turn(state: State, message: str) -> Iterator[dict]:
     state.transcript.append({"role": "user", "content": message})
     listing = profile.index() or "\n".join(f"- [{e['slug']}] {e['title']}" for e in state.experiences)
-    messages = [{"role": "system", "content": UPDATE_PROMPT},
+    messages = [{"role": "system", "content": prompts.text("interview.update")},
                 {"role": "user", "content": f"## Experiences on file\n\n{listing}"}]
     # Recent chat only: the documents are the memory, not the transcript.
     messages += state.transcript[-12:]
@@ -987,7 +988,7 @@ def write_main(experience: Experience, experienced: bool) -> str:
                  + "\n\n(Write the sections from the transcript first; where the transcript "
                  "is silent, use what the scaffold states. The scaffold is a reading of the "
                  "code; a README claim stays marked as the README's.)")
-    text = llm.complete(WRITE_MAIN_PROMPT, user, model=interview_model(),
+    text = llm.complete(prompts.text("interview.write_main"), user, model=interview_model(),
                         temperature=0.1, max_tokens=8000, reasoning=llm.minimal_reasoning(interview_model()))
     text = with_link_lines(text.strip(), experience)
     path = stories_dir() / experience.slug / "main.md"
@@ -1045,7 +1046,7 @@ def with_link_lines(text: str, experience: Experience) -> str:
 def update_main(slug: str, new_information: str) -> str:
     path = stories_dir() / slug / "main.md"
     current = path.read_text() if path.exists() else f"# {slug}\n"
-    text = llm.complete(REWRITE_MAIN_PROMPT,
+    text = llm.complete(prompts.text("interview.rewrite_main"),
                         f"## Document\n\n{current}\n\n## New information\n\n{new_information}",
                         model=interview_model(), temperature=0.1, max_tokens=8000,
                         reasoning=llm.minimal_reasoning(interview_model()))
@@ -1181,7 +1182,7 @@ def start_fold(slug: str, new_information: str) -> threading.Thread:
 
 
 def _story_rules(section: str) -> str:
-    text = STORY_RULES.read_text()
+    text = prompts.text("story")
     intro = text.split("\n## ", 1)[0]
     match = re.search(rf"^## {section}\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
     if not match:

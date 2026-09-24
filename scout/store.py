@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+import paths
 from scout import Hit, Watch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,7 +19,7 @@ _lock = threading.RLock()
 
 
 def path() -> Path:
-    return Path(os.environ.get(ENV, ROOT / "data" / "scout.json"))
+    return Path(os.environ.get(ENV, paths.DATA / "scout.json"))
 
 
 def _read() -> dict:
