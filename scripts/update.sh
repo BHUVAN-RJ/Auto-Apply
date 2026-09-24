@@ -28,7 +28,7 @@ cd "$REPO"
 PROTECTED=(browser/guard.py tests/test_invariants.py tests/test_guard.py scripts/check.sh)
 
 say() { printf '\n==> %s\n' "$*"; }
-fail() { printf '\nUPDATE STOPPED: %s\n' "$*" >&2; exit "${2:-1}"; }
+fail() { printf '\nUPDATE STOPPED: %s\n' "$1" >&2; exit "${2:-1}"; }
 
 git config rerere.enabled true
 git config rerere.autoupdate true

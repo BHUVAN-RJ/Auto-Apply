@@ -13,9 +13,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 PY="$REPO/.venv/bin/python"
 
-# Never the person's own data: the tests write into temporary folders, and
-# with AUTOPILOT_HOME unset they would read the clone's (empty) base/.
-unset AUTOPILOT_HOME
+# Never the person's own data: tests/conftest.py gives the suite a data
+# folder of its own, whatever AUTOPILOT_HOME says.
 
 INVARIANTS=(tests/test_invariants.py tests/test_guard.py tests/test_forms.py
             tests/test_screen.py tests/test_tailor.py tests/test_prompts.py)
