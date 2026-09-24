@@ -20,7 +20,7 @@ LETTER = "Dear Hiring Manager,\n\nOne paragraph.\n\nSincerely,\nJane Doe"
 def isolated(tmp_path, monkeypatch):
     # Never the network: the letter step calls the model unless stubbed.
     monkeypatch.setattr(pipeline.cover, "write",
-                        lambda posting, tex, profile="", extra="": CoverLetter(LETTER, "test/model"))
+                        lambda posting, tex, profile="", extra="", model=None: CoverLetter(LETTER, model or "test/model"))
     # Same for the screen: it reads base/applicant.md and calls the model.
     monkeypatch.setattr(pipeline.screen_server, "screen_url",
                         lambda url, text, title="", force=False: (Screen(verdict="ok"), True))
@@ -269,3 +269,54 @@ def test_the_jobs_own_auto_approve_answer_beats_the_switch(monkeypatch):
     job, _ = queue.add(Job(url="https://example.com/jobs/2", auto_fill=True))
     pipeline.process(job)
     assert started == [job.id] and queue.get(job.id).status == Status.APPROVED
+
+
+def test_a_kept_status_retailor_writes_documents_and_moves_nothing(monkeypatch):
+    """The re-tailor of a job that is already filled: new folder, new
+    documents, the row pointed at them, and the job still filled. Nothing
+    is approved and no fill is started."""
+    stub_success(monkeypatch)
+    launched = []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: launched.append(job_id))
+    job, _ = queue.add(Job(url="https://example.com/jobs/1", title="Backend Engineer"))
+    first = pipeline.process(job)
+    queue.update(job.id, status=Status.FILLED)
+
+    second = pipeline.retailor(queue.get(job.id), "lead with the agent work", keep_status=True)
+
+    assert second != first and (second / "resume.pdf").exists()
+    assert queue.get(job.id).status is Status.FILLED
+    assert json.loads((second / "status.json").read_text())["status"] == "filled"
+    assert launched == []
+
+
+def test_the_jobs_model_reaches_the_resume_and_the_letter(monkeypatch):
+    """"Use Opus" is a per-job choice, so both documents a human reads are
+    written with it; everything else stays on the cheap default."""
+    stub_success(monkeypatch)
+    seen = {}
+
+    def tailored(posting, **kwargs):
+        seen["resume"] = kwargs.get("model", "missing")
+        return TailorResult(tex="\\documentclass{article}\\begin{document}x\\end{document}",
+                            suggestions="- swapped a project", diff="", model="test/model")
+
+    def letter(posting, tex, profile="", extra="", model=None):
+        seen["letter"] = model
+        return CoverLetter(LETTER, "test/model")
+
+    monkeypatch.setattr(pipeline.tailor, "tailor", tailored)
+    monkeypatch.setattr(pipeline.cover, "write", letter)
+    job, _ = queue.add(Job(url="https://example.com/jobs/opus", tailor_model="premium/model"))
+
+    pipeline.process(job)
+
+    assert seen == {"resume": "premium/model", "letter": "premium/model"}
+
+    # And a job that was captured without the button says nothing about a
+    # model at all, so the tailor falls back to the configured default.
+    seen.clear()
+    plain, _ = queue.add(Job(url="https://example.com/jobs/cheap"))
+    pipeline.process(plain)
+
+    assert seen == {"resume": None, "letter": None}

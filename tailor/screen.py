@@ -241,16 +241,60 @@ def graduation_deadline(quote: str) -> Optional[tuple[int, int]]:
     return int(match.group("year")), MONTH_NUMBERS[word.lower()] if word else 12
 
 
+# A posting that wants a graduation no earlier than some date is the one
+# timeline case an early graduate genuinely fails: an internship or co-op
+# that needs the applicant still enrolled. Those words keep the flag.
+NOT_BEFORE = re.compile(
+    r"\b(?:or later|after|no earlier than|at least|still (?:be )?enrolled|"
+    r"currently enrolled|returning to)\b",
+    re.I,
+)
+GRADUATION_WORDS = re.compile(r"\b(?:graduat\w*|class of|degree|commencement)", re.I)
+
+
+def graduation_window(quote: str) -> Optional[tuple[int, int]]:
+    """Latest graduation a cohort window allows, as (year, month).
+
+    Covers the windows a deadline phrase does not: "spring/summer of 2027
+    college graduates", "Class of 2027", "graduating between Fall 2026 and
+    Summer 2027". The window's end is the latest year named with the latest
+    season or month named anywhere in the quote, which is generous by design:
+    the applicant graduating on or before it is a match, and only a later
+    graduation keeps the flag.
+    """
+    if not GRADUATION_WORDS.search(quote) or NOT_BEFORE.search(quote):
+        return None
+    years = [int(year) for year in re.findall(r"\b(20\d{2})\b", quote)]
+    if not years:
+        return None
+    months = [
+        MONTH_NUMBERS[word.lower()]
+        for word in re.findall(rf"\b({DATE_WORDS})\b", quote, re.I)
+    ]
+    return max(years), max(months) if months else 12
+
+
+def graduating_in_time(flag: Flag, graduation: tuple[int, int]) -> bool:
+    """Does the applicant's graduation satisfy this flag's date, if it has one?
+
+    Earlier than a cutoff or a cohort window is a match, not a caution: a
+    December 2026 graduate is available for every role that asks for a degree
+    by Summer 2027, and for every cohort that graduates by then.
+    """
+    for latest in (graduation_deadline(flag.quote), graduation_window(flag.quote)):
+        if latest is not None and graduation <= latest:
+            return True
+    return False
+
+
 def enforce_timeline_policy(flags: list[Flag], facts: str) -> list[Flag]:
-    """Drop deadline flags when the applicant graduates by the cutoff."""
+    """Drop deadline and cohort-window flags the applicant's graduation meets."""
     graduation = latest_graduation(facts)
     if graduation is None:
         return flags
     return [
         flag for flag in flags
-        if flag.category != "timeline"
-        or (deadline := graduation_deadline(flag.quote)) is None
-        or graduation > deadline
+        if flag.category != "timeline" or not graduating_in_time(flag, graduation)
     ]
 
 

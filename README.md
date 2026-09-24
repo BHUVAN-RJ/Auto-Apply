@@ -31,8 +31,15 @@ model's written rationale for each change. Approve it, reject it, or chat to
 revise it. By default this checkpoint passes itself: the banner on the job
 page has an **auto-approve** box, ticked, next to "Add to autopilot"; leave
 it and a clean screen plus a clean tailor go straight on to the form. Untick
-it during the two-second countdown and that job waits here for you. A
+it during the three-second countdown and that job waits here for you. A
 poor-fit verdict or a `reject` screen always waits.
+
+The same countdown holds a green **Use Opus** button. Pressed, that one job's
+resume and cover letter are written by the expensive model instead of the
+cheap default; the countdown keeps running, so the click is the whole
+decision. The review page's thread offers the same thing after the fact
+("Re-tailor with Opus"). Everything else — the screen, the form answers —
+stays on the cheap model whatever the button says.
 
 **Checkpoint 2 — the form.** After the form is filled, you get a screenshot
 of it and the window left open on it. Everything halts there.
@@ -454,7 +461,9 @@ by Summer 2027"). Those two rules are enforced after the model response, not
 left to prompt wording.
 
 Off Jobright, an OK or CAUTION verdict queues the job by itself after a
-two-second countdown drawn across the button; a click during it cancels.
+three-second countdown drawn across the button; a click during it cancels.
+Three, not two: the "Use Opus" button lives inside that window, and two
+seconds was not enough to read the verdict and decide.
 NOT OK waits for the click. On Jobright's own posting pages the bar only
 advises, because the Apply button leads to the employer's page, and that is
 the URL worth queueing. The verdict is cached per URL, reused by the

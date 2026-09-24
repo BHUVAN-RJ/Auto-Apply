@@ -19,6 +19,10 @@ def isolated(tmp_path, monkeypatch):
 
     import server.review as review
     monkeypatch.setattr(review, "DATA_DIR", tmp_path / "data")
+    # Each job's thread is a file of its own; never the real one.
+    from server import thread as job_thread
+    monkeypatch.setattr(job_thread, "THREADS", tmp_path / "threads")
+    monkeypatch.setattr(job_thread, "_running", {})
 
     # .env on a real machine may switch autofill on; a test approving a job
     # must never launch the real apply.py against a temporary queue.
@@ -657,3 +661,128 @@ def test_the_changes_are_offered_and_only_the_picked_ones_remembered(client, mon
     assert list(_json.loads((tmp_path / "form.json").read_text())["corrections"]) == ["Location"]
     # The list survives the status change, for the confirmation page's banner.
     assert client.post(f"/review/{job_id}/form-state").json()["changes"] == done["changes"]
+
+
+def test_the_thread_answers_and_remembers_the_turns(client, monkeypatch):
+    """A question in the job's thread is answered from this application's
+    own material, kept in answers.md as before, and the turns stay: the
+    next question is asked with the earlier ones as context."""
+    from server import review as review_module
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "posting.md", "Abridge builds clinical AI.")
+    seen = []
+
+    def fake(question, context, model=None):
+        seen.append((question, context))
+        return review_module.answers.Answer(question, f"Answer {len(seen)}.", "test/model")
+    monkeypatch.setattr(review_module.answers, "answer", fake)
+    monkeypatch.setattr(review_module.tailor, "load_profile", lambda stories=None: "profile text")
+    monkeypatch.setattr(review_module.profile, "applicant_facts", lambda: "facts text")
+
+    first = client.post(f"/review/{job_id}/thread",
+                        json={"text": "  Why this company?  ", "action": "ask"})
+    assert first.status_code == 200 and first.json()["running"] is False
+    kinds = [t["kind"] for t in first.json()["turns"]]
+    assert kinds == ["question", "answer"]
+
+    second = client.post(f"/review/{job_id}/thread", json={"text": "Shorter?", "action": "ask"})
+    assert [t["kind"] for t in second.json()["turns"]] == ["question", "answer", "question", "answer"]
+    # The thread is context, never part of the question.
+    assert seen[1][0] == "Shorter?"
+    assert "Why this company?" in seen[1][1].as_message()
+    assert "Abridge builds clinical AI." in seen[1][1].as_message()
+
+    detail = client.get(f"/review/{job_id}").json()
+    assert len(detail["thread"]) == 4 and detail["thread_running"] is False
+    assert "Answer 1." in (app_dir / "answers.md").read_text()
+    assert client.post(f"/review/{job_id}/thread", json={"text": "   "}).status_code == 400
+    assert client.post(f"/review/{job_id}/thread", json={"text": "x", "action": "nope"}).status_code == 422
+
+
+def test_a_visa_question_in_the_thread_is_refused_and_recorded(client, monkeypatch):
+    from server import review as review_module
+    job_id, _ = reviewable_job()
+    monkeypatch.setattr(review_module.answers.llm, "complete",
+                        lambda *a, **k: pytest.fail("a visa question reached the model"))
+    monkeypatch.setattr(review_module.tailor, "load_profile", lambda stories=None: "")
+    monkeypatch.setattr(review_module.profile, "applicant_facts", lambda: "")
+    r = client.post(f"/review/{job_id}/thread",
+                    json={"text": "Do you require visa sponsorship?", "action": "ask"})
+    assert r.status_code == 422
+    turns = client.get(f"/review/{job_id}/thread").json()["turns"]
+    assert [t["kind"] for t in turns] == ["question", "error"]
+
+
+def test_a_change_in_the_thread_retailors_and_leaves_the_job_alone(client, monkeypatch):
+    """A change asks for new documents, not a new decision: the re-tailor
+    runs with keep_status, so a filled job stays filled and no fill starts."""
+    import time
+    job_id, app_dir = reviewable_job()
+    queue.update(job_id, status=Status.FILLED)
+    seen = {}
+
+    def fake_retailor(job, instruction, keep_status=False):
+        seen["instruction"], seen["keep_status"] = instruction, keep_status
+        return app_dir.parent / "second-folder"
+
+    import pipeline
+    monkeypatch.setattr(pipeline, "retailor", fake_retailor)
+
+    r = client.post(f"/review/{job_id}/thread",
+                    json={"text": "lead with the agent work", "action": "change"})
+    assert r.status_code == 200 and r.json()["running"] is True
+    for _ in range(100):
+        turns = client.get(f"/review/{job_id}/thread").json()["turns"]
+        if turns[-1].get("state") != "running":
+            break
+        time.sleep(0.05)
+    assert seen == {"instruction": "lead with the agent work", "keep_status": True}
+    assert [t["kind"] for t in turns] == ["change", "result"]
+    assert turns[-1]["state"] == "done" and turns[-1]["folder"].endswith("second-folder")
+    assert queue.get(job_id).status is Status.FILLED
+
+
+def test_a_change_on_opus_marks_the_row_before_it_runs(client, monkeypatch):
+    """"Re-tailor with Opus" is the same decision the banner's button makes:
+    it sticks to the row, so the job stays an Opus job afterwards."""
+    import time
+    job_id, app_dir = reviewable_job()
+    monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "expensive/model")
+    models = []
+
+    def fake_retailor(job, instruction, keep_status=False):
+        models.append(job.tailor_model)
+        return app_dir.parent / "second-folder"
+
+    import pipeline
+    monkeypatch.setattr(pipeline, "retailor", fake_retailor)
+
+    r = client.post(f"/review/{job_id}/thread",
+                    json={"text": "more of the agent work", "action": "change", "premium": True})
+    assert r.status_code == 200
+    for _ in range(100):
+        if not client.get(f"/review/{job_id}/thread").json()["running"]:
+            break
+        time.sleep(0.05)
+    assert models == ["expensive/model"], "the re-tailor ran on the model the button names"
+    assert queue.get(job_id).tailor_model == "expensive/model"
+
+
+def test_reveal_names_the_files_and_shows_them_in_finder(client, monkeypatch):
+    """The Finder button makes the upload-named copies if the fill has not
+    (a folder that was only tailored has none) and selects both."""
+    import subprocess
+    import sys
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "cover_letter.pdf", b"%PDF-1.5 fake letter")
+    calls = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    r = client.post(f"/review/{job_id}/reveal", json={})
+    body = r.json()
+    assert r.status_code == 200 and len(body["revealed"]) == 2
+    assert all((app_dir / name).exists() for name in body["revealed"])
+    assert calls and calls[0][0] == "osascript" and "reveal" in calls[0][2]
+    assert all(name.endswith(".pdf") for name in body["revealed"])

@@ -30,8 +30,21 @@
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 13px/1.5 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* The window is the frame: header, then two panes that scroll. The
+       page itself never scrolls, so the header needs no magic height. */
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
   }
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  /* Scrollbars in the page's ink: square, thin, always drawn. macOS hides
+     overlay scrollbars until something moves, so the two panes read as one
+     page that will not scroll; styling them keeps them on screen. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  nav::-webkit-scrollbar-thumb { border-color: var(--panel); }
   header {
     display: flex; align-items: center; gap: 1rem; padding: .7rem 16px;
     border-bottom: 2px solid var(--line); background: var(--panel);
@@ -82,7 +95,7 @@
   /* While the chat is up the pane is a column the height of the window:
      the transcript takes what is left and scrolls, the composer sits on
      the bottom edge whatever the length of the conversation. */
-  section.detail.chatpane { display: flex; flex-direction: column; height: calc(100vh - 47px);
+  section.detail.chatpane { display: flex; flex-direction: column; height: 100%;
                             padding-bottom: 1rem; overflow: hidden; box-sizing: border-box; }
   .chatpane .head, .chatpane .voicebar { flex: none; }
   .chatpane .chat { flex: 1; min-height: 0; overflow-y: auto; margin: .4rem 0; }
@@ -149,8 +162,18 @@
                    letter-spacing: .1em; text-transform: uppercase; user-select: none; }
   .doctabs { display: flex; gap: .25rem; margin: .8rem 0; }
   .doctabs button[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
-  main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 47px); }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } nav { border-right: 0; border-bottom: 2px solid var(--line); } }
+  /* The list and the job scroll on their own: reading a long application
+     never moves the list, and the list never drags the job with it. The
+     page itself does not scroll; each pane does. */
+  main { display: grid; grid-template-columns: 300px 1fr; flex: 1; min-height: 0; overflow: hidden; }
+  main > nav, main > section.detail { overflow-y: auto; overflow-x: hidden; min-height: 0; }
+  main > section.detail.chatpane { overflow: hidden; }
+  @media (max-width: 800px) {
+    body { height: auto; overflow: visible; }
+    main { grid-template-columns: 1fr; flex: none; overflow: visible; }
+    main > nav, main > section.detail { overflow: visible; }
+    nav { border-right: 0; border-bottom: 2px solid var(--line); }
+  }
 
   /* The list: one open bucket (in flight) and two shelves that stay
      closed. Each in-flight row is washed in its bucket's colour and ends
@@ -226,6 +249,8 @@
   }
   button.act.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
   button.act.danger { color: var(--red); border-color: var(--red); }
+  button.act.opus { color: var(--green); border-color: var(--green); }
+  button.act.opus:hover { background: var(--green); color: var(--bg); }
   button.act:disabled { opacity: .45; cursor: not-allowed; }
   /* The native file control cannot be styled, so the label is the button. */
   label.act { display: inline-flex; align-items: center; gap: .5rem; line-height: 1.2; }
@@ -308,6 +333,17 @@
   .asker .answer .q { color: var(--muted); font-size: 12px; margin-bottom: .3rem; }
   svg.logo { display: inline-block; vertical-align: -3px; overflow: visible; margin-right: 2px; }
   .asker .answer .a { white-space: pre-wrap; line-height: 1.5; margin-bottom: .4rem; }
+  /* The thread: one conversation per job. Yours on the right in green,
+     the assistant's on the left in purple, same language as the chat. */
+  .thread .turns { display: flex; flex-direction: column; gap: .5rem; max-height: 52vh; overflow-y: auto; }
+  .thread .turn { border: 2px solid var(--line); padding: .5rem .7rem; max-width: 100%; }
+  .thread .turn .who { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                       letter-spacing: .06em; margin-bottom: .25rem; }
+  .thread .turn .a { white-space: pre-wrap; line-height: 1.5; }
+  .thread .turn.you { border-color: var(--green); align-self: flex-end; }
+  .thread .turn.bot { border-color: var(--purple); }
+  .thread .turn.run { border-style: dashed; }
+  .thread .turn.bad { border-color: var(--red); }
   .empty { color: var(--muted); padding: 2rem 0; max-width: 60ch; }
   .broken[hidden] { display: none; }
   .broken { display: inline-block; background: var(--red); color: #fff; font-weight: 700;
@@ -575,6 +611,11 @@ async function show(id) {
 
   // The two PDFs are the review. Stacked, resume first; the letter falls
   // back to its text when the PDF did not compile.
+  // A re-tailor writes a new folder behind the same URLs, and Chrome's PDF
+  // viewer keeps showing the render it already has: the page said
+  // "Re-tailored" while the old resume sat under it (2026-09-24). The
+  // folder name is the version, so the src changes when the documents do.
+  const stamp = `?v=${encodeURIComponent(data.folder || "")}`;
   const views = [["resume.pdf", "Resume"], ["resume_changes.pdf", "Changes"],
                  ["resume_both.pdf", "Before and after"]]
     .filter(([file]) => data.artifacts.includes(file));
@@ -582,10 +623,10 @@ async function show(id) {
     ? `<div><h3>Tailored resume
         ${views.length > 1 ? `<span class="views">${views.map(([file, label], i) =>
           `<button class="view${i ? "" : " on"}" data-file="${file}">${label}</button>`).join("")}</span>` : ""}</h3>
-        <iframe id="resumeView" src="/review/${id}/file/resume.pdf#toolbar=0&navpanes=0&view=Fit" title="Tailored resume"></iframe></div>` : "";
+        <iframe id="resumeView" src="/review/${id}/file/resume.pdf${stamp}#toolbar=0&navpanes=0&view=Fit" title="Tailored resume"></iframe></div>` : "";
   const letterDoc = data.artifacts.includes("cover_letter.pdf")
     ? `<div><h3>Cover letter</h3>
-        <iframe src="/review/${id}/file/cover_letter.pdf#toolbar=0&navpanes=0&view=Fit" title="Cover letter"></iframe></div>`
+        <iframe src="/review/${id}/file/cover_letter.pdf${stamp}#toolbar=0&navpanes=0&view=Fit" title="Cover letter"></iframe></div>`
     : data.cover_letter
       ? `<div><h3>Cover letter</h3><div class="card prose letter">${letter(data.cover_letter)}</div></div>`
       : data.cover_letter_error
@@ -615,7 +656,12 @@ async function show(id) {
           ? `<button class="act danger" id="reject">Reject…</button>` : ""}
       </div>` : ""}
 
-    ${resumeDoc || letterDoc ? `<div class="docs">${resumeDoc}${letterDoc}</div>` : ""}
+    ${resumeDoc || letterDoc ? `
+      <div class="actions">
+        <button class="act" id="reveal">Show the files in Finder</button>
+        <span class="hint" id="revealNote">The resume and the letter under their upload names, selected, ready to drag onto a form.</span>
+      </div>
+      <div class="docs">${resumeDoc}${letterDoc}</div>` : ""}
 
     ${data.suggestions ? `<h3>What changed, and why</h3>
       <div class="card prose">${markdown(rationale(data.suggestions))}</div>` : ""}
@@ -633,14 +679,17 @@ async function show(id) {
         <div class="row"><button class="act primary" id="rememberGo" disabled>Remember</button><span class="hint" id="rememberNote"></span></div>
       </div>` : ""}
 
-    ${data.status !== "queued" && data.status !== "tailoring" ? `<h3>Ask for an answer</h3>
-      <div class="card asker">
+    ${data.status !== "queued" && data.status !== "tailoring" ? `<h3>${logo()} This job, in one thread</h3>
+      <div class="card asker thread">
+        <div class="turns" id="threadTurns">${turns(data.thread || [])}</div>
         ${data.questions && data.questions.length ? `<div class="hint">Still empty on the form, tap one:</div>
           <div class="qs">${data.questions.map((q) => `<button class="act small q">${escape(q)}</button>`).join("")}</div>` : ""}
-        <textarea id="askQ" placeholder="Paste a question from the form, e.g. What are the most interesting aspects of the company that you are excited to work on?"></textarea>
+        <textarea id="askQ" placeholder="Paste a screener question, or say what to change — 'lead with the agent work', 'shorter summary'."></textarea>
         <div class="row"><button class="act primary" id="askGo">Answer it</button>
-          <span class="hint" id="askNote">From the posting, the tailored resume, the letter and your profile. You paste it in.</span></div>
-        <div id="askOut"></div>
+          <button class="act" id="changeGo">Re-tailor with this</button>
+          <button class="act opus" id="opusGo" title="Re-tailor with the expensive model: it rewrites far more of the resume, and costs about eight times as much.">Re-tailor with Opus</button>
+          <span class="hint" id="askNote">The posting, the tailored resume, the letter, your profile and this thread are already in it.
+            A re-tailor writes new documents and leaves the job where it stands.</span></div>
       </div>` : ""}
 
     ${data.answers ? `<h3>${logo()} Free-form answers, written by the assistant</h3>
@@ -708,11 +757,12 @@ async function show(id) {
   for (const button of document.querySelectorAll(".views .view")) {
     button.onclick = () => {
       document.querySelectorAll(".views .view").forEach((b) => b.classList.toggle("on", b === button));
-      $("resumeView").src = `/review/${id}/file/${button.dataset.file}#toolbar=0&navpanes=0&view=Fit`;
+      $("resumeView").src = `/review/${id}/file/${button.dataset.file}${stamp}#toolbar=0&navpanes=0&view=Fit`;
     };
   }
   if ($("fillNow")) $("fillNow").onclick = () => fillAgain(id);
-  if ($("askGo")) wireAsk(id);
+  if ($("reveal")) wireReveal(id);
+  if ($("askGo")) wireThread(id, data);
   if ($("rememberGo")) wireRemember(id);
   if (working) setTimeout(() => { if (current === id) show(id); }, working * 1000 + 200);
 
@@ -826,32 +876,113 @@ function wireRemember(id) {
   };
 }
 
-function wireAsk(id) {
-  const box = $("askQ"), go = $("askGo"), out = $("askOut"), note = $("askNote");
-  for (const b of document.querySelectorAll(".asker .q")) b.onclick = () => { box.value = b.textContent; box.focus(); };
-  const run = async () => {
-    const question = box.value.trim();
-    if (!question) return;
-    go.disabled = true; note.textContent = "Writing…";
+// One thread per job: a message is either a question, answered from
+// everything this application has, or a change, which re-tailors into new
+// documents and leaves the job's standing alone.
+function turns(list) {
+  if (!list.length) return `<p class="hint">Nothing asked yet. A screener question you cannot see the assistant on,
+    or a change to the resume — both live here, with the posting and your profile already in the context.</p>`;
+  return list.map((turn) => {
+    const mine = turn.kind === "question" || turn.kind === "change";
+    const bad = turn.kind === "error" || turn.state === "error";
+    const running = turn.state === "running";
+    const who = turn.kind === "change" ? "You, asking for a change"
+      : turn.kind === "question" ? "You"
+      : turn.kind === "result" ? (running ? "Re-tailoring…" : "Re-tailored")
+      : bad ? "Failed" : "Autopilot";
+    const body = running ? "The resume and the letter are being written again. This takes a minute or two."
+      : (turn.text || "");
+    return `<div class="turn ${mine ? "you" : "bot"}${bad ? " bad" : ""}${running ? " run" : ""}">
+      <div class="who">${escape(who)}${turn.model ? ` · ${escape(turn.model)}` : ""}</div>
+      <div class="a">${escape(body)}</div>
+      ${!mine && !running && !bad && turn.text ? `<button class="act small copy">Copy</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function paintTurns(list) {
+  const box = $("threadTurns");
+  if (!box) return;
+  box.innerHTML = turns(list);
+  const answers = list.filter((turn) => turn.kind === "answer" || (turn.kind === "result" && turn.state !== "running"));
+  [...box.querySelectorAll(".copy")].forEach((button, i) => {
+    button.onclick = async () => {
+      try { await navigator.clipboard.writeText(answers[i]?.text || ""); button.textContent = "Copied"; }
+      catch { button.textContent = "Select and copy"; }
+    };
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+function wireThread(id, data) {
+  const box = $("askQ"), go = $("askGo"), change = $("changeGo"), note = $("askNote");
+  const opus = $("opusGo");
+  for (const b of document.querySelectorAll(".asker .q")) b.onclick = () => { box.value = b.textContent; box.focus(); armed(); };
+  // A change runs in a thread on the server; the page watches the turn
+  // until it is done and then re-reads the job, whose folder has changed.
+  async function poll(jobId) {
+    if (current !== jobId) return;
     try {
-      const r = await api(`/review/${id}/ask`, { method: "POST", body: JSON.stringify({ question }) });
-      const block = document.createElement("div");
-      block.className = "answer";
-      block.innerHTML = `<div class="q">${logo()} ${escape(r.question)}</div><div class="a">${escape(r.answer)}</div>
-        <button class="act small copy">Copy</button>`;
-      block.querySelector(".copy").onclick = async (e) => {
-        try { await navigator.clipboard.writeText(r.answer); e.target.textContent = "Copied"; }
-        catch { e.target.textContent = "Select and copy"; }
-      };
-      out.prepend(block);
-      note.textContent = `Kept on file (${r.model}).`;
+      const r = await api(`/review/${jobId}/thread`);
+      paintTurns(r.turns || []);
+      if (r.running) return setTimeout(() => poll(jobId), 3000);
+      if (current === jobId) show(jobId);
+    } catch { /* the next render picks it up */ }
+  }
+
+  paintTurns(data.thread || []);
+  if (data.thread_running) poll(id);
+
+  // "Re-tailor with Opus" with nothing typed is a request in itself: run
+  // the job again on the stronger model. The other two need words.
+  const OPUS_ONLY = "Re-tailor this on the stronger model. No new instruction: same posting, same profile, same rules.";
+
+  const send = async (action, premium = false) => {
+    const text = box.value.trim() || (premium ? OPUS_ONLY : "");
+    if (!text) return;
+    if (action === "change" && !confirm(`Re-tailor the resume and the letter${premium ? " on Opus" : " with this"}?\n\n` + text)) return;
+    go.disabled = change.disabled = true;
+    if (opus) opus.disabled = true;
+    note.textContent = action === "change" ? (premium ? "Re-tailoring on Opus…" : "Re-tailoring…") : "Writing…";
+    try {
+      const r = await api(`/review/${id}/thread`, { method: "POST", body: JSON.stringify({ text, action, premium }) });
       box.value = "";
+      paintTurns(r.turns || []);
+      note.textContent = action === "change" ? "Re-tailoring; the documents above change when it lands." : "Kept on file.";
+      if (r.running) poll(id);
     } catch (err) {
       note.textContent = err.message || "Failed";
-    } finally { go.disabled = false; }
+    } finally { armed(); }
   };
-  go.onclick = run;
-  box.onkeydown = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") run(); };
+
+  go.onclick = () => send("ask");
+  change.onclick = () => send("change");
+  if (opus) opus.onclick = () => send("change", true);
+  box.onkeydown = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send("ask"); };
+  // An empty box used to swallow the click: `send` returned before saying
+  // anything, so pressing Re-tailor with nothing typed looked like a dead
+  // button (three times, 2026-09-24). The buttons now say so themselves.
+  const armed = () => {
+    const empty = !box.value.trim();
+    go.disabled = change.disabled = empty;
+    go.title = change.title = empty ? "Say what to change or ask first" : "";
+    if (opus) opus.title = empty
+      ? "Run this job again on the stronger model, with no new instruction"
+      : "Re-tailor with the stronger model and this instruction";
+  };
+  box.addEventListener("input", armed);
+  armed();
+}
+
+function wireReveal(id) {
+  $("reveal").onclick = async () => {
+    const note = $("revealNote");
+    try {
+      const r = await api(`/review/${id}/reveal`, { method: "POST", body: "{}" });
+      note.textContent = r.revealed?.length ? `Selected in Finder: ${r.revealed.join(", ")}.`
+        : r.note || `Opened ${r.folder}.`;
+    } catch (err) { note.textContent = err.message || "Finder would not open"; }
+  };
 }
 
 async function fillAgain(id) {
@@ -1338,8 +1469,8 @@ const Projects = (() => {
       Each one gets a short write-up, the list is ranked, and the best ten are ticked. Confirm
       the ticks and the interviewer asks one to three questions per project, only what GitHub
       cannot tell. A repository whose name matches a project on the resume becomes that project.
-      The link on each one is what the resume hyperlinks; change it here when the store listing
-      or a live site is the better address.</p>
+A project can carry several links — the repository, a store
+      listing, the live site — and the one you tick is what the resume hyperlinks.</p>
       ${state.error ? `<div class="banner stop">${escape(state.error)}</div>` : ""}
       <div class="actions">
         <textarea id="handle" rows="1" style="min-height:2.6rem;max-width:22rem" placeholder="github handle">${escape(state.handle || "")}</textarea>
@@ -1376,7 +1507,7 @@ const Projects = (() => {
       ${scanning ? `<div class="banner warn">Reading the repositories, best first. Tick and untick while it runs; confirm once it is done.</div>` : ""}
       ${started ? "" : `<div class="banner warn">Start the profile interview first (Profile tab); the projects join it.</div>`}
       <p class="hint">The best ${state.auto_pick} are ticked: newest, most worked on, starred, documented. An old project
-      that matters still belongs here; tick it. Click a row on the left to read what was found and to change its link.</p>
+      that matters still belongs here; tick it. Click a row on the left to read what was found and to change its links.</p>
       <div class="card" style="padding:.4rem .8rem">${repos.map((r) => `
         <label style="display:flex;gap:.7rem;align-items:baseline;padding:.35rem 0;border-bottom:1px solid var(--line)">
           <input type="checkbox" data-pick="${escape(r.name)}" ${r.picked || r.slug ? "checked" : ""} ${r.slug || r.state === "error" ? "disabled" : ""}>
@@ -1423,23 +1554,37 @@ const Projects = (() => {
         ${r.slug ? `<span class="hint">In the interview as <strong>${escape(r.slug)}</strong>.</span>` : ""}
       </div>
       ${r.error ? `<div class="banner stop">${escape(r.error)}</div>` : ""}
-      <h3>Link on the resume</h3>
+      <h3>Links</h3>
+      <div class="card" style="padding:.4rem .8rem">${(r.links || [r.url]).map((u) => `
+        <label style="display:flex;gap:.7rem;align-items:baseline;padding:.35rem 0;border-bottom:1px solid var(--line)">
+          <input type="radio" name="chosen" data-choose="${escape(u)}" ${u === (r.link || r.url) ? "checked" : ""}>
+          <span style="flex:1;min-width:0;overflow-wrap:anywhere">${escape(u)}${u === r.url ? ` <span class="hint">the repository</span>` : ""}</span>
+          <a href="${escape(u)}" target="_blank" rel="noopener" class="hint">open ↗</a>
+          ${u === r.url ? "" : `<button class="act" data-drop="${escape(u)}">Remove</button>`}
+        </label>`).join("")}</div>
       <div class="actions">
-        <textarea id="link" rows="1" style="min-height:2.6rem;max-width:40rem">${escape(r.url)}</textarea>
-        <button class="act" id="saveLink">Save</button>
-        <a href="${escape(r.url)}" target="_blank" rel="noopener" class="hint">open ↗</a>
+        <textarea id="link" rows="1" style="min-height:2.6rem;max-width:40rem" placeholder="https://chromewebstore.google.com/detail/..."></textarea>
+        <button class="act" id="addLink">Add a link</button>
       </div>
-      <p class="hint">The repository by default. A store listing or a live site works as well; whatever is here is what the tailored resume links.</p>
+      <p class="hint">A project can live at more than one address: the repository, a store listing, the deployed site.
+      Add them all; the one ticked is what the tailored resume hyperlinks.</p>
       ${r.questions?.length ? `<h3>The interviewer will ask</h3><ul>${r.questions.map((q) => `<li>${escape(q)}</li>`).join("")}</ul>` : ""}
       <h3>What was found</h3>
       <div class="card doc" id="doc">${r.state === "ready" ? "loading…" : r.state === "error" ? "Not read." : "Not read yet."}</div>`;
     $("back").onclick = () => { viewing = null; render(); };
-    $("saveLink").onclick = async () => {
+    const linkAction = async (link, action) => {
       try {
-        state = await api(`/projects/${encodeURIComponent(r.name)}/link`, { method: "POST", body: JSON.stringify({ link: $("link").value }) });
+        state = await api(`/projects/${encodeURIComponent(r.name)}/link`, { method: "POST", body: JSON.stringify({ link, action }) });
         render();
-      } catch (err) { alert(err.message); }
+      } catch (err) { alert(err.message); render(); }
     };
+    $("addLink").onclick = () => { const v = $("link").value.trim(); if (v) linkAction(v, "add"); };
+    for (const box of $("detail").querySelectorAll("input[data-choose]")) {
+      box.onchange = () => linkAction(box.dataset.choose, "choose");
+    }
+    for (const drop of $("detail").querySelectorAll("button[data-drop]")) {
+      drop.onclick = (event) => { event.preventDefault(); linkAction(drop.dataset.drop, "remove"); };
+    }
     if (r.state === "ready") {
       const text = await fetch(`/projects/${encodeURIComponent(r.name)}/scaffold`).then((x) => x.text());
       if ($("doc") && viewing === r.name) $("doc").innerHTML = Profile.docMarkdown(text);
@@ -2262,7 +2407,7 @@ const Voice = (() => {
   // Silence detection, hands-free only. RMS above SPEECH counts as talking;
   // SILENCE_MS of quiet after talking ends the turn. Before any talking the
   // mic stays open indefinitely, keeping only the last BARGE_KEEP_MS.
-  const SPEECH = 0.015, SILENCE_MS = 1100;
+  const SPEECH = 0.015, SILENCE_MS = 1500;
   // Barge-in: while a reply plays the mic stays open in watch mode. A cough
   // or a keyboard is short and broadband, a fan is low; a voice is louder
   // than the speaker bleed (echo cancellation takes most of it), sits in

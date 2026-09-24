@@ -445,3 +445,44 @@ def test_a_confirmation_on_a_filled_job_marks_it_submitted(monkeypatch, tmp_path
         "url": "https://jobs.lever.co/acme/1/thanks", "title": "", "text": "Thank you for applying to Acme."}).json()
     assert data["verdict"] == "submitted" and "marked in autopilot" in data["summary"]
     assert marked and marked[0][0] == job.id and marked[0][1].endswith("/thanks")
+
+
+def test_graduating_before_a_cohort_window_is_green():
+    posting = (
+        "Our new grad programme is open to spring/summer of 2027 college "
+        "graduates."
+    )
+    result = screen.parse_reply(reply(verdict="reject", flags=[{
+        "category": "timeline",
+        "severity": "hard",
+        "quote": "spring/summer of 2027 college graduates",
+        "reason": "Applicant graduates December 2026, not spring/summer 2027.",
+    }]), text=posting, facts="- Graduation: expected December 2026")
+
+    assert result.flags == []
+    assert result.verdict == "ok"
+
+
+def test_graduating_after_a_cohort_window_keeps_the_flag():
+    posting = "Open to spring/summer of 2027 college graduates."
+    result = screen.parse_reply(reply(verdict="caution", flags=[{
+        "category": "timeline",
+        "severity": "soft",
+        "quote": "spring/summer of 2027 college graduates",
+        "reason": "Applicant graduates December 2028.",
+    }]), text=posting, facts="- Graduation: expected December 2028")
+
+    assert [(flag.category, flag.severity) for flag in result.flags] == [("timeline", "soft")]
+
+
+def test_a_posting_that_needs_the_applicant_still_enrolled_keeps_the_flag():
+    posting = "Requires an expected graduation of December 2027 or later."
+    result = screen.parse_reply(reply(verdict="reject", flags=[{
+        "category": "timeline",
+        "severity": "hard",
+        "quote": "expected graduation of December 2027 or later",
+        "reason": "Applicant graduates December 2026; this is an internship.",
+    }]), text=posting, facts="- Graduation: expected December 2026")
+
+    assert [(flag.category, flag.severity) for flag in result.flags] == [("timeline", "hard")]
+    assert result.verdict == "reject"

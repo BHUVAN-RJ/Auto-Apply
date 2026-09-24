@@ -88,6 +88,12 @@ class Job(BaseModel):
     # Per-job answer to "pass checkpoint 1 without me?": the banner's
     # auto-approve box at capture time. None = the global auto_fill switch.
     auto_fill: Optional[bool] = None
+    # The model this job's resume and letter are tailored with, chosen by
+    # the banner's "Use Opus" button at capture time. None = whatever
+    # `OPENROUTER_TAILOR_MODEL` says, which is the cheap default. The
+    # resolved name is stored rather than a flag, so the row says what the
+    # documents were actually written with even after the setting changes.
+    tailor_model: Optional[str] = None
 
     @property
     def id(self) -> str:

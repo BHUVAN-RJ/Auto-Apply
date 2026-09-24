@@ -23,9 +23,9 @@ from pydantic import BaseModel
 
 from archive import store
 from browser import chrome, guard
-from server import corrections, queue, runner, seen
+from server import corrections, queue, runner, seen, thread as job_thread
 from server.models import REJECT_LABELS, Job, RejectReason, Status
-from tailor import answers, profile, tailor
+from tailor import answers, llm, profile, tailor
 
 router = APIRouter(prefix="/review", tags=["review"])
 
@@ -82,6 +82,20 @@ class Revision(BaseModel):
     instruction: str
 
 
+class ThreadMessage(BaseModel):
+    """One message in a job's thread: a question to answer, or a change to
+    make. `keep_status` is the re-tailor that leaves a filled or submitted
+    job where it stands and only writes new documents."""
+
+    text: str
+    action: str = "ask"          # ask | change
+    keep_status: bool = True
+    # A change asked for on the expensive model. The choice sticks to the
+    # row, so the job stays an Opus job for anything it is re-tailored with
+    # later; it is the same decision the banner's button makes at capture.
+    premium: bool = False
+
+
 def _job_and_dir(job_id: str) -> tuple[Job, Path]:
     job = queue.get(job_id)
     if job is None:
@@ -128,6 +142,8 @@ def detail(job_id: str) -> dict:
         "fill_notes": latest_section(read("fill_notes.md")),
         "answers": read("answers.md"),
         "questions": _open_questions(app_dir),
+        "thread": job_thread.load(job.id),
+        "thread_running": job_thread.running(job.id),
         "changes": corrections.changes(app_dir),
         "stories_used": [line for line in read("stories_used.txt").splitlines() if line.strip()],
         "error": read("error.txt"),
@@ -147,27 +163,114 @@ def _open_questions(app_dir: Path) -> list[str]:
     return answers.open_questions(state or {})
 
 
-@router.post("/{job_id}/ask")
-def ask(job_id: str, body: Question) -> dict:
-    """One free-form answer, from everything this application has: the
-    posting, the tailored resume, the cover letter, the profile with the
-    same stories the tailor read, the applicant facts. Kept in answers.md
-    with the ones the fill produced; typed into the form by the human."""
-    _, app_dir = _job_and_dir(job_id)
-    question = " ".join(body.question.split())
-    if not question:
-        raise HTTPException(400, "question is empty")
+def _answer(app_dir: Path, question: str, history: str = "") -> answers.Answer:
+    """One answer from everything this application has: the posting, the
+    tailored resume, the cover letter, the profile with the same stories
+    the tailor read, the applicant facts, and what the thread already
+    said."""
     context = answers.Context.from_app_dir(
         app_dir, profile=tailor.load_profile(stories=profile.read_used(app_dir)),
         applicant=profile.applicant_facts() or "")
+    context.thread = history
     try:
         result = answers.answer(question, context)
     except guard.ProtectedField:
         raise HTTPException(422, "That is a visa / work-authorisation question; it is yours to answer.")
     except answers.AnswerError as error:
         raise HTTPException(502, str(error))
-    store.write_or_append(app_dir, "answers.md", f"# Asked on the review page\n\n**{result.question}**\n\n{result.text}\n")
+    store.write_or_append(app_dir, "answers.md",
+                          f"# Asked on the review page\n\n**{question}**\n\n{result.text}\n")
+    return result
+
+
+@router.post("/{job_id}/ask")
+def ask(job_id: str, body: Question) -> dict:
+    """One free-form answer, kept in answers.md with the ones the fill
+    produced; typed into the form by the human."""
+    _, app_dir = _job_and_dir(job_id)
+    question = " ".join(body.question.split())
+    if not question:
+        raise HTTPException(400, "question is empty")
+    result = _answer(app_dir, question)
     return {"id": job_id, "question": result.question, "answer": result.text, "model": result.model}
+
+
+@router.get("/{job_id}/thread")
+def read_thread(job_id: str) -> dict:
+    """The conversation about this job. Polled while a change runs."""
+    queue.get(job_id) or _job_and_dir(job_id)
+    return {"id": job_id, "turns": job_thread.load(job_id), "running": job_thread.running(job_id)}
+
+
+@router.post("/{job_id}/thread")
+def say(job_id: str, body: ThreadMessage) -> dict:
+    """A message in the job's thread: answered, or tailored into new
+    documents. A change never approves anything and never starts a fill."""
+    job, app_dir = _job_and_dir(job_id)
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "the message is empty")
+    if body.action not in ("ask", "change"):
+        raise HTTPException(422, f"no such action {body.action!r}")
+
+    if body.action == "change":
+        from pipeline import retailor  # lazy: pipeline imports the server package
+
+        if body.premium:
+            model = llm.premium_model()
+            if job.tailor_model != model:
+                job = queue.update(job.id, tailor_model=model) or job
+        try:
+            job_thread.start_change(job_id, text,
+                                    lambda: retailor(job, text, keep_status=body.keep_status).name)
+        except job_thread.ThreadError as exc:
+            raise HTTPException(409, str(exc))
+        return {"id": job_id, "turns": job_thread.load(job_id), "running": True}
+
+    question = " ".join(text.split())
+    history = job_thread.history(job_id)
+    job_thread.add(job_id, "question", question)
+    try:
+        result = _answer(app_dir, question, history)
+    except HTTPException as exc:
+        job_thread.add(job_id, "error", str(exc.detail))
+        raise
+    job_thread.add(job_id, "answer", result.text, model=result.model)
+    return {"id": job_id, "turns": job_thread.load(job_id), "running": False}
+
+
+@router.post("/{job_id}/reveal")
+def reveal(job_id: str) -> dict:
+    """Open the application folder in Finder with the two named PDFs
+    selected, for the forms whose questions never reach the assistant and
+    whose files are quicker dragged in by hand."""
+    import subprocess
+    import sys
+
+    import apply as apply_script  # lazy: apply.py pulls in the browser stack
+
+    _, app_dir = _job_and_dir(job_id)
+    # The named copies are made by the fill; a folder that was only
+    # tailored has none yet, and the upload name is half the point of
+    # dragging the file in by hand.
+    files = [p for p in (apply_script.upload_copy(app_dir, "resume.pdf"),
+                         apply_script.upload_copy(app_dir, "cover_letter.pdf",
+                                                  apply_script.cover_letter_filename()))
+             if p is not None]
+    if sys.platform != "darwin":
+        return {"id": job_id, "folder": str(app_dir), "revealed": [], "opened": False,
+                "note": "Finder is macOS only; the folder is above."}
+    if files:
+        items = ", ".join(f'POSIX file "{p}"' for p in files)
+        script = f'tell application "Finder" to reveal {{{items}}}\ntell application "Finder" to activate'
+        done = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+        if done.returncode == 0:
+            return {"id": job_id, "folder": str(app_dir), "opened": True,
+                    "revealed": [p.name for p in files]}
+    # No named copies yet, or Finder refused: the folder itself will do.
+    subprocess.run(["open", str(app_dir)], capture_output=True, text=True)
+    return {"id": job_id, "folder": str(app_dir), "opened": True,
+            "revealed": [p.name for p in files]}
 
 
 def _fill_state(job_id: str) -> Optional[dict]:
@@ -233,9 +336,13 @@ def artifact(job_id: str, name: str):
     path = app_dir / name
     if not path.exists():
         raise HTTPException(404, f"{name} not in this application")
+    # A re-tailor writes a new folder under the same URL, so nothing here
+    # may be cached: Chrome's PDF viewer will otherwise keep showing the
+    # resume it already rendered.
+    headers = {"Cache-Control": "no-store"}
     if ARTIFACTS[name].startswith("text/"):
-        return PlainTextResponse(path.read_text(errors="replace"))
-    return FileResponse(path, media_type=ARTIFACTS[name])
+        return PlainTextResponse(path.read_text(errors="replace"), headers=headers)
+    return FileResponse(path, media_type=ARTIFACTS[name], headers=headers)
 
 
 @router.post("/{job_id}/approve")

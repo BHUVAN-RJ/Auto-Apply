@@ -133,7 +133,7 @@ OK or CAUTION queues itself in 2 s ->  queue.json, and pipeline.py starts
 
 Both checkpoints block. Nothing proceeds past checkpoint 1 without a click,
 unless auto-approve says so (the default since 2026-09-18): the box on the
-banner, per job, decided during the two-second countdown, falling back to
+banner, per job, decided during the three-second countdown, falling back to
 the `auto_fill` switch. Then a clean screen and a clean tailor pass it by
 themselves, because the clean verdict is what queued the job in the first
 place, and the one decision the human makes is on the filled form. A poor
@@ -495,7 +495,7 @@ not depend on the model's prose reasoning.
 | `tailor/screen.py` | `screen(posting_text, applicant) -> Screen`; JSON reply parsed and validated against the category enum, never trusted raw |
 | `tailor/screen_rules.md` | The prompt, sent verbatim, same convention as the other rules files |
 | `server/screen.py` | `POST /screen` and the URL-keyed cache in `data/screens.json`; employer pages reuse the Jobright URL's cached verdict, or combine saved Jobright text with a weak employer page in one call |
-| `capture/content.js` | Text extraction, banner, persistent badge, posts to the server, and Add/Open routing to the matching review job. Runs on `jobright.ai/jobs/info/*` (verdict only) and, via `background.js`, in any tab opened from or navigated away from Jobright, wherever Apply lands (verdict, then a two-second countdown into `/capture` for `ok` and `caution`) |
+| `capture/content.js` | Text extraction, banner, persistent badge, posts to the server, and Add/Open routing to the matching review job. Runs on `jobright.ai/jobs/info/*` (verdict only) and, via `background.js`, in any tab opened from or navigated away from Jobright, wherever Apply lands (verdict, then a three-second countdown into `/capture` for `ok` and `caution`, with auto-approve and "Use Opus" decided inside it) |
 | `applications/<job>/screen.json` | The verdict the pipeline archived |
 | `review/index.html` | Flags shown above the tailoring verdict; the profile state in the header |
 | `server/settings.py` | `data/settings.json`, read by the server and the scripts it launched. `use_profile` is pinned on by the page; the models fall back to the resume on their own |
@@ -1142,6 +1142,19 @@ nothing happens". Six findings, each a cycle.
   checkpoint 1. Travels with `/capture`; on Jobright's posting page it
   goes ahead by `jr_id` (`POST /prefs`, in memory, used once) because
   the employer tab does the queueing.
+- **Per-job model ("Use Opus").** A green button on the same banner,
+  armed during the countdown, which does not cancel it: the job is
+  queued as it would have been, with `Job.tailor_model` set to
+  `llm.premium_model()`. The pipeline hands that name to `tailor.tailor`
+  and `cover.write`, so the two documents a human reads are written with
+  it and nothing else changes model. The resolved name is stored rather
+  than a flag, so a folder still says what it was written with after the
+  setting moves. It travels the same two ways auto-approve does
+  (`/capture`, or `jr_id` through `POST /prefs`), and the review page's
+  thread offers it after the fact ("Re-tailor with Opus"), which marks
+  the row so the job stays an Opus job. That button needs no instruction;
+  the other two in the thread are disabled until something is typed,
+  because an empty box used to swallow the click.
 - **The documents in code.** `forms.run_documents` on the reused tab
   once Jobright is done: remove the file on the resume slot (Greenhouse
   drops the input once a file is on it and shows "Remove file"; the

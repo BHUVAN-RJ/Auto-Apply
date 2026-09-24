@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from archive import store
+from tailor import llm
 
 from . import postings, queue, runner, seen, settings, watch
 from .models import Job, Status
@@ -53,6 +54,9 @@ class CaptureRequest(BaseModel):
     # The banner's auto-approve box. None: whatever was set for this posting
     # on Jobright's page (`/prefs`), else the global switch.
     auto_fill: Optional[bool] = None
+    # The banner's "Use Opus" button. None: whatever was pressed for this
+    # posting on Jobright's page (`/prefs`), else the cheap default.
+    premium: Optional[bool] = None
 
 
 class PostingRequest(BaseModel):
@@ -135,11 +139,21 @@ def capture(req: CaptureRequest) -> dict:
         return {"id": None, "created": False, "reason": "source_page",
                 "queued": len(queue.pending()), "processing": False}
     auto_fill = req.auto_fill
+    premium = req.premium
+    source_id = postings.source_id(req.url) or ""
     if auto_fill is None:
-        auto_fill = AUTO_FILL_PREFS.pop(postings.source_id(req.url) or "", None)
-    job, created = queue.add(Job(**req.model_dump(exclude={"text", "auto_fill"}), auto_fill=auto_fill))
+        auto_fill = AUTO_FILL_PREFS.pop(source_id, None)
+    if premium is None:
+        premium = PREMIUM_PREFS.pop(source_id, None)
+    # The resolved model name travels on the row, not the flag: the folder
+    # should say what it was written with even if the setting moves later.
+    tailor_model = llm.premium_model() if premium else None
+    job, created = queue.add(Job(**req.model_dump(exclude={"text", "auto_fill", "premium"}),
+                                 auto_fill=auto_fill, tailor_model=tailor_model))
     if not created and auto_fill is not None and job.auto_fill != auto_fill:
         job = queue.update(job.id, auto_fill=auto_fill) or job
+    if not created and premium is not None and job.tailor_model != tailor_model:
+        job = queue.update(job.id, tailor_model=tailor_model) or job
     if req.text.strip():
         postings.save_captured(job.id, postings.Saved(url=req.url, title=req.title,
                                                       text=req.text, company=req.company))
@@ -158,14 +172,23 @@ def capture(req: CaptureRequest) -> dict:
 AUTO_FILL_PREFS: dict[str, bool] = {}
 
 
+PREMIUM_PREFS: dict[str, bool] = {}
+
+
 class PrefRequest(BaseModel):
     jr_id: str
-    auto_fill: bool
+    auto_fill: Optional[bool] = None
+    premium: Optional[bool] = None
 
 
 @app.post("/prefs")
 def prefs(req: PrefRequest) -> dict:
-    AUTO_FILL_PREFS[req.jr_id] = req.auto_fill
+    """What was pressed on Jobright's posting page, for the employer tab its
+    Apply opens: that tab is the one that queues the job."""
+    if req.auto_fill is not None:
+        AUTO_FILL_PREFS[req.jr_id] = req.auto_fill
+    if req.premium is not None:
+        PREMIUM_PREFS[req.jr_id] = req.premium
     return {"ok": True}
 
 

@@ -304,12 +304,38 @@ def test_link_change_reaches_the_documents(interviewed, scan):
     (folder / "tailor.md").write_text("Summary: TTS.\nStack: TS\n")
     interview.Experience(slug="auditex", title="auditex", kind="project", link="https://github.com/me/auditex").save()
     status = github.set_link("auditex", "https://chromewebstore.google.com/detail/auditex")
-    assert next(r for r in status["repos"] if r["name"] == "auditex")["url"].startswith("https://chromewebstore")
+    row = next(r for r in status["repos"] if r["name"] == "auditex")
+    assert row["link"].startswith("https://chromewebstore")
+    assert row["url"] == "https://github.com/me/auditex" and row["url"] in row["links"]
     assert "Link: https://chromewebstore.google.com/detail/auditex" in (folder / "main.md").read_text()
     assert (folder / "tailor.md").read_text().startswith("Summary: TTS.\nLink: https://chromewebstore")
     assert interview.Experience.load("auditex").link.startswith("https://chromewebstore")
     with pytest.raises(github.GitHubError):
         github.set_link("auditex", "chromewebstore.google.com")
+
+
+def test_a_project_carries_several_links_and_one_is_chosen(interviewed, scan):
+    github.start_scan("me")
+    github.confirm()
+    interview.Experience(slug="auditex", title="auditex", kind="project",
+                         link="https://github.com/me/auditex").save()
+    store = "https://chromewebstore.google.com/detail/auditex"
+    site = "https://auditex.app"
+    github.add_link("auditex", store)
+    status = github.add_link("auditex", site)
+    row = next(r for r in status["repos"] if r["name"] == "auditex")
+    assert row["links"] == ["https://github.com/me/auditex", store, site]
+    assert row["link"] == "https://github.com/me/auditex"  # adding never changes the choice
+    github.set_link("auditex", store)
+    assert interview.Experience.load("auditex").link == store
+    assert interview.Experience.load("auditex").all_links() == row["links"]
+    status = github.remove_link("auditex", store)
+    row = next(r for r in status["repos"] if r["name"] == "auditex")
+    assert row["links"] == ["https://github.com/me/auditex", site]
+    assert row["link"] == "https://github.com/me/auditex"  # the choice falls back to the repository
+    assert interview.Experience.load("auditex").link == "https://github.com/me/auditex"
+    with pytest.raises(github.GitHubError):
+        github.remove_link("auditex", "https://github.com/me/auditex")
 
 
 def test_confirm_needs_the_interview_started(scan):
@@ -337,5 +363,7 @@ def test_projects_over_http(interviewed, scan, monkeypatch):
     assert client.get("/projects/nope/scaffold").status_code == 404
     assert client.post("/projects/auditex/pick", json={"picked": True}).json()["repos"][1]["picked"] is True
     assert client.post("/projects/auditex/link", json={"link": "nope"}).status_code == 422
+    assert client.post("/projects/auditex/link", json={"link": "https://auditex.app", "action": "add"}).status_code == 200
+    assert client.post("/projects/auditex/link", json={"link": "https://auditex.app", "action": "nope"}).status_code == 422
     assert client.post("/projects/confirm", json={}).json()["phase"] == "confirmed"
     assert client.post("/projects/hydra/pick", json={"picked": False}).status_code == 409

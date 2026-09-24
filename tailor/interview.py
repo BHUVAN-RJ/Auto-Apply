@@ -104,6 +104,9 @@ class Experience:
     # what the resume hyperlinks. Empty on experiences from the resume.
     github: dict = field(default_factory=dict)
     link: str = ""
+    # Every address the project lives at (repository, store listing, live
+    # site); `link` is the one the resume hyperlinks.
+    links: list[str] = field(default_factory=list)
     questions: list[str] = field(default_factory=list)
 
     def lines(self, experienced: bool) -> list[str]:
@@ -128,6 +131,12 @@ class Experience:
         # From GitHub: the listed questions and nothing more; the scaffold
         # already holds what an interview would otherwise ask for.
         return len(self.questions) if self.questions else MAX_QUESTIONS
+
+    def all_links(self) -> list[str]:
+        out = [url for url in self.links if url]
+        if self.link and self.link not in out:
+            out.insert(0, self.link)
+        return out
 
     def scaffold(self) -> str:
         path = stories_dir() / self.slug / "scaffold.md"
@@ -154,7 +163,8 @@ class Experience:
             "covered": sum(1 for i in lines if self.coverage.get(i) == "covered"),
             "total": len(lines), "asked": self.asked, "closed": self.closed,
             "children": self.children, "children_error": self.children_error,
-            "link": self.link, "github": self.github.get("full_name", ""),
+            "link": self.link, "links": self.all_links(),
+            "github": self.github.get("full_name", ""),
             "documents": [name for name in ("main.md", "tailor.md", "star.md", "scaffold.md")
                           if (stories_dir() / self.slug / name).exists()],
         }
@@ -205,7 +215,8 @@ def status() -> dict:
             experiences.append({"slug": entry["slug"], "title": entry["title"], "kind": entry["kind"],
                                 "covered": 0, "total": 0, "asked": 0, "closed": False,
                                 "children": "none", "children_error": "",
-                                "link": entry.get("link", ""), "github": (entry.get("github") or {}).get("full_name", ""),
+                                "link": entry.get("link", ""), "links": entry.get("links") or [],
+                                "github": (entry.get("github") or {}).get("full_name", ""),
                                 "documents": []})
     transcript = list(state.transcript)
     facts = facts_module.Facts.load()
@@ -789,6 +800,7 @@ def _next_experience(state: State) -> Iterator[dict]:
         experience = Experience(slug=slug, title=entry["title"], kind=entry["kind"],
                                 resume_entry=entry.get("resume_entry", ""),
                                 github=entry.get("github") or {}, link=entry.get("link", ""),
+                                links=list(entry.get("links") or []),
                                 questions=list(entry.get("questions") or []))
         experience.save()
     state.current = slug
@@ -983,6 +995,36 @@ def write_main(experience: Experience, experienced: bool) -> str:
     return text
 
 
+SCAFFOLD_STACK = re.compile(r"^Stack:\s*(.+)$", re.M)
+EMPTY_STACK = re.compile(r"^Stack:\s*(not discussed|unknown|n/?a|none)?\s*$", re.I | re.M)
+
+
+def with_stack_line(text: str, experience: Experience) -> str:
+    """`Stack:` from the repository when the conversation never named one.
+
+    A story's stack is what the tailor matches a posting's languages and
+    frameworks against, and an interview about *what you built* rarely
+    lists it: two of the first real stories said "Stack: not discussed"
+    while their scaffolds, read straight off the repo's manifests, had
+    the whole list. The scaffold wins an empty line; it never overwrites
+    what the candidate said.
+    """
+    scaffold = experience.scaffold()
+    if not scaffold:
+        return text
+    found = SCAFFOLD_STACK.search(scaffold)
+    if not found or not found.group(1).strip():
+        return text
+    stack = found.group(1).strip()
+    if EMPTY_STACK.search(text):
+        return EMPTY_STACK.sub(f"Stack: {stack}", text, count=1)
+    if not re.search(r"^Stack:", text, re.M):
+        anchor = re.search(r"^(Link:.*|Summary:.*)$", text, re.M)
+        if anchor:
+            return text[:anchor.end()] + f"\nStack: {stack}" + text[anchor.end():]
+    return text
+
+
 def with_link_lines(text: str, experience: Experience) -> str:
     """`GitHub:` and `Link:` lines under the Kind line, from the state,
     never from the model: the link is what the resume hyperlinks."""
@@ -1025,6 +1067,8 @@ def set_link(slug: str, link: str) -> None:
     state.save()
     experience = Experience.load(slug)
     experience.link = link
+    if link and link not in experience.links:
+        experience.links.append(link)
     experience.save()
     for name in ("main.md", "tailor.md"):
         path = stories_dir() / slug / name
@@ -1038,6 +1082,22 @@ def set_link(slug: str, link: str) -> None:
         else:
             text = re.sub(r"^(Summary:.*)$", rf"\1\nLink: {link}", text, count=1, flags=re.M)
         _write_atomic(path, text)
+
+
+def set_links(slug: str, links: list[str], link: str) -> None:
+    """Every address the project has, and which one the resume links."""
+    state = State.load()
+    for entry in state.experiences:
+        if entry["slug"] == slug:
+            entry["links"] = list(links)
+    state.save()
+    try:
+        experience = Experience.load(slug)
+    except InterviewError:
+        return
+    experience.links = list(links)
+    experience.save()
+    set_link(slug, link)
 
 
 def add_github_projects(repos) -> dict[str, str]:
@@ -1061,11 +1121,13 @@ def add_github_projects(repos) -> dict[str, str]:
             slug = match["slug"]
             if f"({repo.name})" not in match["title"]:
                 match["title"] = f"{match['title']} ({repo.name})"
-            match["github"], match["link"] = info, repo.url
+            match["github"], match["link"] = info, repo.chosen()
+            match["links"] = repo.all_links()
             _write_atomic(stories_dir() / slug / "scaffold.md", scaffold_text)
             try:
                 experience = Experience.load(slug)
-                experience.title, experience.github, experience.link = match["title"], info, repo.url
+                experience.title, experience.github = match["title"], info
+                experience.link, experience.links = repo.chosen(), repo.all_links()
                 experience.save()
                 if experience.closed:
                     # Interviewed already: the scaffold is new information.
@@ -1076,7 +1138,8 @@ def add_github_projects(repos) -> dict[str, str]:
             continue
         entry = _with_slugs([{"title": repo.name, "kind": "project", "resume_entry": ""}],
                             {e["slug"] for e in state.experiences})[0]
-        entry.update({"github": info, "link": repo.url, "questions": list(repo.questions)})
+        entry.update({"github": info, "link": repo.chosen(), "links": repo.all_links(),
+                      "questions": list(repo.questions)})
         state.experiences.append(entry)
         _write_atomic(stories_dir() / entry["slug"] / "scaffold.md", scaffold_text)
         added[repo.name] = entry["slug"]
@@ -1141,7 +1204,10 @@ def generate_children(slug: str) -> None:
         for name, section in (("tailor.md", "Tailor document"), ("star.md", "Star document")):
             text = llm.complete(_story_rules(section), f"## Main document\n\n{document_text}",
                                 model=llm.tailor_model(), temperature=0.2, max_tokens=8000)
-            _write_atomic(stories_dir() / slug / name, _unfenced(text) + "\n")
+            body = _unfenced(text)
+            if name == "tailor.md":
+                body = with_stack_line(body, experience)
+            _write_atomic(stories_dir() / slug / name, body + "\n")
         rebuild_index()
         experience = Experience.load(slug)
         experience.children = "ready"

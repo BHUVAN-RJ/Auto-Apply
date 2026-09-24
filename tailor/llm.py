@@ -45,6 +45,19 @@ def tailor_model() -> str:
     return os.environ.get("OPENROUTER_TAILOR_MODEL", DEFAULT_MODEL)
 
 
+# The model a job is tailored with when the banner's "Use Opus" was pressed.
+# Measured on one posting (Abridge, 2026-09-24): the default rewrote one
+# experience bullet, this one rewrote five, and the cheap field in between
+# either matched the default or hit the same volume by inventing framing.
+# It costs about eight times as much per job, which is why it is a button
+# and not the default.
+DEFAULT_PREMIUM_MODEL = "anthropic/claude-opus-5.5"
+
+
+def premium_model() -> str:
+    return os.environ.get("OPENROUTER_PREMIUM_MODEL", DEFAULT_PREMIUM_MODEL)
+
+
 # Some providers refuse a request with reasoning disabled (Z.AI's GLM
 # endpoints answer 400 "Reasoning is mandatory"). A lookup-style call asks
 # for the least thinking the model allows rather than none.

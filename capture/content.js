@@ -51,7 +51,9 @@ const CHECKS = "years of experience, visa and sponsorship, export control, clear
 // An ok or caution verdict queues the job on its own after this long; the
 // bar across the button is the countdown, and a click on it cancels. A
 // reject never queues itself: the button waits for the person.
-const AUTO_ADD_MS = 2000;
+// 3s, not 2 (2026-09-24): the "Use Opus" button lives inside this window,
+// and two seconds was not enough to read the verdict and press it.
+const AUTO_ADD_MS = 3000;
 const AUTO_ADD = new Set(["ok", "caution"]);
 // Once the job is queued the bar has done its work and closes itself after
 // this long, counted down in red across the ✕. Not before: on Jobright's
@@ -70,6 +72,12 @@ const QUEUED_WAIT_MS = 90000;
 // would run the pipeline twice for one job. There the button (and the
 // countdown) presses Apply instead, and the employer's page queues itself.
 const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
+
+// "Use Opus": tailor this one job with the expensive model. Armed by the
+// button during the countdown and read when the job is queued, so pressing
+// it does not cut the countdown short — the job goes in as it would have,
+// with the model changed. Per tab, per job; the default is the cheap model.
+let usePremium = false;
 
 // A posting already in autopilot (`seen` on the screen reply) is never
 // auto-added again; the bar says where it stands and the button opens it
@@ -315,6 +323,10 @@ function render(result, { pending = false } = {}) {
       button.add .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: ${c.tone}; }
       button.add span { position: relative; z-index: 1; }
       button.add.done { background: #000; color: ${c.tone}; border-color: ${c.tone}; cursor: default; }
+      button.opus { background: #000; color: #3ddc84; border-color: #3ddc84; padding: 8px 16px; font-size: 13px; }
+      button.opus:hover { background: #3ddc84; color: #000; }
+      button.opus[aria-pressed="true"] { background: #3ddc84; color: #000; }
+      button.opus[aria-pressed="true"]:hover { background: #000; color: #3ddc84; }
       button.close { position: relative; overflow: hidden; }
       button.close .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #ff5c5c; }
       button.close span { position: relative; z-index: 1; }
@@ -373,6 +385,7 @@ function render(result, { pending = false } = {}) {
           ${seen ? `<button class="open" data-act="open"><span>Open in autopilot</span></button>` : ""}
           ${canRetry ? `<button data-act="again">Again</button>` : ""}
           ${canAdd ? `<label class="approve" title="Checked: once the resume is tailored the fill starts by itself. Unchecked: it waits for your approval on the review page."><input type="checkbox" checked> auto-approve</label>` : ""}
+          ${canAdd ? `<button class="opus" data-act="opus" aria-pressed="${usePremium}" title="Tailor this job's resume and cover letter with the expensive model. About eight times the cost of a normal job, and it rewrites far more of the resume. The countdown keeps running.">${usePremium ? "Opus on" : "Use Opus"}</button>` : ""}
           ${canAdd ? `<button class="add" data-act="add"><i class="fill"></i><span>${seen ? "Add anyway" : onJobright ? "Open job page" : "Add to autopilot"}</span></button>` : ""}
           <button class="close" data-act="close" aria-label="Minimize Job Autopilot"><i class="fill"></i><span>−</span></button>
         </div>
@@ -495,7 +508,7 @@ function render(result, { pending = false } = {}) {
       }
     } else {
       label("Adding…");
-      result = await addToQueue(autoFill());
+      result = await addToQueue(autoFill(), usePremium);
       label(result.label);
       queuedId = result.id;
       // The pipeline is now tailoring; keep the core purple until the
@@ -552,6 +565,19 @@ function render(result, { pending = false } = {}) {
     if (action === "again") screen({ force: true });
     if (action === "open" && seen) openReview(seen.id);
     if (action === "remember") { e.stopPropagation(); rememberPicked(); }
+    if (action === "opus") {
+      // Armed, not pressed: the countdown is deliberately left running, so
+      // one click is the whole decision and the job still adds itself.
+      e.stopPropagation();
+      usePremium = !usePremium;
+      const button = shadow.querySelector("button.opus");
+      button.setAttribute("aria-pressed", String(usePremium));
+      button.textContent = usePremium ? "Opus on" : "Use Opus";
+      // On Jobright's own page the employer tab its Apply opens is what
+      // queues the job, so the choice goes ahead by posting id, the same
+      // way auto-approve does.
+      if (onJobright && postingId()) post("/prefs", { jr_id: postingId(), premium: usePremium }).catch(() => {});
+    }
     if (action === "add" && !add.disabled) {
       if (timer) cancel();
       else act();
@@ -766,13 +792,14 @@ async function waitQueued() {
   return null;
 }
 
-async function addToQueue(autoFill = null) {
+async function addToQueue(autoFill = null, premium = false) {
   try {
     const res = await post("/capture", {
       url: location.href,
       title: document.title,
       source: location.hostname,
       auto_fill: autoFill,
+      premium,
       // The rendered text, for when the fetch sees a client-side shell or
       // an Apply that landed straight on the form.
       text: pageText(),

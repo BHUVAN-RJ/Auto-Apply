@@ -64,16 +64,21 @@ flag.
 - hard: an internship or co-op that requires enrolment after the
   applicant's graduation; a start date the applicant cannot meet; a
   contract length the Facts rule out.
-- soft: a new-grad cohort one year off the applicant's graduation (a "2027"
-  programme for a 2026 graduate); a student or part-time contract that may
-  still fit; "flexible start" when the start date is unknown.
+- soft: a new-grad cohort that finishes before the applicant graduates (a
+  "2026" programme for a 2027 graduate); a student or part-time contract that
+  may still fit; "flexible start" when the start date is unknown.
 - never: a graduation window the applicant's most recent degree falls in
   ("2026 or 2027" for a 2026 graduate, "within the past 12 months" for a
   degree finished this year); an "earned or expected by" or other latest-date
   cutoff when the applicant graduates on or before it (December 2026 meets
-  "by Summer 2027"); a cohort year in the title alone when the body sets no
-  window. Earlier than a latest-date cutoff is a match, not a caution. Judge
-  graduation by the most recent degree, not the first.
+  "by Summer 2027"); a cohort window the applicant graduates *before*
+  (December 2026 meets a "spring/summer of 2027 graduates" programme); a
+  cohort year in the title alone when the body sets no window. Graduating
+  earlier than a cutoff or a cohort window is a match, not a caution: an
+  earlier graduate is available for everything a later one is. The one
+  exception is a posting that needs a graduation no earlier than a date, or
+  the applicant still enrolled (an internship or co-op); that is hard.
+  Judge graduation by the most recent degree, not the first.
 
 ### `experience`
 

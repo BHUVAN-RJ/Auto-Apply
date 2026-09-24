@@ -13,6 +13,7 @@ import datetime as dt
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from . import llm
 from .fetch import Posting
@@ -113,11 +114,15 @@ def strip_dashes(text: str) -> str:
     return re.sub(r", (?=\n|$)", "", out)                # no dangling comma at a line end
 
 
-def write(posting: Posting, resume_tex: str, profile: str = "", extra_instruction: str = "") -> CoverLetter:
-    """Ask for the letter, again while it breaks a rule that is checkable."""
+def write(posting: Posting, resume_tex: str, profile: str = "", extra_instruction: str = "",
+          model: Optional[str] = None) -> CoverLetter:
+    """Ask for the letter, again while it breaks a rule that is checkable.
+
+    The letter follows the resume's model: a job tailored with Opus gets its
+    letter from Opus too, so the two documents a human reads sound alike."""
     system = system_prompt()
     user = _user_message(posting, resume_tex, profile, extra_instruction)
-    model = llm.tailor_model()
+    model = model or llm.tailor_model()
     last, last_problems = "", []
     for attempt in range(1, ATTEMPTS + 1):
         reply = clean(llm.complete(system, user, model=model, temperature=0.5, max_tokens=4000))

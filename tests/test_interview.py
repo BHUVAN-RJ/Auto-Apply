@@ -524,3 +524,28 @@ def test_the_opening_speaks_the_greeting_and_the_question_not_the_lists(monkeypa
     assert "will target" in texts["note"] and "will target" not in texts["ask"]
     assert texts["ask"].startswith("Is anything missing")
     assert state.transcript[0]["content"] == "".join(texts[p] for p in ("ack", "note", "ask"))
+
+
+def test_the_repository_fills_in_a_stack_the_interview_never_asked_for(tmp_path, monkeypatch):
+    """An interview about what you built rarely names the stack, and the
+    tailor matches a posting's languages against exactly that line. The
+    scaffold, read off the repo's manifests, fills an empty one — and
+    never overwrites what the candidate said."""
+    monkeypatch.setattr(profile, "STORIES", tmp_path)
+    folder = tmp_path / "auto-apply"
+    folder.mkdir()
+    (folder / "scaffold.md").write_text(
+        "# Auto-Apply\n\nGitHub: me/Auto-Apply\nLink: https://github.com/me/Auto-Apply\n\n"
+        "Summary: Applies to jobs.\nStack: Python, FastAPI, pytest\n")
+    experience = interview.Experience(slug="auto-apply", title="Auto-Apply", kind="project")
+    experience.save()
+
+    empty = "Summary: Applies to jobs.\nLink: https://github.com/me/Auto-Apply\nStack: not discussed\n"
+    assert "Stack: Python, FastAPI, pytest" in interview.with_stack_line(empty, experience)
+
+    missing = "Summary: Applies to jobs.\nLink: https://github.com/me/Auto-Apply\n"
+    filled = interview.with_stack_line(missing, experience)
+    assert "Stack: Python, FastAPI, pytest" in filled and filled.count("Stack:") == 1
+
+    spoken = "Summary: Applies to jobs.\nStack: Python and a lot of LaTeX\n"
+    assert interview.with_stack_line(spoken, experience) == spoken

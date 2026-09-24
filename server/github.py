@@ -26,6 +26,7 @@ class PickRequest(BaseModel):
 
 class LinkRequest(BaseModel):
     link: str
+    action: str = "choose"  # choose | add | remove
 
 
 @router.get("")
@@ -59,9 +60,13 @@ def pick(name: str, req: PickRequest) -> dict:
 
 @router.post("/{name}/link")
 def link(name: str, req: LinkRequest) -> dict:
-    """The URL the resume hyperlinks for this project."""
+    """The addresses this project lives at: `choose` is the one the resume
+    hyperlinks, `add` another address, `remove` drops one."""
+    actions = {"choose": github.set_link, "add": github.add_link, "remove": github.remove_link}
+    if req.action not in actions:
+        raise HTTPException(422, f"no such action {req.action!r}")
     try:
-        return github.set_link(name, req.link)
+        return actions[req.action](name, req.link)
     except (github.GitHubError, interview.InterviewError) as exc:
         raise HTTPException(422, str(exc))
 

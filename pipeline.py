@@ -71,13 +71,18 @@ def make_page_check(base_tex: Path):
     return check
 
 
-def retailor(job: Job, instruction: str) -> Path:
+def retailor(job: Job, instruction: str, keep_status: bool = False) -> Path:
     """Run the job again with a reviewer instruction added to the prompt.
 
     Produces a new application folder rather than editing the existing one,
     so the rejected version stays on disk next to the reason it was rejected.
+
+    `keep_status` is the re-tailor of a job that is already filled or
+    submitted: the documents are written and the row points at them, but
+    the job does not walk back to checkpoint 1 and no fill is started.
+    The new resume is there to be dragged onto a form by hand.
     """
-    return process(job, extra_instruction=instruction)
+    return process(job, extra_instruction=instruction, keep_status=keep_status)
 
 
 def fetch_posting(job: Job) -> fetch.Posting:
@@ -134,11 +139,20 @@ def allocate(job: Job) -> Path:
     return app_dir
 
 
-def process(job: Job, extra_instruction: str = "") -> Path:
-    """Fetch, tailor, compile, archive. Returns the application folder."""
+def process(job: Job, extra_instruction: str = "", keep_status: bool = False) -> Path:
+    """Fetch, tailor, compile, archive. Returns the application folder.
+
+    `keep_status` leaves the queue row's status alone (see `retailor`): the
+    folder is written and the row points at it, but a filled or submitted
+    job stays filled or submitted and nothing is approved or launched.
+    """
     # A fresh run clears the last one's error; otherwise a retry that
     # succeeds still shows "Failed" over a perfectly good resume.
-    queue.update(job.id, status=Status.TAILORING, error=None)
+    held = (queue.get(job.id) or job).status if keep_status else None
+    if keep_status:
+        queue.update(job.id, error=None)
+    else:
+        queue.update(job.id, status=Status.TAILORING, error=None)
 
     # Fetch before the folder is allocated: its name carries the company, and
     # the extension often captures none (a Jobright link that lands on Ashby
@@ -175,6 +189,7 @@ def process(job: Job, extra_instruction: str = "") -> Path:
             target_pages=target,
             extra_instruction=extra_instruction,
             profile=tailor.load_profile(stories=stories),
+            model=job.tailor_model,
         )
     except tailor.Mismatch as exc:
         # A poor-fit verdict is advice, not a decision. The job still stops at
@@ -186,8 +201,9 @@ def process(job: Job, extra_instruction: str = "") -> Path:
             "Nothing was tailored. Reject it if you agree, or re-tailor with a "
             "note if you think the model is wrong.\n",
         )
-        store.set_status(app_dir, Status.AWAITING_REVIEW, f"poor fit: {exc}")
-        queue.update(job.id, status=Status.AWAITING_REVIEW)
+        store.set_status(app_dir, held or Status.AWAITING_REVIEW, f"poor fit: {exc}")
+        if not keep_status:
+            queue.update(job.id, status=Status.AWAITING_REVIEW)
         print(f"  flagged as a poor fit, waiting on you: {exc}")
         tell_tab(job, "done", "Poor fit, says the model; decide on the review page")
         return app_dir
@@ -205,6 +221,15 @@ def process(job: Job, extra_instruction: str = "") -> Path:
             if result.warnings
             else ""
         )
+        # What the checker sent back, so a resume that came back barely
+        # changed can be read as "the model kept hitting a rule" rather
+        # than "the model had nothing to say".
+        + (
+            "**Attempts rejected before this one:**\n"
+            + "\n".join(f"- {line}" for line in result.rejections) + "\n\n"
+            if result.rejections
+            else ""
+        )
         + f"{result.suggestions}\n",
     )
 
@@ -215,9 +240,15 @@ def process(job: Job, extra_instruction: str = "") -> Path:
     if pages is not None and pages != target:
         note += f" — master is {target}; the page-count gate did not hold"
 
-    note += "; " + write_cover_letter(app_dir, posting, result.tex, extra_instruction, stories)
+    note += "; " + write_cover_letter(app_dir, posting, result.tex, extra_instruction, stories,
+                                      model=job.tailor_model)
 
-    store.set_status(app_dir, Status.AWAITING_REVIEW, note)
+    store.set_status(app_dir, held or Status.AWAITING_REVIEW, note)
+    if keep_status:
+        # Documents only: the job keeps the standing it had, and the fill
+        # is not touched. The new resume is for the human to hand over.
+        print(f"  re-tailored, status left at {held.value if held else 'unchanged'}: {app_dir}")
+        return app_dir
     queue.update(job.id, status=Status.AWAITING_REVIEW)
     if not auto_approve(app_dir, job):
         tell_tab(job, "done", "Tailored; approve it on the review page")
@@ -311,7 +342,7 @@ def pick_stories(app_dir: Path, posting) -> list[str]:
 
 
 def write_cover_letter(app_dir: Path, posting, resume_tex: str, extra_instruction: str = "",
-                       stories: Optional[list[str]] = None) -> str:
+                       stories: Optional[list[str]] = None, model: Optional[str] = None) -> str:
     """Write the letter next to the resume. Returns a one-line note for the status.
 
     Deliberately not fatal: the resume it sits beside cost several model
@@ -321,7 +352,8 @@ def write_cover_letter(app_dir: Path, posting, resume_tex: str, extra_instructio
     not.
     """
     try:
-        letter = cover.write(posting, resume_tex, tailor.load_profile(stories=stories), extra_instruction)
+        letter = cover.write(posting, resume_tex, tailor.load_profile(stories=stories),
+                             extra_instruction, model=model)
         store.write(app_dir, "cover_letter.md", letter.text + "\n")
         store.write(app_dir, "cover_letter.tex", cover.to_tex(letter.text))
         texc.compile_pdf(app_dir / "cover_letter.tex", app_dir / "cover_letter.pdf")

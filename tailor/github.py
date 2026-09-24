@@ -132,6 +132,22 @@ class Repo:
     slug: str = ""          # the experience it became, once confirmed
     questions: list[str] = field(default_factory=list)
     summary: str = ""       # one line from the scaffold, for the list
+    # A project can live at more than one address: the repository, a store
+    # listing, a deployed site. `links` holds them all (the repository is
+    # always the first), `link` is the one the resume hyperlinks. Empty
+    # `link` = the repository.
+    links: list[str] = field(default_factory=list)
+    link: str = ""
+
+    def all_links(self) -> list[str]:
+        out = [self.url] if self.url else []
+        for url in self.links:
+            if url and url not in out:
+                out.append(url)
+        return out
+
+    def chosen(self) -> str:
+        return self.link if self.link in self.all_links() else self.url
 
 
 @dataclass
@@ -157,7 +173,7 @@ class Scan:
     def repo(self, name: str) -> Repo:
         for entry in self.repos:
             if entry["name"] == name:
-                return Repo(**{k: v for k, v in entry.items() if k in Repo.__dataclass_fields__})
+                return _repo_of(entry)
         raise GitHubError(f"no repo {name!r} in the scan")
 
     def put(self, repo: Repo) -> None:
@@ -180,6 +196,10 @@ def _update(fn) -> Scan:
         return scan
 
 
+def _repo_of(entry: dict) -> Repo:
+    return Repo(**{k: v for k, v in entry.items() if k in Repo.__dataclass_fields__})
+
+
 def status() -> dict:
     scan = Scan.load()
     repos = sorted(scan.repos, key=lambda r: (r.get("rank") or 10**6, r["name"]))
@@ -189,6 +209,7 @@ def status() -> dict:
                                           "stars", "pushed_at", "commits", "has_readme", "rank",
                                           "state", "error", "picked", "slug", "questions", "summary",
                                           "on_resume")}
+                 | {"links": _repo_of(r).all_links(), "link": _repo_of(r).chosen()}
                   for r in repos],
         "ready": sum(1 for r in repos if r["state"] == "ready"),
         "auto_pick": AUTO_PICK,
@@ -401,7 +422,7 @@ def write_scaffold(repo: Repo, snap: Optional[Snapshot], handle: str) -> tuple[s
     unknowns = data.get("unknowns") or []
     if isinstance(unknowns, str):
         unknowns = [unknowns]
-    lines = [f"# {repo.name}", "", f"GitHub: {repo.full_name}", f"Link: {repo.url}", "",
+    lines = [f"# {repo.name}", "", f"GitHub: {repo.full_name}", f"Link: {repo.chosen()}", "",
              f"Summary: {summary}", f"Stack: {', '.join(str(s) for s in stack) or 'not stated'}",
              f"Dates: {repo.created_at[:10] or 'unknown'} to {repo.pushed_at[:10] or 'unknown'}",
              f"Commits by the candidate: {repo.commits if repo.commits >= 0 else 'not counted'}", "",
@@ -578,23 +599,63 @@ def set_picked(name: str, picked: bool) -> dict:
     return status()
 
 
-def set_link(name: str, link: str) -> dict:
-    """The URL the resume hyperlinks for this project: the repo by default,
-    a store listing or a live site when the candidate says so. Written to
-    the scan, and through to the experience's documents when one exists."""
+def _valid_link(link: str) -> str:
     link = link.strip()
     if not re.match(r"https?://", link):
         raise GitHubError("a link starts with http:// or https://")
+    return link
+
+
+def set_link(name: str, link: str) -> dict:
+    """The URL the resume hyperlinks for this project: the repository by
+    default, a store listing or a live site when the candidate says so.
+    A link the project does not have yet is added to its list. Written to
+    the scan, and through to the experience's documents when one exists."""
+    link = _valid_link(link)
 
     def apply(scan: Scan) -> None:
         repo = scan.repo(name)
-        repo.url = link
+        if link not in repo.all_links():
+            repo.links.append(link)
+        repo.link = link
         scan.put(repo)
-    scan = _update(apply)
+    return _push_links(_update(apply), name)
+
+
+def add_link(name: str, link: str) -> dict:
+    """Another address for the same project, without changing the choice."""
+    link = _valid_link(link)
+
+    def apply(scan: Scan) -> None:
+        repo = scan.repo(name)
+        if link not in repo.all_links():
+            repo.links.append(link)
+            scan.put(repo)
+    return _push_links(_update(apply), name)
+
+
+def remove_link(name: str, link: str) -> dict:
+    """Drop one address. The repository's own URL stays; the choice falls
+    back to it when the chosen address is the one removed."""
+    link = link.strip()
+
+    def apply(scan: Scan) -> None:
+        repo = scan.repo(name)
+        if link == repo.url:
+            raise GitHubError("the repository's own link stays")
+        repo.links = [u for u in repo.links if u != link]
+        if repo.link == link:
+            repo.link = ""
+        scan.put(repo)
+    return _push_links(_update(apply), name)
+
+
+def _push_links(scan: Scan, name: str) -> dict:
+    """The experience carries the same list and the same choice."""
     repo = scan.repo(name)
     if repo.slug:
         from . import interview
-        interview.set_link(repo.slug, link)
+        interview.set_links(repo.slug, repo.all_links(), repo.chosen())
     return status()
 
 

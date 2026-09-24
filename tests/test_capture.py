@@ -139,3 +139,42 @@ def test_a_choice_made_on_jobrights_page_reaches_the_employer_tabs_capture(launc
     assert queue.get(body["id"]).auto_fill is False
     from server import app as app_module
     assert "6aad1234" not in app_module.AUTO_FILL_PREFS, "used once; a later capture is not bound by it"
+
+
+def test_use_opus_marks_the_job_with_the_expensive_model(launched, monkeypatch):
+    """The button is armed during the countdown and read when the job is
+    queued. The row carries the resolved model name, not a flag, so the
+    folder says what it was written with even if the setting moves."""
+    from tailor import llm
+
+    monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "expensive/model")
+    client = TestClient(app)
+    body = client.post("/capture", json={"url": "https://example.com/jobs/9", "premium": True}).json()
+    assert queue.get(body["id"]).tailor_model == "expensive/model"
+    # Not pressed: nothing on the row, so the cheap default tailors it.
+    body = client.post("/capture", json={"url": "https://example.com/jobs/10"}).json()
+    assert queue.get(body["id"]).tailor_model is None
+    assert llm.premium_model() == "expensive/model"
+
+
+def test_use_opus_pressed_on_jobrights_page_reaches_the_employer_tabs_capture(launched, monkeypatch):
+    """Jobright's Apply opens the employer tab, and that tab is what queues
+    the job, so the choice travels by posting id like auto-approve does."""
+    monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "expensive/model")
+    client = TestClient(app)
+    assert client.post("/prefs", json={"jr_id": "6aad9999", "premium": True}).json() == {"ok": True}
+    body = client.post("/capture", json={"url": "https://boards.example.com/apply?jr_id=6aad9999"}).json()
+    assert queue.get(body["id"]).tailor_model == "expensive/model"
+    from server import app as app_module
+    assert "6aad9999" not in app_module.PREMIUM_PREFS, "used once; a later capture is not bound by it"
+
+
+def test_the_countdown_leaves_room_to_press_use_opus():
+    """Both the button and the three seconds are in the banner; two seconds
+    was not enough to read the verdict and decide."""
+    content = (runner.ROOT / "capture" / "content.js").read_text()
+    assert "const AUTO_ADD_MS = 3000;" in content
+    assert 'data-act="opus"' in content
+    # Armed, not pressed: the countdown is not cancelled by the choice.
+    assert "usePremium = !usePremium;" in content
+    assert "addToQueue(autoFill(), usePremium)" in content

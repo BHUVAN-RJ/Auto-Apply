@@ -65,6 +65,10 @@ class Context:
     profile: str = ""
     cover_letter: str = ""
     applicant: str = ""
+    # What the review page's thread about this job already said. Context,
+    # never the question: a visa word said earlier must not make the next
+    # question look protected.
+    thread: str = ""
 
     @classmethod
     def from_app_dir(cls, app_dir: Optional[Path], profile: str = "", applicant: str = "") -> "Context":
@@ -92,6 +96,8 @@ class Context:
             sections.append(f"## The tailored resume, as LaTeX\n\n```tex\n{self.resume_tex}\n```")
         if self.cover_letter:
             sections.append(f"## The cover letter already written for this posting\n\n{self.cover_letter}")
+        if self.thread:
+            sections.append("## Earlier in this conversation, for context\n\n" + self.thread)
         return "\n\n".join(sections)
 
 

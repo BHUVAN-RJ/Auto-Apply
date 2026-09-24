@@ -44,11 +44,26 @@ Specifically:
   poor fit or a `reject` screen still waits. The human's decision is
   checkpoint 2, the filled form; the fill never submits regardless.
   **Per job:** the banner has an `auto-approve` box next to "Add to
-  autopilot", checked by default; unticked during the 2 s countdown the
+  autopilot", checked by default; unticked during the 3 s countdown the
   job waits at checkpoint 1 (`Job.auto_fill`, sent with `/capture`; on
   Jobright's posting page it goes ahead by `jr_id` through `POST /prefs`,
   in memory, used once, because the employer tab does the queueing).
   `None` on the row = the global switch. Nothing about it presses Submit.
+- **The model is per job, and the button does not rush you** (2026-09-24).
+  `Job.tailor_model` holds a resolved model name; `None` = the cheap
+  default (`OPENROUTER_TAILOR_MODEL`). The banner's green **Use Opus**
+  arms it during the countdown *without* cancelling the countdown, so one
+  click is the whole decision; the countdown is 3 s rather than 2 for
+  exactly that reason. `pipeline.process` hands the name to
+  `tailor.tailor(model=)` and `cover.write(model=)` — the resume and the
+  letter, nothing else: the screen, the story picks and the form answers
+  stay cheap. It travels like auto-approve (`/capture`, else `jr_id`
+  through `POST /prefs`, used once), and the review thread's "Re-tailor
+  with Opus" (`ThreadMessage.premium`) sets the row first, so the job
+  stays an Opus job; pressed with an empty box it sends a fixed "same
+  posting, same profile, same rules" instruction, since asking for the
+  stronger model is a request on its own. `OPENROUTER_PREMIUM_MODEL` in `.env` names it;
+  never hardcode a model at a call site.
 - **The flow, end to end (2026-09-18):** Jobright posting page → banner
   screens → countdown presses Jobright's Apply → employer tab opens →
   banner screens it → `/capture` queues it → the employer tab closes
@@ -143,10 +158,12 @@ Specifically:
 
 | Path | What |
 |---|---|
-| `pipeline.py` | queued job → scrape → tailor → compile → cover letter → archive → checkpoint 1. Started by `/capture` |
+| `pipeline.py` | queued job → scrape → tailor → compile → cover letter → archive → checkpoint 1. Started by `/capture`. `process(..., keep_status=True)` (2026-09-23, through `retailor`) is the re-tailor of a job that is already filled or submitted: new folder, new documents, the queue row pointed at them, the status **left where it was**, no `auto_approve`, no fill. The new resume is there to be handed over by hand |
 | `apply.py` | approved job → named copies of resume/letter → fill form → screenshot → stop (checkpoint 2). Started by approve |
+| `server/thread.py` | **one conversation per job** (2026-09-23), in `data/threads/<job_id>.json`, not in the application folder: a re-tailor writes a *new* folder and the thread is about the job. A turn is a `question` (answered by `tailor/answers.py`, same context as the fill's `answer_question`, the earlier turns added to `Context.thread` — context, never the question, so a visa word said earlier cannot make the next question look protected; still appended to `answers.md`) or a `change` (`pipeline.retailor(..., keep_status=True)` on a worker thread, the turn kept at `running` and polled by the page, one at a time per job). `GET/POST /review/{id}/thread`, and `detail` carries `thread` / `thread_running` |
 | `server/` | FastAPI on 8787: queue, review API, `runner.py` launches the scripts. `/capture` starts `pipeline.py` itself |
-| `tailor/rules.md` | the tailoring prompt, sent verbatim — edit this, not the Python. **Method section** (2026-09-21, after reading the 2026 ATS guides, the XYZ-bullet advice and the grounded-optimisation paper): read the posting into a ranked term list (title/level, required, preferred, responsibilities, repeats; posting's exact spelling), map every term to a resume line or profile story or GAP, spend edits in priority (summary, the two or three bullets proving the top terms with the term front-loaded and result/measure/method order when the pieces are already there, skills order and spelling, entry order), self-check before answering. The rationale starts with an `Asks:` line (top five terms); `REPLY_FORMAT` in `tailor.py` asks for it too. Constraints the checker enforces (sections, lengths, preamble, links, counts) are unchanged. The profile is not filled in yet; the prompt already treats stories as evidence of the same standing as the resume |
+| `tailor/layout.py` | **the line budget** (2026-09-24): how wide a printed line of this resume is, measured off `base/resume.pdf` (pypdf hands back one rendered line at a time; the 90th percentile of the long lines is the wrap width, cached in `data/line_width.json` by the PDF's mtime, `AUTOPILOT_CHARS_PER_LINE` overrides, 105 without a PDF). `visible()` strips macros and does not count a URL; `budget()` = (printed lines, characters that fit, characters used). The tailor's length rule is this, not characters: a bullet may be rewritten with more words or fewer as long as it prints on the same number of lines. **`PROJECTS` is measured as one block** (`BLOCK_SECTIONS`, 2026-09-24): its entries may move lines between themselves — a swapped-in story may deserve a line the entry it replaced did not — but the section comes back the same height; `EXPERIENCE` bullets, the summary and each skills line are still measured one by one, since one that grows pushes everything under it down. Growing rejects the attempt (cheaper than the compile, and the page is what it protects); losing a line is a warning. **Every budget the checker enforces is listed in the prompt** (`tailor.single_items` + `_build_user_message`, 2026-09-24): the bullets were listed and the summary and the skills lines were not, so a DoorDash run spent all four attempts failing on a summary it had never been given a size for, and a run before it on skills line 7. A model that keeps being rejected stops editing, which is what "the resume is barely changed" looked like |
+| `tailor/rules.md` | the tailoring prompt, sent verbatim — edit this, not the Python. **Method section** (2026-09-21, rewritten 2026-09-24): read the posting into a ranked term list (title/level, required, preferred, responsibilities, repeats; posting's exact spelling), map every term to a resume line or profile story or GAP, then rewrite **every mapped bullet** (not two or three) to the X-Y-Z frame — past-tense verb, result before method, a measure or honest scope, the stack named as the posting names it, one idea per bullet, strongest first under each role, never `Responsible for` — plus the summary, skills order and entry order. **The profile is a door, not decoration** (2026-09-24, after the first run on a filled-in profile changed one project and nothing else): an interviewed story may swap a `PROJECTS` entry (as many as the posting justifies, one out one in, `Link:` required), replace a weak bullet **under the same role/employer**, or trade a technology onto a skills category (one in, one out). Counts never change, nothing is invented, and every line still traces to the master resume or a story. **Every kept `PROJECTS` entry is justified** in the rationale (`Kept/<name>: <posting term>`), so a non-swap is a decision rather than inattention, and a rewritten description is asked to be the shorter one — lines freed that way pay for the entry that needed one. The rationale starts with an `Asks:` line (top five terms); `REPLY_FORMAT` in `tailor.py` asks for it too. Constraints the checker enforces: sections, preamble, links, counts, and **lines** (`layout.py`) in place of the old ±10-character window. The rationale now also lists what the checker rejected on earlier attempts (`TailorResult.rejections`), so a resume that came back barely changed can be read as a rule the model kept hitting. |
 | `tailor/cover_rules.md` | the cover letter prompt, same rule |
 | `tailor/cover.py` | letter from the tailored resume; plain pdflatex template; failure is non-fatal |
 | `tailor/answers.py` + `answer_rules.md` | free-form form questions, answered by the tailor model (`OPENROUTER_ANSWER_MODEL` overrides) via the agent's `answer_question` action, and **by the human from the review page** (2026-09-18): `POST /review/{id}/ask` builds the same `Context` the fill would (posting, tailored resume, letter, profile with the picked stories, facts), the "Ask for an answer" card shows the reply with Copy, and `detail.questions` (`answers.open_questions` over `form_state.json` / `form_fill.json`: empty, `?` or > 60 chars, never visa) are one-tap prompts. Everything lands in `answers.md`; the page shows the whole file. Nothing is typed into the form by this path |
@@ -154,9 +171,9 @@ Specifically:
 | `server/screen.py` | `POST /screen`, URL-keyed cache in `data/screens.json`; the pipeline reuses it. **A confirmation page never reaches the model** (2026-09-20): `confirmation_quote` (the `watch.CONFIRMED` phrase, in a short page or near the top of a long one) answers `verdict: submitted` in string work, and when `seen` says the page is a filled job of ours, `review.mark_seen` marks it right there. Employer URLs reuse a cached Jobright verdict; without one, low-quality ATS text is combined with the saved Jobright copy in one model call |
 | `server/settings.py` | `use_profile` in `data/settings.json`; the page pins it on, the header only reports whether a story exists |
 | `tailor/profile.py` | what the models are told about the applicant. `context(slugs)` = profile.md + applicant facts + `base/stories/index.md` + the picked stories' `tailor.md` when the switch is on, profile.md alone otherwise. `pick(posting)` chooses the slugs (one cheap call); the pipeline records them in `stories_used.txt` and the cover letter and answers reuse them. `screen_facts()` falls back to facts derived from the resume, cached in `data/derived_facts.md` |
-| `tailor/interview.py` + `interview_rules.md` | the profile interviewer: state machine on disk under `base/stories/` (`_interview.json`, `<slug>/state.json`), one streamed turn per candidate message, header (`COVERED` / `DONE`, then `---`) parsed in code; the body is labelled by line (`ack:` and `ask:` spoken, `note:` text only; `_Parts` strips labels mid-stream and tags each delta `spoken`), and the page speaks only tagged parts, falling back to first sentence plus questions when a reply has no labels. **The openings written in code are labelled too** (2026-09-21, `_opening_parts`): the greeting is an `ack`, the resume's role and project lists and the target-roles line a `note`, the question after them an `ask`, so the voice never reads the bullets out. Writes `main.md` on close; `story_rules.md` is the prompt for `tailor.md` and `star.md`, written by the heavy model in a thread |
+| `tailor/interview.py` + `interview_rules.md` | the profile interviewer. **`with_stack_line`** (2026-09-24): a story's `Stack:` line is taken from its GitHub scaffold when the conversation never named one — an interview about *what you built* rarely lists the stack, and the tailor matches a posting's languages against exactly that line; two swap candidates read `Stack: not discussed` while their scaffolds, read off the repo's manifests, had the whole list. The scaffold fills an empty line and never overwrites what the candidate said. The rest: state machine on disk under `base/stories/` (`_interview.json`, `<slug>/state.json`), one streamed turn per candidate message, header (`COVERED` / `DONE`, then `---`) parsed in code; the body is labelled by line (`ack:` and `ask:` spoken, `note:` text only; `_Parts` strips labels mid-stream and tags each delta `spoken`), and the page speaks only tagged parts, falling back to first sentence plus questions when a reply has no labels. **The openings written in code are labelled too** (2026-09-21, `_opening_parts`): the greeting is an `ack`, the resume's role and project lists and the target-roles line a `note`, the question after them an `ask`, so the voice never reads the bullets out. Writes `main.md` on close; `story_rules.md` is the prompt for `tailor.md` and `star.md`, written by the heavy model in a thread |
 | `tailor/facts.py` | the facts interview, first thing after Start: eight fixed questions in code (authorisation, clearance, level, location, relocation, start date, graduation, form details). **Answered from `base/form.json` first** (2026-09-21, `from_form`, no model): the preliminary interview already holds authorisation, clearance, location, start date, graduation and the contact links, so those six are written as literal lines and only what the form lacks (level, relocation) is asked; `settled()` is the count the pill shows. Resume-derived facts and contacts offered as hints, each answer normalised to one literal line by the cheap model (`NORMALISE_PROMPT`, one follow-up max, "skip" = unknown), then `base/applicant.md` written. State in `base/stories/_facts.json`. `interview.skip_facts` / `restart_facts` (`/profile/facts/skip`, `/restart`); a redo mid-stories returns to `State.resume_phase`. The header pill shows Facts and Stories separately |
-| `tailor/github.py` + `github_rules.md` | projects from GitHub (2026-09-20): `start_scan(handle)` lists the handle's public repos (forks and empty repos become `issues`), counts the handle's commits (one API call each; none attributed = counted whole and noted, the email is not linked), pulls each tarball off codeload (no git, no token, 40 MB cap), and the cheap model writes `base/stories/_github/<repo>/scaffold.md` plus 1-3 questions the repo cannot answer. `score`/`rank` in code (recency, stars, commits, README); the top `AUTO_PICK` and every repo matching a resume project are ticked. `confirm` → `interview.add_github_projects`: a match on a resume project folds the scaffold into that story ("Resume name (repo-name)", `start_fold` when it is already closed), the rest become experiences whose checklist is the questions (`Experience.questions`, lines `g1..gN`, closed in code after the last answer, no wrap-up); the interview reopens from `open` for them. `set_link` is the URL the resume hyperlinks (repo by default, store listing or site if the candidate says so): `Link:` line in `main.md` and `tailor.md`, rewritten in code. State in `base/stories/_github.json`. `AUTOPILOT_GITHUB_TOKEN` raises the rate limit; `OPENROUTER_GITHUB_MODEL` picks the reader |
+| `tailor/github.py` + `github_rules.md` | projects from GitHub (2026-09-20): `start_scan(handle)` lists the handle's public repos (forks and empty repos become `issues`), counts the handle's commits (one API call each; none attributed = counted whole and noted, the email is not linked), pulls each tarball off codeload (no git, no token, 40 MB cap), and the cheap model writes `base/stories/_github/<repo>/scaffold.md` plus 1-3 questions the repo cannot answer. `score`/`rank` in code (recency, stars, commits, README); the top `AUTO_PICK` and every repo matching a resume project are ticked. `confirm` → `interview.add_github_projects`: a match on a resume project folds the scaffold into that story ("Resume name (repo-name)", `start_fold` when it is already closed), the rest become experiences whose checklist is the questions (`Experience.questions`, lines `g1..gN`, closed in code after the last answer, no wrap-up); the interview reopens from `open` for them. A project carries **several links** (2026-09-22): `Repo.links` (the repository is always first) plus `Repo.link`, the one ticked; `add_link` / `remove_link` / `set_link` on `POST /{name}/link {link, action: choose|add|remove}`, pushed to the experience by `interview.set_links`. The chosen one alone is the `Link:` line in `main.md` and `tailor.md` (rewritten in code) and the only URL `tailor._check_links` allows; the repository's own URL cannot be removed and is the fallback when the chosen one is. State in `base/stories/_github.json`. `AUTOPILOT_GITHUB_TOKEN` raises the rate limit; `OPENROUTER_GITHUB_MODEL` picks the reader |
 | `server/github.py` | `/projects` status, `/scan`, `/{name}/scaffold`, `/{name}/pick`, `/{name}/link`, `/confirm`. The Projects tab (third header tab) polls it |
 | `server/profile.py` | `/profile` status, `/profile/start`, `/profile/turn` (SSE, one JSON event per line), documents, regenerate |
 | `voice/` + `server/voice.py` | speech: whisper.cpp in (`stt.clean` drops whisper's `[BLANK_AUDIO]`-style markers, standalone um/uh/erm/hmm and immediate word repeats); Fish Audio out when `AUTOPILOT_FISH_API_KEY` is set (`fish.py`, hosted, one request per sentence, `s2.1-pro-free` by default, voice pinned by `reference_id` because the API otherwise picks a new voice per request; delivery tuned by ear: `(cheerful)` tag, temperature 0.9, speed 1.08, all overridable in `.env`); Kokoro (ONNX, `kokoro.py`, needs brew `espeak-ng`) out, `say` when Kokoro is not ready, Piper via `AUTOPILOT_PIPER_BIN`. `assets.py` finds binaries and downloads models into the app data dir; `/voice/status`, `/setup`, `/transcribe`, `/speak` |
@@ -175,7 +192,7 @@ Specifically:
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
 | `archive/store.py` | immutable per-application folders |
-| `review/index.html` | the whole UI, one file, no build step. **Opens on the first job in flight** (`loadList`: `inflight[0]`, list order needs-you first, then the agent's), never one from a closed shelf; nothing in flight = "Nothing in flight." in the pane. `/#<id>` (the banner's "Open in autopilot") is read at boot and on `hashchange`; it was ignored until 2026-09-19. Terminal look (mono, square, purple = agent, green = you, red = rejected); `BUCKET` / `VERB` / `ORDER` at the top drive the in-flight list and the two closed shelves; the floating `.fab` is the decision; nothing internal (models, pids, folders, commands) is shown. Holds the profile state pill in the header, the Profile tab (chat, seed files, documents) and the floating voice orb, always on. **The chat fills the pane** (2026-09-21): `section.detail.chatpane` (set in `renderChat`, dropped by `leave()`, `render()` and the tab switch) is a flex column the height of the window, the transcript scrolls in the middle and the composer sits on the bottom edge; bubbles the full width (`.chat .msg { max-width: none }`, the old 72ch cap read as "half the screen"); the head one line with mic and voice as two dots, the `voicebar` line only when something needs downloading or installing. Not a floater (built and reverted the same day); only the orb floats. The Projects tab re-reads `/profile` while `started` is false, so "Add N to the interview" lights once Start is pressed without leaving the tab. The orb: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is a flat SVG ring in the page's ink, page-colour fill, hard offset shadow: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; one flat core inside grows with the level, green only while listening, purple while speaking; thinking is an arc sweeping the rim with a bulge under it (peak at the head, fading to the tail, `ARC`/`BULGE`/`SOFT` in `Bubble`); paused is a red dashed ring with the word, error a red ring; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS`; barge-in is behind `BARGE_IN = false`) |
+| `review/index.html` | the whole UI, one file, no build step. **Opens on the first job in flight** (`loadList`: `inflight[0]`, list order needs-you first, then the agent's), never one from a closed shelf; nothing in flight = "Nothing in flight." in the pane. `/#<id>` (the banner's "Open in autopilot") is read at boot and on `hashchange`; it was ignored until 2026-09-19. Terminal look (mono, square, purple = agent, green = you, red = rejected). **The list and the job scroll apart** (2026-09-22): `body` is a flex column the height of the window and never scrolls itself (no magic header height any more), `main > nav` and `main > section.detail` each `overflow-y: auto`; scrollbars are styled square and thin in `--line` (`::-webkit-scrollbar*`, `scrollbar-width/color`), which is also what keeps macOS from hiding them until something moves. Under 800px the page goes back to one column and one scroll; `BUCKET` / `VERB` / `ORDER` at the top drive the in-flight list and the two closed shelves; the floating `.fab` is the decision; nothing internal (models, pids, folders, commands) is shown. Holds the profile state pill in the header, the Profile tab (chat, seed files, documents) and the floating voice orb, always on. Each job has **one thread** (2026-09-23, `wireThread` / `paintTurns`, replaces the one-shot "Ask for an answer" card): Answer it, or Re-tailor with this (confirmed first, then polled while it runs, and the job is re-read when it lands, because the folder changed under the page). Above the documents, **Show the files in Finder** (`POST /review/{id}/reveal`): the named upload copies are made if the fill has not made them yet (`apply.upload_copy`) and both are selected in Finder by one `osascript` reveal, for the forms whose screener never reaches the assistant and whose files are quicker dragged in by hand. **The chat fills the pane** (2026-09-21): `section.detail.chatpane` (set in `renderChat`, dropped by `leave()`, `render()` and the tab switch) is a flex column the height of the window, the transcript scrolls in the middle and the composer sits on the bottom edge; bubbles the full width (`.chat .msg { max-width: none }`, the old 72ch cap read as "half the screen"); the head one line with mic and voice as two dots, the `voicebar` line only when something needs downloading or installing. Not a floater (built and reverted the same day); only the orb floats. The Projects tab re-reads `/profile` while `started` is false, so "Add N to the interview" lights once Start is pressed without leaving the tab. The orb: opening the chat speaks the open question and then listens, a tap pauses (red, "Paused", text only both ways), the orb drags anywhere and remembers its spot, leaving the chat stops everything (`Profile`, `Bubble` and `Voice` modules at the bottom; the orb is a flat SVG ring in the page's ink, page-colour fill, hard offset shadow: a fixed circle plus three standing-wave modes on springs, kicked by the audio level, so it bounces but never changes shape; one flat core inside grows with the level, green only while listening, purple while speaking; thinking is an arc sweeping the rim with a bulge under it (peak at the head, fading to the tail, `ARC`/`BULGE`/`SOFT` in `Bubble`); paused is a red dashed ring with the word, error a red ring; only `ack:`/`ask:` parts of a reply are spoken, with a pause between; silence cut-off constants `SPEECH`, `SILENCE_MS` (1500 ms since 2026-09-22); barge-in is behind `BARGE_IN = false`) |
 | `capture/background.js` | context menu, follows tabs off Jobright to inject the screen wherever Apply lands, and focuses/reuses the unpacked extension's existing Autopilot tab after capture |
 | `tools/sweep_failed.py` | moves `failed` application folders under `applications/failed/` and repoints queue rows; nothing deleted |
 | `scout/` + `server/scout.py` | the Scout tab (2026-09-20): companies' careers pages watched on a schedule, new entry-level roles screened, listed and mailed. **Two kinds of watch** (2026-09-21, `Watch.notify`): a notify watch is a company where a referral is possible, its hits are listed under the tab's Notifications view and mailed with the link and the note, never queued by the scout; every other watch feeds autopilot: a hit whose verdict is in `run.QUEUE_VERDICTS` (`ok`, `caution`) is queued at once by `run.check` through `queue_hit`, a `reject` or a failed screen waits on the Autopilot view for the person. The add form is company + URL + the notify box (referrer shown when ticked). Before the model, `filter.prescreen` rejects in code what is cheap and certain: `YEARS_MIN` (4) or more years of experience (first number of a range), a security clearance, citizenship required; `DEFAULT_POSITIVE` covers the roles next door too (data, backend, full stack, platform, ML, infra). The digest says "N to ask about and M in autopilot", the referral ones first. **A company's own careers page works too** (2026-09-21): when `detect` has no provider for the host, `POST /watch` runs `providers.discover(url)` (the page read once, `BOARD_LINKS` regexes for Greenhouse / Lever / Ashby / BambooHR / Workday / SmartRecruiters links) and makes one watch per board, named "<company> (<provider>)" when there are several (Mujin: a Lever board for Japan, BambooHR for the US). BambooHR is `<sub>.bamboohr.com/careers/list`, description from `/careers/<id>/detail` for unseen ids only. **A watch page lists every role at the level right now** (`Watch.listed`, `run.listed_row`, `LISTED_KEEP` 100, rewritten on each check) with "Add to autopilot" per row (`POST /watch/{id}/add {posting_id}` → `run.add_listed`: a hit, marked seen, `queue_hit`); the tab opens on Notifications and lists them above Autopilot. **`Watch.us_only`** (default on): `filter.outside_us` drops a role whose every listed place names another country (`NON_US`, word-bounded; empty, Remote, an unknown place or any US part keeps it) before the title filter's result counts, so Mujin's Lever board (Tokyo, Netherlands) lists 0 at level. `DEFAULT_NEGATIVE` also drops electrical / mechanical / controls / technician / sales and the like. `/` is served `Cache-Control: no-cache`: Chrome kept an old `index.html` for a session. The page polls every 5 s only while visible; `visibilitychange` polls at once, so a submission marked while the person was on the form shows the moment the Autopilot tab is back (it looked like "submitted is not sent back"; the four paths all fired, the list was stale until the next tick). `detect(url)` picks the provider from the host (`providers.py`, one function each over the public JSON: Greenhouse, Lever, Ashby, BambooHR, Workday CXS, SmartRecruiters, Oracle ORC, Eightfold pcsx incl. Microsoft; and the server-rendered pages of Google, Amazon, Apple) or raises `DetectError`, so a watch that can never list a role is not created (Meta needs a session token; refused by name). `filter.at_level` is word-bounded substring lists on the watch (`DEFAULT_POSITIVE` / `DEFAULT_NEGATIVE`; `III` is deliberately not negative, it is Google's new-grad level). `run.check` fetches, filters, drops `seen_ids`, screens each survivor through `server.screen.screen_url` (cached by URL), records `Hit`s, seeds seen on the first check without a hit or mail; ids no longer listed are dropped so a role that returns is news again. `run.verify` is the same read without writes; a raise or an empty list sets `Watch.error`, the red BROKEN on the tab. Thread `run.start` ticks every 60 s and checks what `due` (24 h / `checks_per_day`, per watch else `settings.scout_checks_per_day`); `AUTOPILOT_SCOUT=0` off. `mail.py` is stdlib `smtplib` with a personal account (`AUTOPILOT_SMTP_*`, `AUTOPILOT_MAIL_TO`); one digest per round for hits not `reject`, `referral_note` is a template, not a model. `run.queue_hit` is the same three steps as `/capture`. State in `data/scout.json` (`store.py`, atomic). `tools/scout_verify.py` prints OK / BROKEN per page and exits with the broken count. **A page that breaks is said three ways**: red `BROKEN` on the Scout tab button from every view (`loadScoutBroken`, `/scout` `broken`), the banner "This company does not work" on the tab, and one mail (`mail.broken_notice`, `Watch.broken_mailed`, reset when it reads again; never one per round) |
@@ -217,12 +234,34 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 - **A stale uvicorn holds port 8787** and serves old code. If behaviour makes
   no sense, `pgrep -fl uvicorn` first. Scripts it launches run current code
   regardless, so "the pipeline works but the page is wrong" means this.
+  **The thread's re-tailor is the exception**: it calls `pipeline.retailor`
+  in the server's own process, so it runs the `tailor/` code that process
+  imported at startup. Edit `rules.md`, `layout.py` or `tailor.py` and the
+  server must be restarted before Re-tailor uses any of it; `pipeline.py`
+  from a terminal always runs current code. A
+  button that does nothing while its endpoint answers 404 is the same thing
+  (2026-09-23: the thread's Re-tailor, against a server started before
+  `server/thread.py` existed). The page is served by that process too, so a
+  reload does not help; restart it.
 - **Something else can hold 8787 too.** Caveman Cloud's `caveman-proxy`
   (`~/.caveman/bin`, started by `caveman codex`, detached under launchd,
   no plist) listens on 127.0.0.1:8787 and answers everything with
   `cave_route_not_found`. `lsof -nP -iTCP:8787 -sTCP:LISTEN` names the
   holder. `AUTOPILOT_SERVER_URL` moves the injector and its injected
   script together when the server has to live elsewhere.
+- **A re-tailor is invisible behind a cached PDF.** The new folder is
+  served under the same `/review/<id>/file/resume.pdf`, so Chrome's PDF
+  viewer kept showing the render it already had: the thread said
+  "Re-tailored" over the old resume, and it read as "the documents did
+  not change" (2026-09-24). The iframe src now carries the folder name as
+  a version (`?v=<folder>`, `stamp` in `show()`), and `review.artifact`
+  answers `Cache-Control: no-store`.
+- **A button that needs text says so, or it reads as broken.** The
+  thread's Re-tailor returned at `if (!text) return` with an empty box:
+  three clicks, nothing, no message (2026-09-24). Answer it and Re-tailor
+  with this are disabled while the box is empty; **Re-tailor with Opus is
+  not**, because "run it again on the stronger model" is a whole request
+  on its own and sends a fixed instruction instead.
 - **The injector runs the code it was started with.** Edits to
   `browser/inject.py` or `browser/autofill.py` do nothing until
   `browser.inject` is restarted; a tab already open gets the script on
@@ -268,7 +307,12 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   "never" line of its category, not to the prose.
 - **Two screen rules are also code invariants now.** Every US location is
   green, not caution; a degree earned before an "earned or expected by"
-  deadline satisfies it. `enforce_location_policy` and
+  deadline satisfies it, and (2026-09-24) so does a degree earned before a
+  **cohort window** ("spring/summer of 2027 college graduates" rejected a
+  December 2026 graduate; graduating early only widens what fits).
+  `screen.graduation_window` reads the window's end off the flag's quote and
+  `graduating_in_time` drops the flag; a posting that wants a graduation *no
+  earlier* than a date, or the applicant still enrolled, keeps it (`NOT_BEFORE`). `enforce_location_policy` and
   `enforce_timeline_policy` correct model output before `verdict_for` runs.
   Update their regression tests as well as `screen_rules.md` when changing
   either policy. Cached US location flags are normalized on read; the known
@@ -438,14 +482,20 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 - **Gmail refuses the account password over SMTP.** Only an App
   Password logs in (2-step verification first). `mail.send` turns the
   `SMTPAuthenticationError` into that sentence so the page says it.
-- **The preamble check is byte-exact** (`_check_frozen_sections`; only
-  whitespace runs are collapsed). The model burned two of four attempts on a
-  commented-out font line and a dropped space in a macro. `rules.md` now says
-  nothing above `\begin{document}` changes, not even a comment.
+- **The preamble is no longer argued about** (2026-09-24, `restore_preamble`):
+  a reply whose preamble differs has the master's spliced back in before
+  validation, and the attempt is judged on the sections. It used to be a
+  byte-exact rejection (`_check_frozen_sections`; only whitespace runs
+  collapsed), which cost Abridge two of four attempts and DoorDash one, for
+  a reflowed comment no reader sees. The splice is recorded as a warning on
+  the review page, since a model spending attention above
+  `\begin{document}` is a prompt problem. `rules.md` still says nothing above
+  `\begin{document}` changes, not even a comment, and adds that whatever is
+  changed there is discarded.
 
 ## Testing
 
-`pytest` collects 553 tests. The suite stubs the model, browser, lualatex, and
+`pytest` collects 533 tests. The suite stubs the model, browser, lualatex, and
 speech binaries, so **passing tests do not mean it works** — every real bug so
 far survived a green suite and appeared on the first real run. On the current
 macOS / Python 3.13 environment, the full process aborts inside browser-use's
@@ -484,6 +534,46 @@ invariants first.
   the form's tab reloads (Ashby drops the file on reload); the review page
   then shows no resume. Raised 2026-09-21, not built: keep the last
   non-empty reading, or say "reloaded" instead.
+- Per-job thread, kept-status re-tailor and Finder reveal (2026-09-23): built, and DoorDash (`588d`) and Abridge (`ee29`) re-tailored through it with the facts and stories in place. Next if asked: the thread on the Scout tab's rows, and a
+  "re-tailor everything still in flight" sweep.
+- **Where things stand (2026-09-24).** DoorDash (`588d`) and Abridge
+  (`ee29`) are the two jobs in flight, both `awaiting_review` in
+  `applications/2026-09-24_*`, both re-tailored from scratch under the
+  rules below with the facts, stories and GitHub projects on file, both
+  with `auto_fill` off on the row so neither approves itself. Their older
+  folders were deleted at the human's request; the links are what was
+  kept. Raised and not built: splice the model's four editable sections
+  into the original preamble in code instead of rejecting a reply that
+  touched it — Abridge spent two of its four attempts on
+  `modified PREAMBLE`.
+- Tailoring opened up (2026-09-24, after "one project changed and nothing
+  else" on a filled-in profile): stories may swap projects, replace a bullet
+  under the same role and trade a skill; every mapped bullet is rewritten to
+  X-Y-Z; length is printed lines (`tailor/layout.py`), not characters, for
+  bullets, the summary and each skills line; a rejected attempt is told to
+  keep its other edits (it used to revert to the master, which is what made
+  the DoorDash run look empty); the rationale lists what the checker
+  rejected. Next if asked: a code check that every term added to the resume
+  occurs in the master or a story, and a count of how many bullets a run
+  actually changed.
+- **Six models measured on one posting (2026-09-24, Abridge `ee29`,
+  identical prompt).** Diff lines / EXPERIENCE bullets rewritten /
+  attempts: opus-5.5 34 / 5 of 6 / 2; qwen3.7-max 30 / 5 / 2;
+  glm-5.3 14 / 1 / 2; kimi-k2-thinking 14 / 0 / 3; minimax-m3 14 / 0 / 1;
+  sonnet-5 12 / 0 / 1. Cost per 100 jobs on the measured prompt (11.2k in,
+  3.0k out, 2 attempts): minimax $1.40, kimi $2.85, glm $3.47, qwen $5.97,
+  sonnet $10.51, opus $21.02. The cheap field all does the same thing —
+  swap a project, reorder a skills line, leave the bullets alone. Qwen
+  matched Opus on volume by inventing framing ("LLM-adjacent NLP
+  workflows" for a grammar service), which is worse than doing nothing on
+  a document the person signs. Sonnet is not worth its price here. Hence
+  the button rather than a new default: glm-5.3 stays, Opus is a click.
+  The folders are `applications/2026-09-24_abridge_..._v4` (glm) through
+  `_v10` (minimax) if the comparison is worth re-reading.
+- One caution on the Opus output: it writes numbers the checker cannot
+  verify (the sycophancy entry's falsification gaps, Auto-Apply's
+  "100+ jobs in a week"). Links and counts are checked; figures are not.
+  Read them before a job goes out.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
@@ -498,7 +588,7 @@ page reads like prose again, one of those slipped.
 
 `AUTOPILOT_RESUME_FILENAME`, `AUTOPILOT_COVER_LETTER_FILENAME`,
 `AUTOPILOT_LOCATION`, `AUTOPILOT_AUTOFILL`, `AUTOPILOT_SERVER_URL`,
-`AUTOPILOT_BROWSER`. Never hardcode a name, a city, or a phone number in the
+`AUTOPILOT_BROWSER`, `OPENROUTER_TAILOR_MODEL`, `OPENROUTER_PREMIUM_MODEL`. Never hardcode a name, a city, or a phone number in the
 repo; it is public.
 
 ## Style
