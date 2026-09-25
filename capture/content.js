@@ -216,6 +216,32 @@ const SEEN_STATUS = {
   approved: "Approved", filling: "Being filled", filled: "Filled, waiting for you to submit",
   submitted: "Applied", skipped: "Rejected", failed: "Failed",
 };
+// The statuses that mean this posting has already been applied for, or is on
+// a form that is filled and waiting for a click. Re-applying to one of these
+// is the mistake the banner exists to stop, so it is said in the loudest way
+// the bar has and the Add button goes away with it.
+const APPLIED_STATUS = new Set(["submitted", "filled", "filling"]);
+
+function appliedNotice(seen) {
+  if (!seen || !APPLIED_STATUS.has(seen.status)) return "";
+  const when = seen.at ? seen.at.slice(0, 10) : "";
+  const what = seen.status === "submitted"
+    ? `You already applied to this job with Autopilot${when ? ` on ${when}` : ""}.`
+    : seen.status === "filled"
+      ? "Autopilot already filled this job's form; it is waiting for your Submit."
+      : "Autopilot is filling this job's form right now.";
+  const which = [seen.company, seen.title].filter(Boolean).join(" — ");
+  const sure = seen.level === "high"
+    ? "Same posting."
+    : "Looks like the same posting; check it before adding it again.";
+  return `<div class="applied">
+      <b>ALREADY APPLIED</b>
+      <span>${esc(what)}</span>
+      ${which ? `<span class="which">${esc(which)}</span>` : ""}
+      <span class="which">${esc(sure)}</span>
+    </div>`;
+}
+
 function seenLine(seen) {
   const when = seen.at ? ` ${seen.at.slice(0, 10)}` : "";
   const state = `${SEEN_STATUS[seen.status] || seen.status}${["submitted", "skipped"].includes(seen.status) ? when : ""}`;
@@ -270,6 +296,10 @@ function render(result, { pending = false } = {}) {
         `</li>`
     )
     .join("");
+  const applied = appliedNotice(seen);
+  // An applied job is never added again from here when the match is certain.
+  // At `confident` the person still gets "Add anyway", because the match may
+  // be another role at the same company.
   const canAdd = !pending && !(seen && seen.level === "high") && verdict !== "submitted";
   const canRetry = !pending && (verdict === "error" || verdict === "not_a_job");
 
@@ -337,6 +367,13 @@ function render(result, { pending = false } = {}) {
       button.close span { position: relative; z-index: 1; }
       li.unchecked b { color: #a0a0a0; }
       .seen { display: block; color: #fff; font-weight: 600; margin-top: 3px; }
+      /* The one thing on this bar that has to be read from across the room. */
+      .applied { display: block; margin: 4px 0 2px; padding: 8px 10px; background: #2a0d0d;
+                 border: 3px solid #ff5c5c; }
+      .applied b { display: block; color: #ff5c5c; font-size: 17px; font-weight: 800;
+                   letter-spacing: .12em; line-height: 1.2; }
+      .applied span { display: block; color: #fff; font-size: 13px; font-weight: 600; margin-top: 3px; }
+      .applied span.which { color: #ffb3b3; font-weight: 400; }
       .files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; align-items: center; }
       .files .hint { color: #a0a0a0; font-size: 11px; }
       .changes { display: none; margin-top: 6px; border-top: 1px solid #333; padding-top: 6px; }
@@ -381,6 +418,7 @@ function render(result, { pending = false } = {}) {
           <span class="summary">${esc(result.summary || result.error || "")}</span>
           ${about ? `<span class="about">${esc(about)}</span>` : ""}
           <span class="auto"></span>
+          ${applied}
           ${seen ? `<span class="seen">${esc(seenLine(seen))}</span>` : ""}
           ${seen && seen.level === "high" ? `<div class="files" id="files"></div>` : ""}
           <div class="changes" id="changes"></div>
@@ -551,7 +589,7 @@ function render(result, { pending = false } = {}) {
     timer = setTimeout(act, AUTO_ADD_MS);
     frame = requestAnimationFrame(draw);
   }
-  if (!pending && (seen || verdict === "submitted")) {
+  if (!pending && (seen || verdict === "submitted") && !applied) {
     autoCollapse();
   }
 

@@ -178,3 +178,20 @@ def test_the_countdown_leaves_room_to_press_use_opus():
     # Armed, not pressed: the countdown is not cancelled by the choice.
     assert "usePremium = !usePremium;" in content
     assert "addToQueue(autoFill(), usePremium)" in content
+
+
+def test_a_job_already_applied_for_shouts_and_the_bar_stays_open():
+    """Re-applying to a job autopilot already submitted is the mistake the
+    seen check exists to stop, and a line inside a bar that folds into a
+    badge after five seconds was missed. An applied job gets the loudest
+    block the banner has, and that bar does not collapse."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert 'const APPLIED_STATUS = new Set(["submitted", "filled", "filling"])' in script
+    assert "function appliedNotice(seen)" in script
+    assert "ALREADY APPLIED" in script
+    assert "You already applied to this job with Autopilot" in script
+    assert ".applied { display: block;" in script
+    # It stays open: the badge is how the warning was missed.
+    assert 'if (!pending && (seen || verdict === "submitted") && !applied) {' in script
+    # And it is in the bar's body, above the ordinary seen line.
+    assert "${applied}\n          ${seen ?" in script
