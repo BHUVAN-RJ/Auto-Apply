@@ -18,16 +18,18 @@ from __future__ import annotations
 
 import os
 import re
-
+import time
 import urllib.request
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import paths
 from browser import chrome
 from tailor import prompts, tailor, workshop
+from tex import compile as texc
 
 from . import queue, settings
 
@@ -65,6 +67,16 @@ class KeyRequest(BaseModel):
 
 class OpenRequest(BaseModel):
     page: str
+
+
+class ResumeUpload(BaseModel):
+    name: str
+    text: str
+
+
+# A resume is a few kilobytes of LaTeX; anything near this is not one.
+RESUME_MAX = 200_000
+TEMPLATE = paths.ROOT / "base" / "resume.template.tex"
 
 
 def _prompt_or_404(fn, *args):
@@ -224,6 +236,46 @@ def open_page(body: OpenRequest) -> dict:
     except OSError:
         return {"opened": False, "url": url}
     return {"opened": True, "url": url}
+
+
+@router.get("/setup/template")
+def resume_template() -> FileResponse:
+    """The layout the tailor reads, to download and fill in."""
+    return FileResponse(TEMPLATE, media_type="application/x-tex",
+                        filename="autopilot-resume-template.tex")
+
+
+@router.post("/setup/resume")
+def upload_resume(body: ResumeUpload) -> dict:
+    """The master resume, as the person's own LaTeX source.
+
+    LaTeX only, on purpose: the tailor edits the source and every word of
+    it is the person's, so nothing is lost or guessed in a conversion from
+    a PDF or a Word file. The file is kept even when its layout is not the
+    template's (Claude Code can move its content across, LaTeX to LaTeX);
+    the reply says whether it can be tailored and whether it compiled.
+    """
+    text = body.text
+    if not body.name.lower().endswith(".tex"):
+        raise HTTPException(400, "The master resume is the LaTeX source: a .tex file, not a PDF "
+                                 "or a Word document.")
+    if len(text) > RESUME_MAX or "\\documentclass" not in text or "\\begin{document}" not in text:
+        raise HTTPException(400, "That is not a whole LaTeX document (no \\documentclass or "
+                                 "\\begin{document}).")
+    target = paths.BASE / "resume.tex"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        # The one it replaces is kept beside it, never lost to a click.
+        target.rename(target.with_name(f"resume.{time.strftime('%Y%m%d-%H%M%S')}.tex"))
+    target.write_text(text)
+    compiled, error = True, ""
+    try:
+        texc.compile_pdf(target, paths.BASE / "resume.pdf")
+    except texc.CompileError as exc:
+        compiled, error = False, str(exc)
+    except Exception as exc:  # noqa: BLE001 - a timeout or a missing engine, said on the page
+        compiled, error = False, f"{type(exc).__name__}: {exc}"
+    return setup_status() | {"compiled": compiled, "compile_error": error}
 
 
 @router.post("/setup/done")

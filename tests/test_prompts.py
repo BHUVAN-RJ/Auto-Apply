@@ -229,3 +229,22 @@ def test_setup_opens_only_named_pages(monkeypatch):
     assert client.post("/setup/open", json={"page": "https://evil.example"}).status_code == 404
     assert client.post("/setup/open", json={"page": "jobright"}).json()["opened"] is True
     assert opened[0].endswith("/json/new?https://jobright.ai/")
+
+
+def test_the_resume_is_uploaded_as_latex_only(tmp_path, monkeypatch):
+    base = tmp_path / "base"
+    monkeypatch.setattr(prompts_api.paths, "BASE", base)
+    compiled = []
+    monkeypatch.setattr(prompts_api.texc, "compile_pdf", lambda tex, out: compiled.append(tex))
+    client = TestClient(app)
+    assert client.post("/setup/resume", json={"name": "cv.pdf", "text": "%PDF"}).status_code == 400
+    assert client.post("/setup/resume", json={"name": "cv.tex", "text": "hello"}).status_code == 400
+    template = prompts_api.TEMPLATE.read_text()
+    reply = client.post("/setup/resume", json={"name": "cv.tex", "text": template}).json()
+    assert reply["resume"] is True and reply["compiled"] is True and compiled
+    other = "\\documentclass{article}\\begin{document}\\section{Experience}x\\end{document}"
+    reply = client.post("/setup/resume", json={"name": "mine.tex", "text": other}).json()
+    assert reply["resume"] is False and reply["resume_problems"]
+    # The one it replaced is kept.
+    assert len(list(base.glob("resume.*.tex"))) == 1
+    assert client.get("/setup/template").text == template

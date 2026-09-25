@@ -245,7 +245,12 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   `\section{\texorpdfstring{\color{...}NAME}{}}` headings and the bullets
   are `\resumeItem`; any other resume is all PREAMBLE, so every reply is
   "modified PREAMBLE" and all four attempts fail. A friend's resume is
-  ported into `base/resume.template.tex` (INSTALL.md, step 4);
+  moved into `base/resume.template.tex` LaTeX to LaTeX (INSTALL.md,
+  step 4; never rebuilt from a PDF or Word file, 2026-09-25: the source is
+  the person's and quality depends on it); onboarding takes the `.tex`
+  upload (`POST /setup/resume`, compiled and checked, the replaced one
+  kept as `resume.<stamp>.tex`), `GET /setup/template` downloads the
+  layout;
   `tailor.master_problems` says what is missing, on install and on the
   setup bar. Generalising the parser is the other fix, not built.
 

@@ -170,7 +170,7 @@ def master_problems(tex: str) -> list[str]:
     the first job fails four times.
     """
     sections = split_sections(tex)
-    problems = [f"no {name} section written as \\section{{\\texorpdfstring{{\\color{{airforceblue}}{name}}}{{}}}}"
+    problems = [f"no {name} heading in the template's form"
                 for name in EDITABLE_SECTIONS if name not in sections]
     if "EXPERIENCE" in sections and not bullets(sections["EXPERIENCE"]):
         problems.append("no \\resumeItem bullets under EXPERIENCE")

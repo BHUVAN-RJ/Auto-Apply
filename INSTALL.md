@@ -72,28 +72,25 @@ missing; fix that and rerun.
 
 ## 4. The master resume
 
-The tailor reads exactly one layout: `base/resume.template.tex` (also
-copied into the data folder). Its section headings
-(`\section{\texorpdfstring{\color{airforceblue}SUMMARY}{}}` and the same
-for EDUCATION, EXPERIENCE, PROJECTS, TECHNICAL SKILLS) and its
-`\resumeItem{...}` bullets are what the checker counts and measures. A
-resume in any other layout, even valid LaTeX, cannot be tailored: every
-attempt is rejected. So whatever the person hands you, the master resume
-is **their content in this template**.
+**The master resume is the person's own LaTeX source, never a conversion.**
+Do not write one from a PDF or a Word file: the tailor edits the source,
+and a resume rebuilt from a PDF loses and guesses things the person then
+signs. If they have no LaTeX resume, they make one themselves from the
+template (below) and come back; do not do it for them.
 
-Ask the person for their resume (PDF, Word or `.tex`), then:
+The tailor reads exactly one layout: `base/resume.template.tex`. Its
+section headings (`\section{\texorpdfstring{\color{airforceblue}SUMMARY}{}}`
+and the same for EDUCATION, EXPERIENCE, PROJECTS, TECHNICAL SKILLS) and its
+`\resumeItem{...}` bullets are what the checker counts and measures; any
+other layout, even valid LaTeX, cannot be tailored.
 
-1. Copy `base/resume.template.tex` to
-   `~/Library/Application Support/Autopilot/base/resume.tex`.
-2. Replace the made-up person (Alex Morgan) with theirs: header, summary,
-   education, every role with its bullets as `\resumeItem`, projects
-   (a link goes in the `\href` of the project's title), the skills as
-   `\textbf{Category:}` lines, anything else under ACHIEVEMENTS or a new
-   section of the same heading form. Keep every word, date, number and
-   link from their file; invent nothing; drop nothing without asking.
-   A section they do not have (no projects yet) stays, with one honest
-   entry from their coursework or work, after asking them for it.
-3. Keep it to one page (two if theirs was two). Compile it and check:
+The person can upload the `.tex` on the app's setup screens (step 6); it
+is compiled and checked there. Or they give you the file, and:
+
+1. Copy it (and any `.cls` / `.sty` / font it needs) to
+   `~/Library/Application Support/Autopilot/base/`, the main file named
+   `resume.tex`.
+2. Check it:
 
    ```bash
    AUTOPILOT_HOME="$HOME/Library/Application Support/Autopilot" .venv/bin/python -c "
@@ -102,15 +99,16 @@ Ask the person for their resume (PDF, Word or `.tex`), then:
    print(tailor.master_problems(tex) or 'layout ok')
    out = c.compile_pdf(paths.BASE / 'resume.tex', paths.BASE / 'resume.pdf')
    print(out, c.page_count(out), 'page(s)')"
-   open "$HOME/Library/Application Support/Autopilot/base/resume.pdf"
    ```
 
-   `layout ok` is required. Ask them to compare the PDF with their
-   original and fix what they point out; the tailor rewrites this file for
-   every job, so it has to be right.
-
-Rerun `scripts/install.sh` once the file is there: it compiles
-`resume.pdf`, which the tailor measures line widths from.
+3. `layout ok`: done. Otherwise their LaTeX is in another layout: with
+   their go-ahead, move its content into `base/resume.template.tex`
+   **LaTeX to LaTeX, word for word**: every heading, entry, date, number
+   and link from their file, each bullet as a `\resumeItem`, skills as
+   `\textbf{Category:}` lines, anything else under ACHIEVEMENTS. Invent
+   nothing, drop nothing without asking. Save the result as `resume.tex`
+   (their original stays beside it as `resume.original.tex`), check again,
+   `open` the PDF, and have them compare it with their own.
 
 Then set the names the uploaded files get, from the name on the resume,
 in `.../Autopilot/.env`:
@@ -143,11 +141,14 @@ there and let them go through it:
    per job, "Use Opus" about twenty. **Never ask for the key in this
    conversation** and never write it into a file yourself: the screen
    checks it with OpenRouter and stores it on their Mac only.
-2. **Jobright.** The screen opens the Chrome Web Store page for Jobright's
+2. **The resume**, as their `.tex` file, if it is not in place from step
+   4 already: uploaded, compiled and checked on the screen. A layout the
+   tailor cannot read is said there; the fix is step 4, point 3.
+3. **Jobright.** The screen opens the Chrome Web Store page for Jobright's
    extension and jobright.ai, as tabs in the Autopilot Chrome (the one the
    forms are filled in; their everyday Chrome does not count). It notices
    the extension by itself; they tick "I'm signed in" once signed in.
-3. **The profile interview**, offered on the last screen, is optional. It
+4. **The profile interview**, offered on the last screen, is optional. It
    makes the tailoring better (the tailor uses what they did in each role
    in their own words); they can start it then or any time from the
    Profile tab.

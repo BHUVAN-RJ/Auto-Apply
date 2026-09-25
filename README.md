@@ -16,8 +16,10 @@ Apple Silicon Mac, Google Chrome, [Homebrew](https://brew.sh), and
 
 > Install Autopilot from https://github.com/BHUVAN-RJ/Auto-Apply. Follow INSTALL.md in that repository.
 
-It clones this repository, installs what it needs, turns your resume into
-the LaTeX the tailor works on, and builds `Autopilot.app`. Then you do
+It clones this repository, installs what it needs and builds
+`Autopilot.app`. Your resume goes in as its LaTeX source (`.tex`), never
+a PDF: the tailor edits the source, so every word stays yours. No LaTeX
+resume yet? The app gives you its template to fill in. Then you do
 two things yourself, on the app's first screens: paste your
 [OpenRouter key](https://openrouter.ai/settings/keys) (it is checked with
 OpenRouter and kept on your Mac, nowhere else), and install Jobright's
