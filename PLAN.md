@@ -474,7 +474,7 @@ is one `soft` line (apply anyway, but know), and what is never a flag.
 | `visa` | Sponsorship refused now and in future, and needed | The form question; "sponsorship available"; E-Verify text |
 | `export_control` | ITAR / EAR / "US persons only" for this role | Company-wide "some roles may" notes |
 | `clearance` | Active clearance, citizenship, or residency required | The form question; "or" clauses with a path |
-| `timeline` | Enrolment after graduation; a start date or term the facts rule out | A window the latest degree falls in; graduation on or before an "earned or expected by" cutoff; a cohort year in the title alone |
+| `timeline` | Enrolment after graduation; a graduation asked to be no earlier than a date; a start date or term the facts rule out | A window the latest degree falls in; graduation on or before an "earned or expected by" cutoff or before a cohort window's end ("spring/summer of 2027 graduates" for a December 2026 graduate); a cohort year in the title alone |
 | `location` | Outside the applicant's country; remote restricted to a region they will not move to | Any location in the United States, including onsite/hybrid, no relocation assistance, and state-restricted remote; several offices listed; HQ in a remote header |
 | `degree` | PhD or a licence required, no equivalent | "CS or related" when held; "MS preferred" when held |
 | `seniority` | Staff, principal, director, manager with scope stated | Level names (II, L4); a company's own levelling vocabulary |
@@ -483,9 +483,15 @@ is one `soft` line (apply anyway, but know), and what is never a flag.
 
 The verdict is `reject`, `caution`, `ok`, or `not_a_job`, recomputed from
 the flags in code. US location flags are dropped at validation, and a parsed
-graduation date on or before a parsed latest-date cutoff drops that timeline
-flag. Derived facts carry relocation and graduation lines, so these checks do
-not depend on the model's prose reasoning.
+graduation date on or before a parsed latest date drops that timeline flag.
+That latest date is read either from a cutoff phrase ("by Summer 2027",
+`graduation_deadline`) or from a cohort window ("spring/summer of 2027
+college graduates", `graduation_window`): graduating early only widens what
+fits, so it is a match, not a caution. The exception is a posting that asks
+for a graduation *no earlier* than a date, or the applicant still enrolled
+(`NOT_BEFORE`), which an early graduate genuinely fails; that flag stands.
+Derived facts carry relocation and graduation lines, so these checks do not
+depend on the model's prose reasoning.
 
 ### Where things go
 
@@ -548,6 +554,14 @@ All five steps built. What the first runs exposed:
   location flags and already-satisfied latest-date graduation flags are now
   removed deterministically before the verdict is recomputed, including when
   an older location result is read from cache.
+- **A cohort window is a latest date too** (2026-09-24). SeatGeek's new-grad
+  role reads "spring/summer of 2027 college graduates"; with no "by" in the
+  phrase the deadline parser saw nothing, the model's hard flag stood, and a
+  December 2026 graduate was rejected for graduating *early*. `graduation_window`
+  reads the window's end (the latest year named, at the latest season or month
+  named) and the flag is dropped when the graduation is on or before it. Four
+  cached screens and three `screen.json` files were repaired in place with the
+  new policy, no model call: `reject` became `ok`.
 - **Reasoning tokens made a 32-second banner.** The screen runs with
   reasoning disabled (`llm.complete(reasoning={"enabled": False})`); the
   tailor model's provider refuses that, so derivation uses the screen model.
@@ -1568,3 +1582,60 @@ profile interview.
 - The Workshop by voice, through the orb.
 - The maintainer's own agent reading bug reports; the in-app report is a
   prefilled GitHub issue with nothing personal in it.
+
+## Phase 20 — how much changes, and what may not be invented (2026-09-25)
+
+The six-model comparison said the cheap field all does the same thing: swap
+a project, reorder a skills line, leave the bullets alone. GLM rewrote 1 of
+6 `EXPERIENCE` bullets where Opus rewrote 5, on the same prompt, which is
+what "the resume is barely changed" was. `rules.md` already asked for every
+mapped bullet to be rewritten; prose alone does not move a cheap model.
+Every budget that is enforced *and named* gets obeyed — that was the lesson
+of the line budgets — so the volume becomes one of them.
+
+### Decisions
+
+- **A change floor, soft at the end.** `tailor.under_tailored` counts the
+  `EXPERIENCE` bullets whose body differs from the master (`rewritten`,
+  matched by similarity, so a reorder is not a rewrite) and wants
+  `MIN_REWRITE` of them, half by default (`AUTOPILOT_MIN_REWRITE`). Under
+  it, the attempt is rejected with the untouched bullets named — but only
+  while attempts remain. On the last attempt it is a warning carried to
+  the review page: a thin resume is a worse document, a failed job is no
+  document at all, and four attempts spent on a floor is the DoorDash
+  failure mode repeated.
+- **Figures may not be invented.** Links and counts were checked; numbers
+  never were, and both premium models wrote some that are true of nothing
+  on file ("100+ jobs in a week", falsification gaps in no story). Every
+  figure in the tailored bullets, summary and skills lines must appear on
+  the master resume or in the picked stories. The posting is deliberately
+  *not* a source: a number is a claim about this candidate.
+- **Names may come from the posting, and from nowhere else.** A word
+  carrying a capital or a digit must appear on the master, in a story, or
+  in the posting; naming the stack the way the posting names it is the
+  point of tailoring, and "Memcached" from thin air is not. Both sides are
+  compared as loose stems, so "Fine-Tuning" is the master's "fine-tuned"
+  and "Dec" its December, and a word capitalised only because it opens a
+  sentence is not treated as a name.
+- **Measured against history before shipping.** Over 88 past runs the
+  invention check flags 4: Qwen's "LLM-adjacent", a "QA" and a "powered"
+  from nowhere, and a "Tracker" whose story was not in that run's context.
+  Zero figures — every number those runs used is on file. The same sweep
+  is what set the stemming rules; each loosening was a false positive read
+  off a real resume, not a guess.
+- **The prompt says both**, in the checklist and in "How much may change",
+  with the number. A budget the prompt does not name is one the model
+  fails blind.
+
+## Phase 20b — a job already applied for is shouted (2026-09-25)
+
+`seen` has told the banner "already in autopilot" since Phase 11, as one
+line among the flags, in a bar that folds itself into a badge after five
+seconds. That is how a posting already submitted got opened and queued
+again. `submitted`, `filled` and `filling` (`APPLIED_STATUS` in
+`content.js`) now paint a red bordered block — `ALREADY APPLIED`, the
+date, the company and whether the match is certain — and that bar never
+collapses. A certain match has no Add button at all; a `confident` one
+keeps "Add anyway", because it may be another role at the same company.
+Nothing else about the screen changes, and the dedupe in `queue.add` is
+still the thing that actually prevents the duplicate.
