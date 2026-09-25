@@ -479,3 +479,22 @@ def test_a_one_line_box_gets_one_sentence():
             "the question being asked.")
     assert engine.Engine.one_line(long) == "I use he/him pronouns."
     assert engine.Engine.one_line("Austin, TX") == "Austin, TX"
+
+
+def test_a_posting_page_is_not_filled_at_all(tmp_path):
+    """Adobe's Workday posting: the apply step is behind a sign-in, so the
+    tab holds a search box and a "Job Description" panel and no file input.
+    The fill used to press autofill, write a tailored sentence into that
+    box and report "no resume file input found", which read as "approve did
+    nothing". Nowhere to attach a resume means nothing here is ours."""
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    asked = []
+    page = FakePage([
+        gh_field("1", kind="text", label="Search for jobs"),
+        gh_field("2", tag="textarea", kind="textarea", label="Job Description"),
+    ])
+    report = run_documents(page, resume=resume, answerer=lambda q: asked.append(q) or "prose")
+    assert asked == [] and page.fields["2"]["value"] == ""
+    assert not report.resume_uploaded and not page.marked
+    assert any("no application form on this page" in e for e in report.errors)

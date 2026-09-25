@@ -1333,6 +1333,14 @@ async def fill(cdp_url: str, url: str, adapter: Adapter, profile: Profile,
         return await run(page, adapter, profile, target_id, resume, cover_letter)
 
 
+# What a page must have before the fill treats it as an application form: a
+# file input to attach the resume to, or more controls than a search box and a
+# sign-in link. Under this, the form is behind an Apply button we do not press.
+MIN_FORM_FIELDS = 5
+NOT_A_FORM = ("no application form on this page: press Apply and sign in, "
+              "then fill it again")
+
+
 async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
                         resume: Optional[Path] = None, cover_letter: Optional[Path] = None,
                         answerer=None, corrections: Optional[Profile] = None) -> Report:
@@ -1358,6 +1366,16 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     # slot and shows a "Remove file" button instead. Clear the slot so the
     # input comes back; the button is read and guarded before the click.
     resume_input, cover_input = engine.file_inputs(fields)
+    # A posting page is not an application form. Workday and Oracle put the
+    # apply step behind a sign-in, so a fill opened on the posting URL finds
+    # a search box and a header: it pressed Jobright's autofill, wrote a
+    # tailored sentence into a box labelled "Job Description" and reported
+    # "no resume file input found", which read as "approve did nothing".
+    # Nowhere to attach a resume and almost no fields means the form is not
+    # here yet, and nothing on the page is ours to touch.
+    if resume is not None and resume_input is None and cover_input is None and len(fields) < MIN_FORM_FIELDS:
+        report.errors.append(NOT_A_FORM)
+        return report
     for wanted, have, pattern, exclude, what in (
         (resume, resume_input, RESUME_SLOT, COVER_SLOT, "resume"),
         (cover_letter, cover_input, COVER_SLOT, "", "cover letter"),
