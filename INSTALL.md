@@ -78,11 +78,13 @@ and a resume rebuilt from a PDF loses and guesses things the person then
 signs. If they have no LaTeX resume, they make one themselves from the
 template (below) and come back; do not do it for them.
 
-The tailor reads exactly one layout: `base/resume.template.tex`. Its
-section headings (`\section{\texorpdfstring{\color{airforceblue}SUMMARY}{}}`
-and the same for EDUCATION, EXPERIENCE, PROJECTS, TECHNICAL SKILLS) and its
-`\resumeItem{...}` bullets are what the checker counts and measures; any
-other layout, even valid LaTeX, cannot be tailored.
+**Their design is theirs.** Any LaTeX resume works: Jake's, Awesome-CV,
+moderncv, a hand-written `article`. The tailor reads the layout it is
+given (`tailor/structure.py`): the section headings, which of them are the
+summary, the experience, the projects and the skills, and the bullets
+(`\resumeItem` or `\item`). It changes only words inside those sections;
+every macro, font, colour and spacing stays as they set it. Never move a
+person's resume into another template.
 
 The person can upload the `.tex` on the app's setup screens (step 6); it
 is compiled and checked there. Or they give you the file, and:
@@ -94,21 +96,27 @@ is compiled and checked there. Or they give you the file, and:
 
    ```bash
    AUTOPILOT_HOME="$HOME/Library/Application Support/Autopilot" .venv/bin/python -c "
-   import paths; from tex import compile as c; from tailor import tailor
+   import paths; from tex import compile as c; from tailor import tailor, structure
    tex = (paths.BASE / 'resume.tex').read_text()
-   print(tailor.master_problems(tex) or 'layout ok')
+   print(structure.titles(tex)); print(len(tailor.bullets(tex)), 'bullets')
+   print(tailor.master_problems(tex) or 'readable')
    out = c.compile_pdf(paths.BASE / 'resume.tex', paths.BASE / 'resume.pdf')
    print(out, c.page_count(out), 'page(s)')"
    ```
 
-3. `layout ok`: done. Otherwise their LaTeX is in another layout: with
-   their go-ahead, move its content into `base/resume.template.tex`
-   **LaTeX to LaTeX, word for word**: every heading, entry, date, number
-   and link from their file, each bullet as a `\resumeItem`, skills as
-   `\textbf{Category:}` lines, anything else under ACHIEVEMENTS. Invent
-   nothing, drop nothing without asking. Save the result as `resume.tex`
-   (their original stays beside it as `resume.original.tex`), check again,
-   `open` the PDF, and have them compare it with their own.
+   The first line maps each role (EXPERIENCE, ...) to their heading. Check
+   it reads the way the resume does.
+3. `readable`: done. If the experience section is not recognised, its
+   heading has an unusual name; the smallest fix is in the code, not in
+   their resume: add the name to `ROLES` in `tailor/structure.py`, commit
+   it on `mine` (UPDATING.md), and send it upstream, since the next person
+   will use it too. Only if the layout is truly unusual (no headings the
+   code can find at all) ask them before touching their file, and then
+   change nothing but the heading.
+
+If they have no LaTeX resume at all, they write one themselves (the
+template in `base/resume.template.tex` is a start); do not write it from
+their PDF.
 
 Then set the names the uploaded files get, from the name on the resume,
 in `.../Autopilot/.env`:

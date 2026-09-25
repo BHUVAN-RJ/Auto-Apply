@@ -240,19 +240,21 @@ which now include a relocation line, and the banner says so).
 
 Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
-- **The tailor reads one resume layout** (2026-09-24, found on the first
-  fresh install). `split_sections` wants
-  `\section{\texorpdfstring{\color{...}NAME}{}}` headings and the bullets
-  are `\resumeItem`; any other resume is all PREAMBLE, so every reply is
-  "modified PREAMBLE" and all four attempts fail. A friend's resume is
-  moved into `base/resume.template.tex` LaTeX to LaTeX (INSTALL.md,
-  step 4; never rebuilt from a PDF or Word file, 2026-09-25: the source is
-  the person's and quality depends on it); onboarding takes the `.tex`
-  upload (`POST /setup/resume`, compiled and checked, the replaced one
-  kept as `resume.<stamp>.tex`), `GET /setup/template` downloads the
-  layout;
-  `tailor.master_problems` says what is missing, on install and on the
-  setup bar. Generalising the parser is the other fix, not built.
+- **Every person keeps their own LaTeX design** (2026-09-25; the rule, not
+  a preference). The tailor used to read one layout (the maintainer's
+  `\texorpdfstring` headings and `\resumeItem`), and any other resume
+  failed all four attempts as "modified PREAMBLE". `tailor/structure.py`
+  now reads any layout: headings are commands with "section" in the name
+  (or, with fewer than two, a known heading word alone on its line, like
+  `\textbf{EXPERIENCE}`), `ROLES` maps "Work Experience" / "Profile" /
+  "Skills" to the rules' four names, bullets are `\resumeItem` when the
+  resume uses it, else `\item`. The maintainer's resume and past tailored
+  ones read back identical. The prompt gets `layout_note`: the resume's
+  own headings per role and its bullet form. An unrecognised heading is
+  fixed in `ROLES`, never by moving a person's resume into a template.
+  The resume goes in as the person's `.tex` only (onboarding upload,
+  `POST /setup/resume`; never rebuilt from a PDF or Word file);
+  `base/resume.template.tex` is only a start for someone with none.
 
 - **BasicTeX is minimal.** A new template will be missing packages. The compile
   error parses the names and prints the `tlmgr` command. `fullpage` lives in

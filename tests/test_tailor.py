@@ -405,11 +405,12 @@ def test_an_untouched_preamble_is_left_exactly_as_it_was():
     assert spliced == after and restored is False
 
 
-def test_the_template_is_a_master_the_checker_can_read():
+def test_the_template_and_a_plain_resume_are_both_readable():
     root = Path(__file__).resolve().parent.parent
     assert tailor.master_problems((root / "base" / "resume.template.tex").read_text()) == []
-    problems = tailor.master_problems((root / "base" / "resume.example.tex").read_text())
-    assert any("EXPERIENCE" in p for p in problems)
+    # Plain \section* headings and itemize bullets: once unreadable, now any
+    # layout is the person's to keep.
+    assert tailor.master_problems((root / "base" / "resume.example.tex").read_text()) == []
 
 
 def test_a_heading_in_a_comment_is_not_a_section():

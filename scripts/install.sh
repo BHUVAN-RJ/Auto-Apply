@@ -71,7 +71,7 @@ import paths
 from tailor import tailor
 print('\n'.join(tailor.master_problems((paths.BASE / 'resume.tex').read_text())))
 ")"
-  [ -z "$PROBLEMS" ] || { echo "  THE MASTER RESUME CANNOT BE TAILORED YET (INSTALL.md, step 4):"; echo "$PROBLEMS" | sed 's/^/    - /'; }
+  [ -z "$PROBLEMS" ] || { echo "  AUTOPILOT CANNOT FIND WHAT TO TAILOR IN THE MASTER RESUME (INSTALL.md, step 4):"; echo "$PROBLEMS" | sed 's/^/    - /'; }
 else
   say "No master resume yet: $HOME_DIR/base/resume.tex (INSTALL.md, step 4)"
 fi

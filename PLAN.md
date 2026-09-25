@@ -1560,6 +1560,15 @@ profile interview.
   into it with rerere on, takes the release's side for the files that
   hold invariants, and hands the rest to Claude with the intent to
   resolve against (UPDATING.md). A backup tag before every merge.
+- **Every person keeps their own LaTeX design** (2026-09-25). The resume
+  goes in as their `.tex`, never converted from a PDF, and the tailor
+  reads whatever layout it is (`tailor/structure.py`: headings by command
+  or by word, "Work Experience" / "Profile" / "Skills" mapped to the
+  rules' four names, `\resumeItem` or `\item` bullets) and changes only
+  the words inside those four sections. Checked live on a plain
+  `article` resume with `\section*` headings and itemize bullets: tailored
+  on the first attempt, design untouched. A heading it does not know is
+  added to `ROLES`, never fixed by moving the person to a template.
 - **Tectonic** is the TeX of an installed copy (`tex/compile.py` falls back
   to it when the wanted engine is missing): one Homebrew package, packages
   fetched on first compile (35-65 s once, seconds after). pdfTeX-only

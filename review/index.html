@@ -1682,8 +1682,8 @@ const Setup = (() => {
           <button class="act primary" id="orSave" disabled>Save key</button></div>
           <span class="hint" id="orMsg">Kept on this Mac only, in ${escape(s.home)}/.env.</span>`)}
         ${item(s.resume, s.resume ? "Master resume in place." : s.resume_problems?.length
-          ? `The master resume is not in Autopilot's layout, so it cannot be tailored: ${escape(s.resume_problems.join("; "))}.
-             Ask Claude Code to rewrite it in <code>base/resume.template.tex</code> (INSTALL.md, step 4).`
+          ? `The master resume cannot be tailored yet: ${escape(s.resume_problems.join("; "))}.
+             Upload a fixed <code>.tex</code> on the setup screens, or ask Claude Code.`
           : `Upload your resume's LaTeX source (<code>.tex</code>) on the setup screens, or put it at
              <code>${escape(s.resume_path)}</code>. Not a PDF or a Word file.`)}
         ${item(s.chrome, s.chrome ? "Google Chrome found." : "Install Google Chrome; the forms are filled in it.")}
@@ -1783,23 +1783,23 @@ const Onboard = (() => {
     } else if (name === "resume") {
       const problems = s.resume_problems || [];
       body = `<div class="q">Your resume, in LaTeX</div>
-        <p>Autopilot tailors the LaTeX source of your resume, not a PDF: every word stays yours and the layout stays
-        exactly as you set it. Upload your <code>.tex</code> file. A PDF or a Word file will not do.</p>
-        ${s.resume ? `<p class="ok">✓ Your resume is in, compiles, and is in Autopilot's layout.</p>` : ""}
+        <p>Autopilot tailors the LaTeX source of your own resume, in your own design: every macro, font and spacing
+        stays exactly as you set it, and only the words in your summary, experience, projects and skills are adapted to
+        each job. Upload your <code>.tex</code> file. A PDF or a Word file will not do.</p>
+        ${s.resume ? `<p class="ok">✓ Your resume is in, compiles, and Autopilot can read its sections.</p>` : ""}
         ${upload && !upload.compiled ? `<div class="banner stop"><b>It did not compile.</b> ${escape(upload.compile_error.slice(0, 400))}
           <br>A custom <code>.cls</code> or font next to it is not uploaded; ask Claude Code to add it.</div>` : ""}
-        ${!s.resume && problems.length ? `<div class="banner warn"><b>Your file is in, but not in Autopilot's layout</b>, so it
-          cannot be tailored yet: ${escape(problems.join("; "))}.
-          <br>Move your content into the template (same words, its headings and <code>\\resumeItem</code> bullets), or ask
-          Claude Code in the Autopilot folder: <i>"move my resume into Autopilot's template"</i>. It copies your LaTeX across
-          word for word.</div>` : ""}
+        ${!s.resume && problems.length ? `<div class="banner warn"><b>Your file is in, but Autopilot cannot find what to
+          tailor in it</b>: ${escape(problems.join("; "))}.
+          <br>Your design stays; only a heading may need a clearer name. Or ask Claude Code in the Autopilot folder:
+          <i>"make Autopilot read my resume"</i>.</div>` : ""}
         <div class="actions">
           <label class="act primary">${s.resume || problems.length ? "Upload a new .tex" : "Upload your .tex"}
             <input type="file" id="obTex" accept=".tex" hidden></label>
-          <a class="act" href="/setup/template" download>Download the template</a>
+          <a class="act" href="/setup/template" download>No LaTeX resume? Get a template</a>
         </div>
-        <p class="hint" id="obTexMsg">No LaTeX resume yet? Download the template, put your resume into it (any editor, or
-        Overleaf), and upload it here.</p>
+        <p class="hint" id="obTexMsg">Any LaTeX resume works: Jake's, Awesome-CV, moderncv, your own. No LaTeX resume
+        yet? Take the template, write yours into it (any editor, or Overleaf), and upload it here.</p>
         <div class="actions">${back}<button class="act primary" id="obNext" ${s.resume ? "" : "disabled"}>Next</button>
           <button class="act" id="obLater">Do this later</button></div>`;
     } else {

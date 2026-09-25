@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 import paths
 
-from . import layout, llm, profile as profile_module, prompts
+from . import layout, llm, profile as profile_module, prompts, structure
 from .fetch import Posting
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -128,55 +128,33 @@ def make_diff(before: str, after: str, path: str = "resume.tex") -> str:
 
 
 def split_sections(tex: str) -> dict[str, str]:
-    """Map section name to its body.
+    """Map section name to its body, in whatever layout the resume is.
 
-    The template writes headings as
-    `\\section{\\texorpdfstring{\\color{airforceblue}NAME}{}}`, so the section
-    name is the run of capitals before the closing braces. Everything before
-    the first heading is returned under the key `PREAMBLE`.
+    The four sections the rules name (SUMMARY, EXPERIENCE, PROJECTS,
+    TECHNICAL SKILLS) are keyed by those names whatever the resume calls
+    them ("Work Experience", "Profile"); every other section by its own
+    heading. Everything before the first heading is `PREAMBLE`.
+    `tailor/structure.py` reads the layout.
     """
-    pattern = re.compile(
-        r"\\section\{\\texorpdfstring\{(?:\\color\{[^}]*\})?\s*([A-Z][A-Z &/]*[A-Z])\}\{\}\}"
-    )
-    # A heading quoted in a comment is not a heading: the template's own
-    # comment once made a section called NAME.
-    matches = [m for m in pattern.finditer(tex) if not _commented(tex, m.start())]
-    if not matches:
-        return {"PREAMBLE": tex}
-
-    sections = {"PREAMBLE": tex[: matches[0].start()]}
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(tex)
-        sections[match.group(1).strip()] = tex[match.end(): end]
-    return sections
-
-
-def _commented(tex: str, index: int) -> bool:
-    """Whether `index` sits after an unescaped % on its line."""
-    line = tex[tex.rfind("\n", 0, index) + 1:index]
-    return re.search(r"(?<!\\)%", line) is not None
-
-
-SECTION_START = re.compile(r"\\section\{")
+    return structure.sections(tex)
 
 
 def master_problems(tex: str) -> list[str]:
     """Why this master resume cannot be tailored, or nothing.
 
-    The checker reads one layout: `base/resume.template.tex`. A resume in
-    any other (a plain `\\section{Experience}`, bullets as `\\item`) has
-    no sections it can find, so every reply reads as a changed preamble and
-    every attempt is rejected. Said at install and on the setup bar, before
-    the first job fails four times.
+    Any LaTeX layout will do: the person keeps their own design. What the
+    tailor needs is a section it can recognise as the experience, with
+    bullets under it; the summary, projects and skills are tailored when
+    they are there and simply left alone when they are not.
     """
-    sections = split_sections(tex)
-    problems = [f"no {name} heading in the template's form"
-                for name in EDITABLE_SECTIONS if name not in sections]
-    if "EXPERIENCE" in sections and not bullets(sections["EXPERIENCE"]):
-        problems.append("no \\resumeItem bullets under EXPERIENCE")
-    if "TECHNICAL SKILLS" in sections and not _skill_lines(tex):
-        problems.append("no \\textbf{Category:} lines under TECHNICAL SKILLS")
-    return problems
+    found = structure.titles(tex)
+    if "EXPERIENCE" not in found:
+        named = ", ".join(f'"{t}"' for t in found.values()) or "none"
+        return [f"no section reads as the work experience (headings found: {named}); "
+                "a heading such as Experience or Work Experience is needed"]
+    if not bullets(split_sections(tex)["EXPERIENCE"]):
+        return ["no bullets under the experience section (\\item or \\resumeItem)"]
+    return []
 
 
 def restore_preamble(original: str, tailored: str) -> tuple[str, bool]:
@@ -192,12 +170,12 @@ def restore_preamble(original: str, tailored: str) -> tuple[str, bool]:
 
     Returns the spliced resume and whether anything had to be restored.
     """
-    here, there = SECTION_START.search(original), SECTION_START.search(tailored)
-    if not here or not there:
+    here, there = structure.first_heading(original), structure.first_heading(tailored)
+    if here is None or there is None:
         return tailored, False
-    if _normalise(original[:here.start()]) == _normalise(tailored[:there.start()]):
+    if _normalise(original[:here]) == _normalise(tailored[:there]):
         return tailored, False
-    return original[:here.start()] + tailored[there.start():], True
+    return original[:here] + tailored[there:], True
 
 
 def _check_frozen_sections(original: str, tailored: str) -> None:
@@ -227,36 +205,15 @@ def _normalise(text: str) -> str:
 
 def _balanced_body(tex: str, open_index: int) -> Optional[str]:
     """Text between the brace at `open_index` and its matching close brace."""
-    depth = 0
-    for index in range(open_index, len(tex)):
-        char = tex[index]
-        if char == "{" and (index == 0 or tex[index - 1] != "\\"):
-            depth += 1
-        elif char == "}" and tex[index - 1] != "\\":
-            depth -= 1
-            if depth == 0:
-                return tex[open_index + 1: index]
-    return None
+    return structure.balanced(tex, open_index)
 
 
 def bullets(tex: str) -> list[str]:
-    """Body of every \\resumeItem, in document order.
-
-    A regex cannot do this: bullet bodies contain nested braces from
-    \\normalsize, \\href, and \\textbf, so the closing brace has to be found
-    by counting depth.
-    """
-    # Scan the body only: the preamble contains \\newcommand{\\resumeItem}...,
-    # whose definition would otherwise be counted as a bullet.
-    start = tex.find(r"\begin{document}")
-    if start == -1:
-        start = 0
-    found = []
-    for match in re.finditer(r"\\resumeItem\s*\{", tex[start:]):
-        body = _balanced_body(tex[start:], match.end() - 1)
-        if body is not None:
-            found.append(body)
-    return found
+    """Every bullet body, in document order: `\\resumeItem{...}` when the
+    resume uses it, else each `\\item`. Bodies contain nested braces from
+    \\normalsize, \\href and \\textbf, so they are read by counting depth
+    (`tailor/structure.py`), not by a regex."""
+    return structure.bullets(tex)
 
 
 def bullet_lengths(tex: str) -> list[int]:
@@ -375,23 +332,16 @@ def _bullets_with_sections(tex: str) -> list[tuple[str, str]]:
     return out
 
 
-SUMMARY_RE = re.compile(r"SUMMARY\}\{\}\}(.*?)(?=\\section|\Z)", re.S)
-SKILL_LINE_RE = re.compile(r"\\textbf\s*\{[^\n]*?\}[^\n]*", re.S)
+SKILL_LINE_RE = structure.SKILL_LINE
 
 
 def _summary(tex: str) -> str:
-    match = SUMMARY_RE.search(tex)
-    return match.group(1) if match else ""
+    return structure.summary(tex)
 
 
 def _skill_lines(tex: str) -> list[str]:
-    """One entry per `Category: items` line of TECHNICAL SKILLS."""
-    start = tex.find("TECHNICAL SKILLS")
-    if start == -1:
-        return []
-    end = tex.find(r"\section", start + 1)
-    block = tex[start:end if end != -1 else len(tex)]
-    return [line.strip() for line in SKILL_LINE_RE.findall(block)]
+    """One entry per line of the skills section (`tailor/structure.py`)."""
+    return structure.skill_lines(tex)
 
 
 def single_items(tex: str) -> list[tuple[str, str]]:
@@ -759,8 +709,29 @@ def _build_user_message(posting: Posting, resume: str, profile: str) -> str:
            if project_lines else "")
         + f"\n\n{budget}"
     )
+    sections.append(layout_note(resume))
     sections.append(f"## Master resume LaTeX\n\n```tex\n{resume}\n```")
     return "\n\n".join(sections)
+
+
+def layout_note(resume: str) -> str:
+    """The rules name four sections; this resume may call them anything.
+    Said per resume, so "EXPERIENCE" in the rules is the heading the person
+    wrote, and the design they chose is left exactly as it is."""
+    found = structure.titles(resume)
+    roles = [f"- {role}: the section headed \"{found[role]}\"" if role in found
+             else f"- {role}: this resume has none; leave it that way"
+             for role in EDITABLE_SECTIONS]
+    frozen = [f'"{title}"' for key, title in found.items() if key not in EDITABLE_SECTIONS]
+    bullet = (r"`\resumeItem{...}`" if structure.uses_resume_item(resume)
+              else r"`\item` lines")
+    return ("## This resume's layout\n\n"
+            "The resume is in the person's own LaTeX design. Keep every macro, "
+            "environment, spacing command and heading exactly as it is; change only "
+            "the words inside the sections below.\n\n"
+            + "\n".join(roles)
+            + (f"\n\nFrozen, word for word: {', '.join(frozen)}." if frozen else "")
+            + f"\n\nBullets in this resume are {bullet}; a bullet stays one of those.")
 
 
 def tailor(

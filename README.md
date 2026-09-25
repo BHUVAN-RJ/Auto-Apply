@@ -18,8 +18,9 @@ Apple Silicon Mac, Google Chrome, [Homebrew](https://brew.sh), and
 
 It clones this repository, installs what it needs and builds
 `Autopilot.app`. Your resume goes in as its LaTeX source (`.tex`), never
-a PDF: the tailor edits the source, so every word stays yours. No LaTeX
-resume yet? The app gives you its template to fill in. Then you do
+a PDF, and in your own design: any LaTeX layout works, and only the words
+in your summary, experience, projects and skills change per job. No LaTeX
+resume yet? The app gives you a template to fill in. Then you do
 two things yourself, on the app's first screens: paste your
 [OpenRouter key](https://openrouter.ai/settings/keys) (it is checked with
 OpenRouter and kept on your Mac, nowhere else), and install Jobright's
