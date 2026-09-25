@@ -203,6 +203,14 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     # A fresh run clears the last one's error; otherwise a retry that
     # succeeds still shows "Failed" over a perfectly good resume.
     held = (queue.get(job.id) or job).status if keep_status else None
+    # A failed run leaves no standing worth keeping. Documents that land now
+    # are the job coming back to checkpoint 1, not a replacement resume
+    # beside a finished application, and a job left at `failed` sits in a
+    # closed shelf where the new resume is never seen. The fill is still not
+    # started by this path; the human approves it as usual.
+    revive = held == Status.FAILED
+    if revive:
+        held = None
     if keep_status:
         queue.update(job.id, error=None)
     else:
@@ -260,7 +268,7 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
             "note if you think the model is wrong.\n",
         )
         store.set_status(app_dir, held or Status.AWAITING_REVIEW, f"poor fit: {exc}")
-        if not keep_status:
+        if not keep_status or revive:
             queue.update(job.id, status=Status.AWAITING_REVIEW)
         print(f"  flagged as a poor fit, waiting on you: {exc}")
         tell_tab(job, "done", "Poor fit, says the model; decide on the review page")
@@ -305,6 +313,10 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     if keep_status:
         # Documents only: the job keeps the standing it had, and the fill
         # is not touched. The new resume is for the human to hand over.
+        if revive:
+            queue.update(job.id, status=Status.AWAITING_REVIEW)
+            print(f"  re-tailored after a failure, back at checkpoint 1: {app_dir}")
+            return app_dir
         print(f"  re-tailored, status left at {held.value if held else 'unchanged'}: {app_dir}")
         return app_dir
     queue.update(job.id, status=Status.AWAITING_REVIEW)
