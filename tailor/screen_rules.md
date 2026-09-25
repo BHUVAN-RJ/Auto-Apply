@@ -57,7 +57,9 @@ flag.
   including onsite, hybrid, no relocation assistance, and state-restricted
   remote roles. Do not compare one US city with another. Also never: a
   posting that lists several offices or remote among them; a headquarters
-  city in the header of a remote role; a street address.
+  city in the header of a remote role; a street address; a US metro named
+  without its state ("the NYC tri-state area", "the Bay Area", "SF",
+  "Greater Boston") — those are US cities like any other.
 
 ### `timeline`
 

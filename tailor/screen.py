@@ -167,14 +167,43 @@ US_STATE_CODES = (
 )
 
 
+# US places a posting names without naming a state or the country. A quote
+# such as "Based in the NYC tri-state area" is a US-to-US distance and under
+# the policy is green, but it carries no state name, no state code and no
+# "United States", so it used to survive as a hard flag and reject the job
+# outright (a real run: NYC tri-state against an applicant in Los Angeles).
+US_METROS = (
+    "nyc", "new york city", "tri-state", "tristate", "bay area",
+    "silicon valley", "san francisco", "los angeles", "socal",
+    "southern california", "northern california", "seattle", "portland",
+    "austin", "dallas", "houston", "chicago", "boston", "atlanta",
+    "denver", "miami", "philadelphia", "phoenix", "san diego", "san jose",
+    "pittsburgh", "detroit", "minneapolis", "nashville", "charlotte",
+    "raleigh", "research triangle", "salt lake city", "las vegas",
+    "kansas city", "st. louis", "saint louis", "baltimore", "orlando",
+    "tampa", "sacramento", "columbus", "cincinnati", "cleveland",
+    "indianapolis", "milwaukee", "new orleans", "oklahoma city",
+    "san antonio", "d.c. metro", "dc metro", "washington d.c.",
+    "sf", "newark", "sunnyvale", "mountain view", "palo alto",
+    "santa clara", "santa monica", "brooklyn", "manhattan", "queens",
+    "bellevue", "redmond", "cambridge", "arlington", "plano", "irvine",
+    "boulder", "durham", "madison", "ann arbor", "provo", "scottsdale",
+)
+
+
 def quote_names_us_location(quote: str) -> bool:
     """Whether a location quote explicitly identifies the United States.
 
     City-to-city distance inside the US is never a screen flag. State codes
     stay case-sensitive here so ordinary words such as "in" and "or" do not
-    accidentally look like Indiana and Oregon.
+    accidentally look like Indiana and Oregon; US metros are read by name,
+    because a posting often names only the metro ("the NYC tri-state area").
     """
     lowered = quote.lower()
+    # Word-bounded: "sf" must not match inside another word, and "queens"
+    # must not be found in "Queensland".
+    if any(re.search(rf"\b{re.escape(metro)}\b", lowered) for metro in US_METROS):
+        return True
     if re.search(r"\bunited states(?: of america)?\b", lowered):
         return True
     if re.search(r"\bU\.?S\.?(?:A\.?)?\b", quote) or re.search(r"\bUSA\b", quote):

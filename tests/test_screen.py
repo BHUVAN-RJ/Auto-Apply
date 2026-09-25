@@ -155,6 +155,25 @@ def test_us_location_is_green_even_when_model_calls_it_hard():
     assert result.verdict == "ok"
 
 
+def test_a_us_metro_named_without_its_state_is_still_green():
+    """A real reject: "Based in the NYC tri-state area" against an applicant
+    in Los Angeles. The quote names no state, no state code and no country,
+    so the hard flag survived and the job was rejected for a US-to-US
+    distance, which the policy says is never a flag."""
+    posting = "Based in the NYC tri-state area and in the office three days a week."
+    result = screen.parse_reply(reply(flags=[{
+        "category": "location", "severity": "hard",
+        "quote": "Based in the NYC tri-state area",
+        "reason": "Applicant is in Los Angeles and the role requires NYC tri-state presence.",
+    }]), text=posting)
+
+    assert result.flags == []
+    assert result.verdict == "ok"
+    assert screen.quote_names_us_location("Greater Boston area")
+    assert screen.quote_names_us_location("hybrid in the Bay Area")
+    assert not screen.quote_names_us_location("Based in the Greater Toronto Area")
+
+
 def test_non_us_location_flag_is_preserved():
     posting = "This position is based in Toronto, Ontario, Canada."
     result = screen.parse_reply(reply(flags=[{
