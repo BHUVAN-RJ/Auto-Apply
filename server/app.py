@@ -22,6 +22,7 @@ from .models import Job, Status
 from .form import router as form_router
 from .profile import router as profile_router
 from .prompts import router as prompts_router
+from .report import router as report_router
 from .github import router as github_router
 from .review import router as review_router
 from .scout import router as scout_router
@@ -83,6 +84,7 @@ app.include_router(voice_router)
 app.include_router(github_router)
 app.include_router(scout_router)
 app.include_router(prompts_router)
+app.include_router(report_router)
 
 
 @app.on_event("startup")

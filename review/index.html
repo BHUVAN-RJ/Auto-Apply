@@ -401,6 +401,17 @@
   .proposal .diff { border: 1px solid var(--line); margin: .4rem 0; max-height: 50vh; overflow-y: auto; }
   .history button.act { font-size: 11px; padding: .2rem .5rem; }
 
+  header button.report { background: none; border: 1px solid var(--line); color: var(--muted); font: inherit;
+                         font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: .3rem .6rem;
+                         cursor: pointer; }
+  header .pstat[hidden] + button.report, header .count + button.report { margin-left: auto; }
+  header button.report:hover { color: var(--ink); border-color: var(--ink); }
+  dialog.wide { width: min(640px, 94vw); }
+  dialog input[type=text] { width: 100%; padding: .5rem; border: 2px solid var(--line); background: var(--bg);
+                            color: inherit; font: inherit; }
+  dialog textarea.diag { font-size: 11px; min-height: 8rem; color: var(--muted); }
+  dialog .choices { display: flex; gap: 1.2rem; }
+  dialog .choices label { display: inline; text-transform: none; font-size: 13px; color: inherit; margin: 0; }
   dialog {
     border: 2px solid var(--line); background: var(--panel);
     color: inherit; padding: 1.25rem; width: min(420px, 92vw);
@@ -422,6 +433,7 @@
   </div>
   <span class="count" id="count"></span>
   <button class="pstat" id="profileStat" aria-current="false" hidden></button>
+  <button class="report" id="reportOpen" title="Report a problem or request a feature">Report</button>
 </header>
 
 <!-- First run: what is still missing before the first job. Shown on every
@@ -433,6 +445,28 @@
   <nav id="list"></nav>
   <section class="detail" id="detail"><p class="empty">Loading…</p></section>
 </main>
+
+<dialog id="reportDialog" class="wide">
+  <form method="dialog" id="reportForm">
+    <h4>Report a problem or request a feature</h4>
+    <div class="choices" role="radiogroup">
+      <label><input type="radio" name="rkind" value="problem" checked> A problem</label>
+      <label><input type="radio" name="rkind" value="feature"> A feature</label>
+    </div>
+    <label for="rtitle">In a few words</label>
+    <input type="text" id="rtitle" placeholder="e.g. the Greenhouse resume slot stays empty">
+    <label for="rtext" id="rtextLabel">What happened</label>
+    <textarea id="rtext" placeholder="What you did, what you expected, what you got."></textarea>
+    <label for="rdiag">Sent with it (nothing personal; edit freely)</label>
+    <textarea id="rdiag" class="diag" spellcheck="false"></textarea>
+    <p class="hint" id="rmsg">This opens a GitHub issue in your browser, filled in. Nothing is sent until you press Submit
+      there. The repository is public: leave out your name, contact details and resume.</p>
+    <div class="actions" style="justify-content:flex-end;margin-bottom:0">
+      <button class="act" value="cancel" formnovalidate>Cancel</button>
+      <button class="act primary" id="rsend" value="send" disabled>Open on GitHub</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="rejectDialog">
   <form method="dialog" id="rejectForm">
@@ -1176,7 +1210,7 @@ api("/review/meta/reject-reasons")
 // Refresh while a pipeline run is in flight, but never while a dialog is open
 // or the page is hidden, so a decision in progress is not interrupted.
 function pollNow() {
-  if (document.hidden || $("rejectDialog").open) return;
+  if (document.hidden || $("rejectDialog").open || $("reportDialog").open) return;
   if (view === "jobs") { loadList(); loadProfileStat(); }
   else if (view === "profile") Profile.poll();
   else if (view === "scout") Scout.poll();
@@ -1870,6 +1904,38 @@ const Onboard = (() => {
   }
 
   return { show, hide };
+})();
+
+// --------------------------------------------------------------- Report --
+// A prefilled GitHub issue, opened in the person's own browser. The app
+// sends nothing: they read it there and submit, or do not.
+(() => {
+  const dialog = $("reportDialog");
+  const kind = () => dialog.querySelector("input[name=rkind]:checked").value;
+  const sync = () => {
+    $("rsend").disabled = !$("rtext").value.trim();
+    $("rtextLabel").textContent = kind() === "problem" ? "What happened" : "What you would like";
+  };
+  $("reportOpen").onclick = async () => {
+    $("rmsg").textContent = "This opens a GitHub issue in your browser, filled in. Nothing is sent until you press Submit "
+      + "there. The repository is public: leave out your name, contact details and resume.";
+    $("rdiag").value = "Reading…";
+    dialog.showModal();
+    sync();
+    try { $("rdiag").value = (await api("/report")).diagnostics; } catch (err) { $("rdiag").value = ""; }
+  };
+  for (const r of dialog.querySelectorAll("input[name=rkind]")) r.onchange = sync;
+  $("rtext").oninput = sync;
+  $("rsend").onclick = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api("/report/open", { method: "POST", body: JSON.stringify({
+        kind: kind(), title: $("rtitle").value, text: $("rtext").value, diagnostics: $("rdiag").value }) });
+      if (!r.opened) window.open(r.url, "_blank", "noopener");
+      $("rtitle").value = ""; $("rtext").value = "";
+      dialog.close();
+    } catch (err) { $("rmsg").textContent = err.message; }
+  };
 })();
 
 // -------------------------------------------------------------- Prompts --

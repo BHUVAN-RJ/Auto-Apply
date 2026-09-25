@@ -2,7 +2,9 @@
 
 **If you are a person:** open Claude Code in a terminal and paste this:
 
-> Install Autopilot from https://github.com/BHUVAN-RJ/Auto-Apply. Follow INSTALL.md in that repository.
+```text
+Install Autopilot from https://github.com/BHUVAN-RJ/Auto-Apply. Follow INSTALL.md in that repository.
+```
 
 Claude Code does the rest and tells you the few things only you can do:
 paste your OpenRouter key into the app, sign in to Jobright, and answer

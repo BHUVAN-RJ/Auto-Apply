@@ -1,0 +1,22 @@
+name: Report a problem
+description: Something in Autopilot broke or behaved wrongly.
+title: "Problem: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Leave out your name, email, phone, resume text and anything else about you.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Filled in by the app's Report button. Nothing personal; edit anything you would rather not share.
+      render: text

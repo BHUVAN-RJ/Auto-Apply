@@ -1,0 +1,22 @@
+name: Request a feature
+description: Something Autopilot should do.
+title: "Feature: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Many changes need no feature at all: the Prompts tab's Workshop changes how the resume, letter and answers are written, and Claude Code can change your own copy (UPDATING.md). This is for what would help everyone.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you would like
+      description: What it should do, and the job-search moment where you wanted it.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Filled in by the app. Nothing personal.
+      render: text

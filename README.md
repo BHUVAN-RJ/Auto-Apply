@@ -14,7 +14,9 @@ loop at the two moments that actually matter.
 Apple Silicon Mac, Google Chrome, [Homebrew](https://brew.sh), and
 [Claude Code](https://claude.com/claude-code). Open Claude Code and paste:
 
-> Install Autopilot from https://github.com/BHUVAN-RJ/Auto-Apply. Follow INSTALL.md in that repository.
+```text
+Install Autopilot from https://github.com/BHUVAN-RJ/Auto-Apply. Follow INSTALL.md in that repository.
+```
 
 It clones this repository, installs what it needs and builds
 `Autopilot.app`. Your resume goes in as its LaTeX source (`.tex`), never
