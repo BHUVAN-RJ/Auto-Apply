@@ -13,6 +13,8 @@ tailored source must not have touched any section outside the allowed set.
 from __future__ import annotations
 
 import difflib
+import math
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -495,6 +497,181 @@ def overrun_report(original: str, tailored: str) -> str:
     return f"These bullets run onto an extra line:\n{lines}"
 
 
+# ------------------------------------------------------- what was invented --
+
+# A number on a resume is a claim the reader can check, and until now nothing
+# checked it: links and counts were verified, figures never were. Both premium
+# models wrote some that are true of nothing on file ("100+ jobs in a week",
+# falsification gaps that no story mentions). Every figure in the tailored
+# resume has to come from the master resume or from a story.
+# Not a digit inside a name: "k6", "p95" and "S3" are terms, checked as
+# terms; a figure is a number that stands on its own.
+NUMBER = re.compile(r"(?<![A-Za-z0-9.])\d[\d,]*(?:\.\d+)?")
+# A term worth checking: a word carrying a capital letter or a digit, which is
+# how a stack, a product, a metric and a proper noun read. Ordinary prose words
+# are the model's to choose; "Kubernetes" is not.
+TERM = re.compile(r"[A-Za-z][A-Za-z0-9+#.-]*")
+# Both sides are read with this: the master writes "10K/hour", and a piece of
+# a token must never look new on its own.
+WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9+#.-]*")
+
+
+def _visible_text(tex: str) -> str:
+    """What a reader sees in the parts the model may edit: every bullet, the
+    summary and the skills lines, macros stripped."""
+    parts = [layout.visible(body) for body in bullets(tex)]
+    parts += [layout.visible(body) for _, body in single_items(tex) if body]
+    # One fragment per line: a bullet's first word starts a sentence, and the
+    # term scan has to be able to see that.
+    return "\n".join(parts)
+
+
+def _numbers(text: str) -> set[str]:
+    return {match.group(0).replace(",", "").rstrip(".") for match in NUMBER.finditer(text)}
+
+
+# The first word of a sentence is capitalised because it is first, not
+# because it names anything. "Served 50K requests" would otherwise read as
+# a product called Served.
+# A colon does not start a sentence: a story's "Stack: Memcached" would
+# lose the very word it is there to license.
+SENTENCE_START = re.compile(r"(?:^|(?<=[.!?])\s+|(?<=\n)\s*)[A-Za-z][A-Za-z0-9+#.]*")
+
+
+def _stem(word: str) -> str:
+    """Enough of a stem that a rewrite is not mistaken for an invention:
+    "fine-tuning" is the master's "fine-tuned", and a bullet rewritten in
+    another tense says nothing new."""
+    word = word.lower()
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _named(text: str) -> dict[str, str]:
+    """Stem -> the word as it was written. A name is a word carrying a
+    capital or a digit; a word capitalised only because it opens a sentence
+    is not one."""
+    found: dict[str, str] = {}
+    # The same token pattern as the known side, so "50K+" is one word on both
+    # and a piece of it never looks new on its own.
+    for match in WORD.finditer(SENTENCE_START.sub(" ", text)):
+        word = match.group(0).strip(".-")
+        if len(word) < 2 or not any(c.isalpha() for c in word):
+            continue
+        if not (any(c.isupper() for c in word) or any(c.isdigit() for c in word)):
+            continue
+        for part in word.split("-"):
+            if len(part) > 1:
+                found.setdefault(_stem(part), part)
+    return found
+
+
+def _terms(text: str) -> set[str]:
+    """The stems of every name in `text`."""
+    return set(_named(text))
+
+
+def _words(text: str) -> set[str]:
+    """The stem of every word in `text`, names or not."""
+    return {_stem(part) for match in WORD.finditer(text)
+            for part in match.group(0).strip(".-").split("-") if len(part) > 1}
+
+
+def _is_known(stem: str, known: set[str]) -> bool:
+    """Is this stem already on file? Read loosely on purpose: "Dec" is the
+    master's December and "Tracker" is its GitTrack. What the check is for is
+    a name that is on file nowhere at all, in any form.
+    """
+    if stem in known:
+        return True
+    return len(stem) >= 3 and any(stem in word for word in known)
+
+
+def _check_invented(original: str, tailored: str, profile: str = "", posting: str = "") -> None:
+    """No figure and no named thing that is not already on file.
+
+    Two sources, deliberately different. A **figure** may come only from the
+    master resume or a story: a number is a claim about what the candidate
+    did, and a posting's own numbers say nothing about them. A **term** may
+    also come from the posting, because naming the stack the way the posting
+    names it is the point of tailoring; what it may not be is from nowhere.
+    """
+    from_model = _visible_text(tailored)
+    # Everything the master says, not only the parts the model may edit: the
+    # education line holds "MS", and a word the master writes in lower case
+    # ("fine-tuned") licenses the tailored resume's "Fine-Tuning".
+    on_file = layout.visible(original) + "\n" + (profile or "")
+
+    invented = sorted(_numbers(from_model) - _numbers(on_file))
+    if invented:
+        raise TailorError(
+            "tailored resume states figures that are on neither the master resume "
+            f"nor a story: {', '.join(invented)}. Use the master's own numbers, in "
+            "the master's own spelling"
+        )
+
+    # Known is every word on file, not only the ones that read as names: the
+    # master's own prose is as good a source for a term as its skills line.
+    known = _words(on_file) | _words(posting or "")
+    strange = sorted(word for stem, word in _named(from_model).items()
+                     if not _is_known(stem, known))
+    if strange:
+        raise TailorError(
+            "tailored resume names things that are on neither the master resume, "
+            f"a story, nor the posting: {', '.join(strange)}"
+        )
+
+
+# ---------------------------------------------------------- how much moved --
+
+# How many of the EXPERIENCE bullets a run is expected to rewrite. The
+# tailoring prompt asks for every mapped bullet; prose alone is not enough for
+# a cheap model, which is the whole finding of the six-model comparison
+# (2026-09-24: Opus rewrote 5 of 6 bullets, GLM 1 of 6, on the same prompt).
+# Every budget that is enforced and named gets obeyed; this makes the volume
+# one of them. A fraction, not a count, because a shorter resume has fewer
+# bullets to spend.
+MIN_REWRITE = float(os.environ.get("AUTOPILOT_MIN_REWRITE", "0.5"))
+
+
+def rewritten(original: str, tailored: str) -> tuple[list[int], list[int]]:
+    """(master indices rewritten, master indices left alone), EXPERIENCE only.
+
+    Matched by similarity like every other bullet comparison, so reordering
+    is not mistaken for a rewrite.
+    """
+    changed, kept = [], []
+    for index, before, after, section in _paired_bodies(original, tailored):
+        if section != "EXPERIENCE":
+            continue
+        (changed if _normalise(before) != _normalise(after) else kept).append(index)
+    return changed, kept
+
+
+def under_tailored(original: str, tailored: str) -> Optional[str]:
+    """The run that barely touched the resume, named. None when it is fine.
+
+    Never fatal: it is raised as a rejection while attempts are left and
+    carried as a warning on the last one. A resume that could honestly not be
+    improved is a worse outcome as a failed job than as a thin one.
+    """
+    try:
+        changed, kept = rewritten(original, tailored)
+    except TailorError:
+        return None
+    total = len(changed) + len(kept)
+    if not total:
+        return None
+    floor = math.ceil(total * MIN_REWRITE)
+    if len(changed) >= floor:
+        return None
+    return (f"only {len(changed)} of {total} EXPERIENCE bullets were rewritten; "
+            f"this run is expected to rewrite at least {floor}. Untouched: "
+            + ", ".join(f"bullet {i}" for i in kept))
+
+
 HREF = re.compile(r"\\href\{([^}]*)\}")
 LINK_LINE = re.compile(r"^Link:\s*(\S+)\s*$", re.M)
 
@@ -514,7 +691,7 @@ def _check_links(original: str, tailored: str, profile: str) -> None:
                           f"resume nor a story's Link line: {', '.join(sorted(set(strange)))}")
 
 
-def _validate(original: str, tailored: str, profile: str = "") -> list[str]:
+def _validate(original: str, tailored: str, profile: str = "", posting: str = "") -> list[str]:
     """Structural checks, cheapest first. Returns non-fatal warnings."""
     if not tailored.strip():
         raise TailorError("model returned an empty resume")
@@ -525,7 +702,11 @@ def _validate(original: str, tailored: str, profile: str = "") -> list[str]:
             raise TailorError(f"tailored resume dropped {command}")
     _check_frozen_sections(original, tailored)
     _check_links(original, tailored, profile)
-    return _check_lengths(original, tailored)
+    # Lengths first: that is the check that protects the page, and a bullet
+    # that overflowed is a more specific thing to be told than a figure in it.
+    warnings = _check_lengths(original, tailored)
+    _check_invented(original, tailored, profile, posting)
+    return warnings
 
 
 def load_base_resume(path: Path = BASE_RESUME) -> str:
@@ -664,7 +845,7 @@ def tailor(
                 continue
 
         try:
-            warnings = _validate(original, tailored, profile)
+            warnings = _validate(original, tailored, profile, posting.text)
         except TailorError as exc:
             last_error = str(exc)
             rejected.append({"attempt": attempt, "reason": last_error, "tex": tailored})
@@ -676,6 +857,25 @@ def tailor(
                 "you just sent."
             )
             continue
+
+        # How much moved. Rejected while there are attempts left, carried as a
+        # warning on the last one: a thin resume is worth seeing on the review
+        # page, a failed job is not.
+        thin = under_tailored(original, tailored)
+        if thin:
+            if attempt < max_attempts:
+                last_error = thin
+                rejected.append({"attempt": attempt, "reason": thin, "tex": tailored})
+                feedback = (
+                    f"\n\n## Your previous attempt was rejected\n\n{thin}\n\n"
+                    "Rewrite those bullets too. Each one keeps its printed line "
+                    "count and every fact it states, and takes the X-Y-Z frame: "
+                    "past-tense verb, the result before the method, a measure or "
+                    "an honest scope, and the stack named the way the posting "
+                    "names it. Keep the edits you have already made."
+                )
+                continue
+            warnings = warnings + [thin]
 
         if page_check is not None:
             pages = page_check(tailored)

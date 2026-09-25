@@ -139,7 +139,8 @@ def test_validate_accepts_more_words_inside_the_same_lines():
                              "Cut p95 latency 52 percent")
     filled = short.replace("Cut p95 latency 52 percent",
                            "Cut p95 latency 52 percent by adding Redis")
-    assert tailor._validate(short, filled) == []
+    # The posting names Redis, so adopting its word is tailoring, not invention.
+    assert tailor._validate(short, filled, posting="We run Redis in front of Postgres") == []
 
 
 def test_validate_warns_when_a_bullet_lost_a_line():
@@ -356,7 +357,8 @@ def test_projects_may_move_lines_between_entries():
         "AudiTex: in-browser text-to-speech")
     assert tailor._section_lines(PROJECT_RESUME, "PROJECTS", 40) == 4
     assert tailor._section_lines(paid_for, "PROJECTS", 40) == 4
-    assert tailor._validate(PROJECT_RESUME, paid_for) == []
+    assert tailor._validate(PROJECT_RESUME, paid_for,
+                            posting="Load testing with k6 and Prometheus") == []
 
 
 def test_the_projects_section_may_not_grow_as_a_whole():
@@ -414,3 +416,71 @@ def test_a_heading_in_a_comment_is_not_a_section():
     tex = ("% like \\section{\\texorpdfstring{\\color{airforceblue}NAME}{}}\n"
            "\\section{\\texorpdfstring{\\color{airforceblue}SUMMARY}{}}\nHello\n")
     assert list(tailor.split_sections(tex)) == ["PREAMBLE", "SUMMARY"]
+
+
+def test_a_figure_that_is_on_nothing_we_hold_is_rejected():
+    """Links and counts were checked; figures never were, and the premium
+    runs wrote some that are true of nothing on file ("100+ jobs in a
+    week"). A number is a claim the reader can check, so it may come only
+    from the master resume or a story — never from the posting, which says
+    nothing about this candidate."""
+    invented = ORIGINAL.replace("handling 50K requests per day",
+                                "handling 900 requests per second")
+    with pytest.raises(tailor.TailorError, match="900"):
+        tailor._validate(ORIGINAL, invented, posting="900 requests per second at peak")
+    kept = ORIGINAL.replace("Built a scalable Python service handling 50K requests per day",
+                            "Served 50K requests per day from a scalable Python service")
+    assert tailor._validate(ORIGINAL, kept) == []
+
+
+def test_a_number_inside_a_name_is_a_term_not_a_figure():
+    assert tailor._numbers("p95 latency on S3 cut 52 percent") == {"52"}
+    assert "k6" in tailor._terms("load tested with k6")
+
+
+def test_a_term_may_come_from_the_posting_but_not_from_nowhere():
+    """Naming the stack the way the posting names it is the point of
+    tailoring; naming something neither the resume, a story nor the posting
+    mentions is invention."""
+    adopted = ORIGINAL.replace("a Redis caching layer", "a Memcached caching layer")
+    assert tailor._validate(ORIGINAL, adopted, posting="We run Memcached.") == []
+    with pytest.raises(tailor.TailorError, match="Memcached"):
+        tailor._validate(ORIGINAL, adopted, posting="Backend role.")
+    from_story = tailor._validate(ORIGINAL, adopted,
+                                  profile="Stack: Memcached, Python\nLink: https://x.test")
+    assert from_story == []
+
+
+def test_a_run_that_rewrote_almost_nothing_is_sent_back(monkeypatch):
+    """GLM rewrote 1 of 6 EXPERIENCE bullets where Opus rewrote 5, on the
+    same prompt: the volume has to be enforced and named like every other
+    budget. The first attempt is rejected with the untouched bullets named;
+    the last one is accepted with a warning, because a thin resume beats a
+    failed job."""
+    thin = ORIGINAL.replace("Built a scalable Python service",
+                            "Built a scalable Python backend")
+    assert tailor.under_tailored(ORIGINAL, ORIGINAL.replace("Built a", "Delivered a")) is None
+    note = tailor.under_tailored(ORIGINAL, thin)
+    assert note is None, "one of two bullets meets a floor of half"
+
+    monkeypatch.setattr(tailor, "MIN_REWRITE", 1.0)
+    note = tailor.under_tailored(ORIGINAL, thin)
+    assert note and "bullet 2" in note and "1 of 2" in note
+
+    sent = stub_model(monkeypatch, reply(thin), reply(
+        thin.replace("Cut p95 latency 52 percent", "Cut p95 latency 52 percent further")))
+    result = tailor.tailor(POSTING, resume_tex=ORIGINAL)
+    assert len(sent) == 2, "the thin attempt was sent back"
+    assert "Untouched: bullet 2" in sent[1]
+    assert result.attempts == 2 and not result.warnings
+
+
+def test_a_thin_run_on_the_last_attempt_is_a_warning_not_a_failure(monkeypatch):
+    monkeypatch.setattr(tailor, "MIN_REWRITE", 1.0)
+    thin = ORIGINAL.replace("Built a scalable Python service",
+                            "Built a scalable Python backend")
+    stub_model(monkeypatch, reply(thin))
+    result = tailor.tailor(POSTING, resume_tex=ORIGINAL, max_attempts=2)
+    assert result.tex.strip() == thin.strip()
+    assert any("EXPERIENCE bullets were rewritten" in w for w in result.warnings)
+    assert any("bullet 2" in r for r in result.rejections)

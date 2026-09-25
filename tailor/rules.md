@@ -221,13 +221,20 @@ carry is not, however well it would read.
 
 Go through the tailored text once more:
 
-- Every term you added or changed appears on the master resume or in the
-  profile. If it does not, take it out.
-- Every number is the number that was there.
+- Every term you added or changed appears on the master resume, in the
+  profile, or in the posting. If it appears in none of the three, take it
+  out; the checker compares word by word and sends the attempt back with
+  the word it could not find.
+- Every number appears on the master resume or in the profile. A figure is
+  a claim about this candidate, so the posting is not a source for one: the
+  checker names any figure it cannot find and rejects the attempt.
 - Every bullet, the summary, and every skills line prints on the same
   number of lines it did (below). Words may come and go; lines may not.
 - Every bullet opens with a past-tense verb, carries a measure, and names
   the method.
+- At least half of the `EXPERIENCE` bullets are rewritten, not left as they
+  were. The checker counts them and sends the attempt back naming the ones
+  you did not touch.
 - Nothing above `\begin{document}` changed; nothing outside the four
   editable sections changed; no entry, bullet, line or category was added
   or removed; no URL appears that the rules do not allow.
@@ -243,7 +250,10 @@ the same person, the same facts and the same shape, written for this
 job: the summary, every mapped bullet, the skills order, the entry
 order, and whatever the profile proves better than what is on the page.
 A document that comes back with one project changed and nothing else is
-under-tailored unless the posting really asked for nothing else.
+under-tailored unless the posting really asked for nothing else. This is
+measured, not hoped for: at least half of the `EXPERIENCE` bullets come
+back rewritten, and an attempt under that is rejected with the untouched
+bullets named.
 
 What holds absolutely:
 
