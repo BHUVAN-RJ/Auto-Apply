@@ -18,11 +18,12 @@ Apple Silicon Mac, Google Chrome, [Homebrew](https://brew.sh), and
 
 It clones this repository, installs what it needs, turns your resume into
 the LaTeX the tailor works on, and builds `Autopilot.app`. Then you do
-three things yourself, in the app: paste your
-[OpenRouter key](https://openrouter.ai/settings/keys) into the bar at the
-top (it is checked with OpenRouter and kept on your Mac, nowhere else),
-sign in to Jobright in the app's Chrome, and answer the profile
-interview. [INSTALL.md](INSTALL.md) has every step.
+two things yourself, on the app's first screens: paste your
+[OpenRouter key](https://openrouter.ai/settings/keys) (it is checked with
+OpenRouter and kept on your Mac, nowhere else), and install Jobright's
+extension and sign in to Jobright in the app's Chrome. The profile
+interview is offered last and is optional; it makes the tailoring better.
+[INSTALL.md](INSTALL.md) has every step.
 
 Your copy is yours to change. The **Prompts** tab shows every prompt the
 models are sent, editable; its **Workshop** takes a change in your own

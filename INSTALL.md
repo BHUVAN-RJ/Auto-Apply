@@ -133,25 +133,27 @@ and that is intended.
 
 ## 6. What only the person can do
 
-Tell them, in this order, and wait for each:
+The app opens on its onboarding: a few screens in the Autopilot window
+that walk the person through what only they can do. Tell them it is
+there and let them go through it:
 
-1. **The OpenRouter key.** In the yellow bar at the top of the Autopilot
-   page. They make one at https://openrouter.ai/settings/keys and add a
-   few dollars of credit there; the default model costs a few cents per
-   job, the "Use Opus" button about twenty. **Never ask for the key in
-   this conversation** and never write it into a file yourself: the page
+1. **The OpenRouter key.** They make one at
+   https://openrouter.ai/settings/keys (the screen opens it), add a few
+   dollars of credit, and paste it. The default model costs a few cents
+   per job, "Use Opus" about twenty. **Never ask for the key in this
+   conversation** and never write it into a file yourself: the screen
    checks it with OpenRouter and stores it on their Mac only.
-2. **Jobright.** In that same Chrome window: install the Jobright
-   extension from the Chrome Web Store and sign in to jobright.ai. Jobs
-   flow in from there: the banner on a posting screens it and, when it is
-   clean, queues it by itself.
-3. **The profile.** The Profile tab: press Start. A short facts interview,
-   then one story per job and project on the resume, by voice or text
-   (15-30 minutes, can be paused). Then the Form section (contact,
-   education, the usual form questions). The better this is, the better
-   every resume.
-4. Optional: the Projects tab reads their public GitHub projects into the
-   interview.
+2. **Jobright.** The screen opens the Chrome Web Store page for Jobright's
+   extension and jobright.ai, as tabs in the Autopilot Chrome (the one the
+   forms are filled in; their everyday Chrome does not count). It notices
+   the extension by itself; they tick "I'm signed in" once signed in.
+3. **The profile interview**, offered on the last screen, is optional. It
+   makes the tailoring better (the tailor uses what they did in each role
+   in their own words); they can start it then or any time from the
+   Profile tab.
+
+If they skip a step, the app shows what is still missing in a bar at the
+top until it is done.
 
 ## 7. Check
 

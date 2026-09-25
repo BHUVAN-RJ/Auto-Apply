@@ -364,6 +364,21 @@
   .hint { color: var(--muted); font-size: 12px; }
 
   /* First-run bar and the Prompts tab */
+  /* Onboarding: the first run, in place of the tabs and the panes. */
+  body.onboarding main, body.onboarding header .tabs, body.onboarding header .count,
+  body.onboarding header .pstat, body.onboarding .setupbar, body.onboarding .orbwrap { display: none !important; }
+  .onboard { flex: 1; overflow-y: auto; padding: 2rem 16px; }
+  .onboard[hidden] { display: none; }
+  .onboard .qform { margin: 0 auto; max-width: 64ch; border: 2px solid var(--line); }
+  .onboard p { line-height: 1.55; }
+  .onboard .ok { color: var(--green); }
+  .onboard input[type=password] { width: 100%; padding: .6rem; border: 2px solid var(--line); background: var(--bg);
+                                  color: inherit; font: inherit; margin: .4rem 0; }
+  .onboard ol.obsteps { padding-left: 1.4rem; }
+  .onboard ol.obsteps li { margin: .6rem 0; }
+  .onboard ol.obsteps li.done::marker { color: var(--green); }
+  .onboard ol.obsteps .act { margin: .3rem .5rem .3rem 0; }
+  .onboard ol.obsteps label { display: block; margin-top: .2rem; }
   .setupbar { border-bottom: 2px solid var(--line); padding: .7rem 16px; background: var(--warnbg); color: var(--ink); }
   .setupbar[hidden] { display: none; }
   .setupbar ol { margin: .3rem 0 0; padding-left: 1.4rem; }
@@ -410,6 +425,7 @@
 <!-- First run: what is still missing before the first job. Shown on every
      tab until it is all there; the key is typed here, never in a terminal. -->
 <div class="setupbar" id="setupbar" hidden></div>
+<section class="onboard" id="onboard" hidden></section>
 
 <main>
   <nav id="list"></nav>
@@ -1646,6 +1662,11 @@ const Setup = (() => {
   function render() {
     const s = last;
     const bar = $("setupbar");
+    if (s && !s.onboarded) {
+      bar.hidden = true;
+      if ($("onboard").hidden) Onboard.show(s);
+      return;
+    }
     if (!s || (s.key && s.resume && s.chrome)) { bar.hidden = true; return; }
     if (!bar.hidden && bar.contains(document.activeElement)) return;
     bar.hidden = false;
@@ -1679,6 +1700,150 @@ const Setup = (() => {
   return { poll };
 })();
 Setup.poll();
+
+// ------------------------------------------------------------ Onboarding --
+// The first run, one screen at a time: what Autopilot is, the OpenRouter
+// key, Jobright (the extension and the sign-in, in the Autopilot Chrome),
+// the resume only when it is not usable, then the offer of the profile
+// interview, which is optional. Shown until finished once (`onboarded`),
+// or never on a copy that already has jobs.
+const Onboard = (() => {
+  let s = null;           // GET /setup
+  let step = 0;
+  let signedIn = false;
+  let timer = null;
+
+  const steps = () => ["welcome", "key", "jobright", ...(s && !s.resume ? ["resume"] : []), "profile"];
+
+  function show(state) {
+    s = state;
+    document.body.classList.add("onboarding");
+    $("onboard").hidden = false;
+    render();
+  }
+
+  function hide() {
+    clearInterval(timer); timer = null;
+    document.body.classList.remove("onboarding");
+    $("onboard").hidden = true;
+  }
+
+  async function refresh() {
+    try { s = await api("/setup"); } catch (_) {}
+  }
+
+  function open(page) {
+    api("/setup/open", { method: "POST", body: JSON.stringify({ page }) })
+      .then((r) => { if (!r.opened) window.open(r.url, "_blank", "noopener"); })
+      .catch(() => {});
+  }
+
+  function render() {
+    const list = steps();
+    step = Math.min(step, list.length - 1);
+    const name = list[step];
+    clearInterval(timer); timer = null;
+    const prog = `<div class="prog"><i style="width:${Math.round(100 * (step + 1) / list.length)}%"></i></div>
+      <div class="sec">Setup · ${step + 1} of ${list.length}</div>`;
+    const back = step ? `<button class="act" id="obBack">Back</button>` : "";
+    let body = "";
+    if (name === "welcome") {
+      body = `<div class="q">Autopilot applies to jobs with you, not for you.</div>
+        <p>You open a posting on Jobright. Autopilot screens it, tailors your resume and a cover letter to it, fills the
+        application form, and stops. You read the filled form and press Submit yourself, every time; it never submits.</p>
+        <p>Two things to set up, about three minutes.</p>
+        <div class="actions"><button class="act primary" id="obNext">Start</button></div>`;
+    } else if (name === "key") {
+      body = `<div class="q">Your OpenRouter key</div>
+        <p>The models that tailor and screen run through OpenRouter, on your own account. Make a key, add a few dollars of
+        credit (a job costs a few cents; "Use Opus" about twenty), and paste the key here.</p>
+        ${s.key ? `<p class="ok">✓ Key saved and checked with OpenRouter.</p>` : `
+        <div class="actions"><button class="act" id="obOR">Open openrouter.ai/settings/keys</button></div>
+        <input type="password" id="obKey" autocomplete="off" placeholder="sk-or-v1-…">
+        <p class="hint" id="obKeyMsg">Checked with OpenRouter, then kept on this Mac only (${escape(s.home)}/.env).</p>`}
+        <div class="actions">${back}<button class="act primary" id="obNext" ${s.key ? "" : "disabled"}>${s.key ? "Next" : "Save key"}</button></div>`;
+    } else if (name === "jobright") {
+      body = `<div class="q">Jobright</div>
+        <p>Jobs come in from Jobright: open a posting there and Autopilot's banner screens it and queues it. Jobright's
+        extension also fills the forms first. Both happen in this Chrome window, Autopilot's own, so do them here.</p>
+        <ol class="obsteps">
+          <li class="${s.jobright ? "done" : ""}">Install the Jobright extension.
+            ${s.jobright ? `<span class="ok">✓ installed</span>` : `<button class="act" id="obExt">Open the Chrome Web Store</button>
+            <span class="hint">Press "Add to Chrome" there; this page notices by itself.</span>`}</li>
+          <li class="${signedIn ? "done" : ""}">Sign in to Jobright.
+            <button class="act" id="obJR">Open jobright.ai</button>
+            <label class="hint"><input type="checkbox" id="obSigned" ${signedIn ? "checked" : ""}> I'm signed in</label></li>
+        </ol>
+        <div class="actions">${back}<button class="act primary" id="obNext" ${s.jobright && signedIn ? "" : "disabled"}>Next</button>
+          <button class="act" id="obLater">Do this later</button></div>`;
+    } else if (name === "resume") {
+      body = `<div class="q">Your master resume</div>
+        ${s.resume_problems?.length
+          ? `<p>The resume at <code>${escape(s.resume_path)}</code> is not in Autopilot's layout, so it cannot be tailored yet:</p>
+             <ul>${s.resume_problems.map((p) => `<li>${escape(p)}</li>`).join("")}</ul>`
+          : `<p>There is no master resume at <code>${escape(s.resume_path)}</code> yet.</p>`}
+        <p>Ask Claude Code, in the Autopilot folder: <i>"Put my resume into Autopilot"</i> and give it your PDF. It follows
+        INSTALL.md, step 4.</p>
+        <div class="actions">${back}<button class="act primary" id="obRecheck">Check again</button>
+          <button class="act" id="obNext">Later</button></div>`;
+    } else {
+      body = `<div class="q">You're set.</div>
+        <p>Open a posting on Jobright and Autopilot takes it from there. Every job lands on the Jobs tab; the filled form
+        waits for your Submit.</p>
+        <div class="banner go"><b>For better tailoring, do the profile interview.</b> Ten to twenty minutes, by voice or
+        text: what you did in each role and project, in your own words. The tailor uses it to rewrite bullets with the
+        things your resume leaves out. Optional; you can start it any time from the Profile tab.</div>
+        <div class="actions">${back}<button class="act primary" id="obProfile">Start the profile interview</button>
+          <button class="act" id="obSkip">Skip for now</button></div>`;
+    }
+    $("onboard").innerHTML = `<div class="qform">${prog}${body}</div>`;
+    wire(name);
+  }
+
+  function wire(name) {
+    if ($("obBack")) $("obBack").onclick = () => { step--; render(); };
+    const next = () => { step++; render(); };
+    if (name === "welcome") $("obNext").onclick = next;
+    if (name === "key") {
+      if (s.key) { $("obNext").onclick = next; return; }
+      $("obOR").onclick = () => open("openrouter");
+      const input = $("obKey");
+      input.oninput = () => { $("obNext").disabled = !input.value.trim(); };
+      input.onkeydown = (e) => { if (e.key === "Enter" && input.value.trim()) $("obNext").click(); };
+      $("obNext").onclick = async () => {
+        $("obNext").disabled = true; $("obKeyMsg").textContent = "Checking with OpenRouter…";
+        try { s = await api("/setup/key", { method: "POST", body: JSON.stringify({ key: input.value }) }); }
+        catch (err) { $("obKeyMsg").textContent = err.message; $("obNext").disabled = false; return; }
+        render();
+      };
+      input.focus();
+    }
+    if (name === "jobright") {
+      if ($("obExt")) $("obExt").onclick = () => open("jobright_extension");
+      $("obJR").onclick = () => open("jobright");
+      $("obSigned").onchange = (e) => { signedIn = e.target.checked; render(); };
+      $("obNext").onclick = next;
+      $("obLater").onclick = next;
+      // The extension shows up in the profile folder a moment after "Add to Chrome".
+      if (!s.jobright) timer = setInterval(async () => { await refresh(); if (s.jobright) render(); }, 3000);
+    }
+    if (name === "resume") {
+      $("obRecheck").onclick = async () => { await refresh(); render(); };
+      $("obNext").onclick = next;
+    }
+    if (name === "profile") {
+      const finish = async (target) => {
+        try { await api("/setup/done", { method: "POST" }); } catch (_) {}
+        hide();
+        switchView(target);
+      };
+      $("obProfile").onclick = () => finish("profile");
+      $("obSkip").onclick = () => finish("jobs");
+    }
+  }
+
+  return { show, hide };
+})();
 
 // -------------------------------------------------------------- Prompts --
 // Every system prompt, editable, plus the Workshop: say what should work

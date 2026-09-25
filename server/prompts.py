@@ -4,17 +4,22 @@
   text, its history, and a pending update conflict when there is one.
 - `/workshop`: requests in words, turned into prompt edits by
   `tailor/workshop.py`; applied only on the person's click.
-- `/setup`: what is still missing before the first job (the OpenRouter
-  key, the master resume, Chrome), and the key itself. The key is typed
-  into the page, checked against OpenRouter, and written to the data
-  directory's `.env`; it is never sent anywhere else, and never through
-  Claude Code's transcript.
+- `/setup`: the first-run onboarding. What is still missing before the
+  first job (the OpenRouter key, the Jobright extension, the master
+  resume, Chrome), the key itself, and the Jobright pages opened in the
+  Autopilot Chrome. The key is typed into the page, checked against
+  OpenRouter, and written to the data directory's `.env`; it is never sent
+  anywhere else, and never through Claude Code's transcript. Whether the
+  person is signed in to Jobright is not read (that would mean reading
+  their cookies); they say so with a tick.
 """
 
 from __future__ import annotations
 
 import os
 import re
+
+import urllib.request
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -24,10 +29,22 @@ import paths
 from browser import chrome
 from tailor import prompts, tailor, workshop
 
+from . import queue, settings
+
 router = APIRouter()
 
 KEY_CHECK_URL = "https://openrouter.ai/api/v1/key"
 KEY_SHAPE = re.compile(r"^sk-or-[A-Za-z0-9_-]{20,}$")
+
+# Jobright's Chrome extension: what autofills the forms and puts the Apply
+# tab in front of the banner.
+JOBRIGHT_EXTENSION = "odcnpipkhjegpefkfplmedhmkmmhmoko"
+# The only pages onboarding opens; `/setup/open` takes a name, never a URL.
+PAGES = {
+    "jobright_extension": f"https://chromewebstore.google.com/detail/{JOBRIGHT_EXTENSION}",
+    "jobright": "https://jobright.ai/",
+    "openrouter": "https://openrouter.ai/settings/keys",
+}
 
 
 class PromptText(BaseModel):
@@ -44,6 +61,10 @@ class WorkshopRequest(BaseModel):
 
 class KeyRequest(BaseModel):
     key: str
+
+
+class OpenRequest(BaseModel):
+    page: str
 
 
 def _prompt_or_404(fn, *args):
@@ -130,15 +151,29 @@ def key_is_set() -> bool:
     return bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
 
 
+def jobright_installed() -> bool:
+    """The extension is in the Autopilot Chrome's profile, the one the
+    forms are filled in; the person's everyday Chrome does not count."""
+    from browser.fill import profile_dir
+    return (profile_dir() / "Default" / "Extensions" / JOBRIGHT_EXTENSION).is_dir()
+
+
+def onboarded() -> bool:
+    """Past the first-run screens: said so, or already has jobs (a copy
+    that was in use before onboarding existed never sees it)."""
+    return bool(settings.load().get("onboarded")) or bool(queue.all_jobs())
+
+
 @router.get("/setup")
 def setup_status() -> dict:
-    """What the first-run card lists. Each item is done or not; nothing
-    here blocks the page."""
+    """What onboarding and the setup bar list. Each item is done or not."""
     resume = paths.BASE / "resume.tex"
     problems = tailor.master_problems(resume.read_text(errors="replace")) if resume.exists() else []
     return {
         "home": str(paths.HOME),
+        "onboarded": onboarded(),
         "key": key_is_set(),
+        "jobright": jobright_installed(),
         "resume": resume.exists() and not problems,
         "resume_problems": problems,
         "resume_path": str(resume),
@@ -173,6 +208,28 @@ def check_key(key: str) -> None:
                                  "openrouter.ai/settings/keys.")
     if response.status_code >= 400:
         raise HTTPException(502, f"OpenRouter answered {response.status_code}")
+
+
+@router.post("/setup/open")
+def open_page(body: OpenRequest) -> dict:
+    """Open a Jobright or OpenRouter page as a tab in the Autopilot Chrome,
+    where the extension has to live, whichever browser shows this page."""
+    url = PAGES.get(body.page)
+    if url is None:
+        raise HTTPException(404, f"no page called {body.page!r}")
+    request = urllib.request.Request(
+        f"{chrome.cdp_url(chrome.port())}/json/new?{url}", method="PUT")
+    try:
+        urllib.request.urlopen(request, timeout=5).read()
+    except OSError:
+        return {"opened": False, "url": url}
+    return {"opened": True, "url": url}
+
+
+@router.post("/setup/done")
+def setup_done() -> dict:
+    settings.save(onboarded=True)
+    return setup_status()
 
 
 @router.post("/setup/key")

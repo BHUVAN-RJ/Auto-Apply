@@ -203,3 +203,29 @@ def test_key_is_checked_then_written(tmp_path, monkeypatch):
     assert client.post("/setup/key", json={"key": key}).json()["key"] is True
     assert env.read_text() == f"OPENROUTER_API_KEY={key}\nOTHER=1\n"
     monkeypatch.delenv("OPENROUTER_API_KEY")
+
+
+def test_onboarding_until_done_or_a_job_exists(tmp_path, monkeypatch):
+    from server import queue, settings
+    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(queue, "all_jobs", lambda: [])
+    client = TestClient(app)
+    assert client.get("/setup").json()["onboarded"] is False
+    assert client.post("/setup/done").json()["onboarded"] is True
+    settings.save(onboarded=False)
+    monkeypatch.setattr(queue, "all_jobs", lambda: ["a job"])
+    assert client.get("/setup").json()["onboarded"] is True
+
+
+def test_setup_opens_only_named_pages(monkeypatch):
+    opened = []
+
+    class Reply:
+        def read(self):
+            return b"{}"
+    monkeypatch.setattr(prompts_api.urllib.request, "urlopen",
+                        lambda request, timeout: opened.append(request.full_url) or Reply())
+    client = TestClient(app)
+    assert client.post("/setup/open", json={"page": "https://evil.example"}).status_code == 404
+    assert client.post("/setup/open", json={"page": "jobright"}).json()["opened"] is True
+    assert opened[0].endswith("/json/new?https://jobright.ai/")

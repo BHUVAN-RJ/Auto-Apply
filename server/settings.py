@@ -36,9 +36,11 @@ SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", paths.DATA / "settings
 # learn_prompts: the Workshop reads the re-tailor requests across jobs once a
 # few new ones have piled up, and proposes prompt edits for what the person
 # keeps asking for. A proposal is never applied without their click.
+# onboarded: the first-run screens (key, Jobright, the offer of the profile
+# interview) were finished once; they are not shown again.
 # scout_checks_per_day: how often every watched careers page is read, unless
 # the watch sets its own. 4 = every six hours.
-DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True, "scout_checks_per_day": 4}
+DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True, "onboarded": False, "scout_checks_per_day": 4}
 
 router = APIRouter()
 
@@ -48,6 +50,7 @@ class Settings(BaseModel):
     auto_fill: Optional[bool] = None
     auto_learn: Optional[bool] = None
     learn_prompts: Optional[bool] = None
+    onboarded: Optional[bool] = None
     scout_checks_per_day: Optional[int] = None
 
 
