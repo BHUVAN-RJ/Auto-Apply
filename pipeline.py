@@ -11,9 +11,11 @@ against a job a human has approved.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import traceback
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -132,6 +134,57 @@ def fetch_posting(job: Job) -> fetch.Posting:
     return posting
 
 
+# The employer's name, read off the page title or the ATS URL when no
+# metadata carries it. Greenhouse's embed exposes none, so a folder was named
+# `unknown-company_job-application-for-software-eng_6561` while the row's own
+# title said "... at SeatGeek" and the URL said `for=seatgeek`.
+TITLE_COMPANY = (
+    re.compile(r"\bat\s+([A-Z][^|@·]{1,40}?)\s*(?:[|·]|\Z)"),   # "... at SeatGeek"
+    re.compile(r"@\s*([^|·]{1,40}?)\s*(?:[|·]|\Z)"),             # "Role @ Sim"
+    re.compile(r"\|\s*([^|]{1,40}?)\s*\|"),                     # "...-New Grad |Helios|"
+)
+# The slug an ATS puts in its own URL. Last resort: it is lower case, so
+# "seatgeek" comes back as "Seatgeek" where the title would have said SeatGeek.
+URL_COMPANY = (
+    re.compile(r"[?&]for=([A-Za-z0-9._-]+)"),
+    re.compile(r"jobs\.lever\.co/([A-Za-z0-9._-]+)"),
+    re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9._%-]+)"),
+    re.compile(r"(?:boards|job-boards)\.greenhouse\.io/([A-Za-z0-9._-]+)"),
+    re.compile(r"([A-Za-z0-9-]+)\.wd\d+\.myworkdayjobs\.com"),
+    re.compile(r"([A-Za-z0-9-]+)\.bamboohr\.com"),
+    re.compile(r"jobs\.smartrecruiters\.com/([A-Za-z0-9._-]+)"),
+    re.compile(r"([A-Za-z0-9-]+)\.avature\.net"),
+)
+# Words a title puts after "at" that are not an employer.
+NOT_A_COMPANY = re.compile(r"^(?:a|an|the|our|least|this|scale up|home)\b", re.I)
+# A title says "at Billtrust US Careers"; the employer is Billtrust.
+TITLE_TAIL = re.compile(r"\s+(?:US\s+)?(?:careers?|jobs?|job board|hiring|greenhouse)\s*$", re.I)
+
+
+def company_from(title: str, url: str) -> str:
+    """The employer named in a page title, else the ATS slug in the URL.
+
+    Only a fallback: Jobright's copy and the posting itself are asked first,
+    and either beats a slug. Returns "" when neither says anything.
+    """
+    for pattern in TITLE_COMPANY:
+        match = pattern.search(title or "")
+        if not match:
+            continue
+        name = TITLE_TAIL.sub("", " ".join(match.group(1).split())).strip(" -–—,.")
+        if name and not NOT_A_COMPANY.match(name):
+            return name
+    for pattern in URL_COMPANY:
+        match = pattern.search(url or "")
+        if not match:
+            continue
+        slug = urllib.parse.unquote(match.group(1)).replace("_", " ").replace(".", " ")
+        words = [word for word in re.split(r"[-\s]+", slug) if word]
+        if words and words[0].lower() not in ("external", "careers", "jobs", "embed"):
+            return " ".join(word[:1].upper() + word[1:] for word in words)
+    return ""
+
+
 def allocate(job: Job) -> Path:
     """A fresh application folder, recorded on the queue row."""
     app_dir = store.create(job)
@@ -172,7 +225,11 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     # of the posting names the role and employer best; the fetched page next.
     src_title, src_company = postings.source_meta(job.url)
     title = src_title or posting.title or job.title
-    company = job.company or src_company or posting.company
+    # Last: the title and the URL themselves (`company_from`). An ATS embed
+    # exposes no company at all, and naming the folder after the job's own
+    # title is better than naming fifteen of them `unknown-company`.
+    company = (job.company or src_company or posting.company
+               or company_from(title, job.url))
     if (title, company) != (job.title, job.company):
         job = queue.update(job.id, title=title, company=company) or job
 

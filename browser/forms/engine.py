@@ -54,6 +54,41 @@ POLL = 0.25
 # your most recent position?"), not a field name, and the generic patterns
 # would match a word in it. Real Ashby run: that question got a job title.
 GENERIC_LABEL_MAX = 60
+# A short question that asks for a fact, not for prose. Jobright's autofill
+# and `base/form.json` own these; the tailor model writing them produced
+# "I use he/him pronouns. Happy to share this on the form, and I appreciate
+# ..." in a one-line box, and re-wrote names the autofill already had right.
+FACT_LABEL = re.compile(
+    r"\b(?:legal\s+(?:first|last|middle|given|family)?\s*name|first name|last name|"
+    r"middle name|given name|family name|surname|full name|preferred name|"
+    r"name you go by|pronouns?|email|e-mail|phone|mobile|telephone|address|street|"
+    r"city|town|state|province|zip|postal|country|linkedin|github|gitlab|portfolio|"
+    r"personal (?:web)?site|website|web site|twitter|x profile|school|university|"
+    r"college|degree|major|discipline|gpa|graduation|grad(?:uation)? (?:date|year)|"
+    r"current (?:company|employer|title|role)|notice period|"
+    r"(?:desired|expected|current) (?:salary|compensation|pay|rate)|salary|compensation|"
+    r"start date|earliest start|date available|how did you hear|referred by|referral)\b",
+    re.I,
+)
+# A label that asks to be told something is prose even when a fact word is
+# in it ("Describe your current role"). Kept narrow: "What is your legal
+# first name?" asks with a question word and is still a name.
+PROSE_LABEL = re.compile(r"\b(?:why|describe|tell us|tell me|explain|elaborate)\b", re.I)
+
+
+def describes_fact(label: str) -> bool:
+    """Does this label ask for a fact rather than for prose?
+
+    Read on the label alone, so it holds wherever the label came from. A
+    prose word wins: "Why do you want to work at our company?" names a
+    company and is still a question for the model.
+    """
+    text = " ".join((label or "").split())
+    if not text or len(text) > GENERIC_LABEL_MAX:
+        return False
+    if PROSE_LABEL.search(text):
+        return False
+    return bool(FACT_LABEL.search(text))
 TEXT_CAP = 20000          # of the page's visible text kept by a detailed snapshot
 PAGE_TEXT_JS = "(document.body && document.body.innerText) || ''"
 
@@ -339,32 +374,88 @@ LOGO_SVG = (
     '<circle r="50" fill="#fff" stroke="#000" stroke-width="7"/>'
     '<circle r="14" fill="#6a00ff"/></svg>'
 )
+# The marks also have to survive the page redrawing itself. Ashby's form is
+# one tab of a React page: moving to Overview and back unmounts the form and
+# every logo went with it, which reads as "did the resume come off too?" (it
+# does not; the file and the answers were still there). So each mark is
+# remembered in `window.__autopilotMarks` with its label's text, and one
+# MutationObserver puts back any that goes missing. A remount builds fresh
+# DOM without our `data-autopilot-ref`, so the label text is the anchor the
+# second time round.
 MARK_FN = r"""
 (function (ref, note, logo) {
-  const el = FIND(document, ref);
-  // Greenhouse drops the file input once a file is on the slot; the block
-  // MARK_UPLOAD_FN tagged before the upload is still there and is the host.
-  const block = document.querySelector("[data-autopilot-upload='" + CSS.escape(ref) + "']");
-  if (!el && !block) return false;
-  let host = null;
-  if (!el || el.type === "file") host = block && (block.querySelector("label, legend, [class*='label' i]") || block);
-  if (!host && el && el.labels && el.labels.length) host = el.labels[0];
-  if (!host && el && el.getAttribute("aria-labelledby")) host = document.getElementById(el.getAttribute("aria-labelledby").split(/\s+/)[0]);
-  if (!host && el) host = el.closest("label");
-  if (!host && el) { const p = el.parentElement; host = p && p.querySelector("label") || p; }
-  if (!host) return false;
-  const old = host.querySelector(":scope > [data-autopilot-mark='" + CSS.escape(ref) + "']");
-  if (old) { old.title = "Filled by Autopilot: " + note; return true; }
-  const dot = document.createElement("span");
-  dot.setAttribute("data-autopilot-mark", ref);
-  dot.title = "Filled by Autopilot: " + note;
-  dot.setAttribute("aria-label", "Filled by Autopilot");
-  dot.style.cssText = "display:inline-block;line-height:0;margin:0 8px 0 0;vertical-align:middle;flex:none;";
-  dot.innerHTML = logo;
-  host.insertBefore(dot, host.firstChild);
-  return true;
+  const FIND = FINDFN;
+  const state = window.__autopilotMarks = window.__autopilotMarks || {items: {}, watching: false};
+
+  const clean = (el) => ((el && el.innerText) || "").replace(/\s+/g, " ").trim().slice(0, 120);
+
+  function hostByRef(ref) {
+    const el = FIND(document, ref);
+    // Greenhouse drops the file input once a file is on the slot; the block
+    // MARK_UPLOAD_FN tagged before the upload is still there and is the host.
+    const block = document.querySelector("[data-autopilot-upload='" + CSS.escape(ref) + "']");
+    if (!el && !block) return null;
+    let host = null;
+    if (!el || el.type === "file") host = block && (block.querySelector("label, legend, [class*='label' i]") || block);
+    if (!host && el && el.labels && el.labels.length) host = el.labels[0];
+    if (!host && el && el.getAttribute("aria-labelledby")) host = document.getElementById(el.getAttribute("aria-labelledby").split(/\s+/)[0]);
+    if (!host && el) host = el.closest("label");
+    if (!host && el) { const p = el.parentElement; host = p && p.querySelector("label") || p; }
+    return host;
+  }
+
+  // The page was rebuilt and the ref is gone: the same question, written the
+  // same way, is the only honest anchor left. Exact text, first match only.
+  function hostByLabel(text) {
+    if (!text) return null;
+    for (const el of document.querySelectorAll("label, legend, [class*='label' i]")) {
+      if (clean(el) === text) return el;
+    }
+    return null;
+  }
+
+  function place(entry) {
+    const host = hostByRef(entry.ref) || hostByLabel(entry.label);
+    if (!host) return false;
+    if (!entry.label) entry.label = clean(host);
+    const old = host.querySelector(":scope > [data-autopilot-mark='" + CSS.escape(entry.ref) + "']");
+    if (old) { old.title = "Filled by Autopilot: " + entry.note; return true; }
+    const dot = document.createElement("span");
+    dot.setAttribute("data-autopilot-mark", entry.ref);
+    dot.title = "Filled by Autopilot: " + entry.note;
+    dot.setAttribute("aria-label", "Filled by Autopilot");
+    dot.style.cssText = "display:inline-block;line-height:0;margin:0 8px 0 0;vertical-align:middle;flex:none;";
+    dot.innerHTML = entry.logo;
+    host.insertBefore(dot, host.firstChild);
+    return true;
+  }
+
+  function restore() {
+    for (const entry of Object.values(state.items)) {
+      if (document.querySelector("[data-autopilot-mark='" + CSS.escape(entry.ref) + "']")) continue;
+      place(entry);
+    }
+  }
+
+  if (!state.watching) {
+    state.watching = true;
+    let timer = null;
+    // Our own insert mutates the DOM too; the "already there" check above
+    // ends the round, so the observer settles instead of looping.
+    new MutationObserver(() => {
+      if (timer) return;
+      timer = setTimeout(() => { timer = null; try { restore(); } catch (e) {} }, 200);
+    }).observe(document.documentElement, {childList: true, subtree: true});
+  }
+
+  const entry = state.items[ref] || (state.items[ref] = {ref: ref, note: note, logo: logo, label: ""});
+  entry.note = note;
+  entry.logo = logo;
+  const ok = place(entry);
+  if (!ok) delete state.items[ref];
+  return ok;
 })
-""".replace("FIND", FIND_FN.strip())
+""".replace("FINDFN", FIND_FN.strip())
 
 # After: the name the input holds, else the name shown in its block.
 FILE_NAME_FN = r"""
@@ -856,17 +947,39 @@ class Engine:
         a text box with a question mark or a long label. Short labels are
         fields (name, phone), a visa question is never one. Full or empty:
         Jobright's autofill writes generic prose into these, and ours goes
-        over it the way the tailored resume goes over its resume."""
+        over it the way the tailored resume goes over its resume.
+
+        A fact asked with a question mark is still a fact (`describes_fact`):
+        "What is your legal first name?" and "Preferred pronouns?" belong to
+        Jobright's autofill and `base/form.json`, not to the tailor model,
+        which answered the second with three sentences of prose about being
+        happy to share them.
+        """
         found = []
         for f in fields:
             if f.kind not in ("text", "textarea") or f.protected():
                 continue
             q = " ".join(f.question.split())
-            if not q:
+            if not q or describes_fact(q):
                 continue
             if f.kind == "textarea" or "?" in q or len(q) > GENERIC_LABEL_MAX:
                 found.append(f)
         return found
+
+    @staticmethod
+    def one_line(text: str, cap: int = 300) -> str:
+        """An answer for a one-line box: one paragraph becomes one sentence.
+
+        A single-line input shows about a dozen words. The model writes two to
+        four sentences by the rules, which is right for a textarea and reads as
+        a wall in a text box, so the first sentence is kept (up to `cap`).
+        """
+        body = " ".join((text or "").split())
+        if len(body) <= cap:
+            end = body.find(". ")
+            return body[:end + 1] if 0 < end < len(body) - 2 else body
+        cut = body.rfind(". ", 0, cap)
+        return body[:cut + 1] if cut > 40 else body[:cap].rstrip() + "..."
 
     async def answer_questions(self, fields: list[Field], answerer) -> None:
         """Each free-form question answered by the tailor model (`answerer`,
@@ -883,6 +996,8 @@ class Engine:
                 continue
             if not text or not text.strip():
                 continue
+            if f.kind == "text":
+                text = self.one_line(text)
             done = await self.call(SET_TEXT_FN, f.ref, text) == "ok"
             if not done:
                 done = await self.type_into(f, text)

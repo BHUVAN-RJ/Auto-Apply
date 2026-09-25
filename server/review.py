@@ -346,6 +346,48 @@ def artifact(job_id: str, name: str):
     return FileResponse(path, media_type=ARTIFACTS[name], headers=headers)
 
 
+# What the tailor model is told when the reviewer approves a job it called a
+# poor fit. The verdict is a recommendation; approval is the answer to it.
+OVERRULE = (
+    "You judged this posting a poor fit and tailored nothing. The reviewer has "
+    "read that and is applying anyway, so the fit question is settled and is "
+    "not yours to reopen: tailor the resume for this posting under every rule "
+    "above, and do not reply with MISMATCH."
+)
+
+
+def _tailored(app_dir: Path) -> bool:
+    """Does this folder hold documents to upload? A poor-fit run writes
+    `mismatch.md` and nothing else, and a fill there has nothing to attach."""
+    return (app_dir / "resume.pdf").exists()
+
+
+def _overrule_mismatch(job: Job, job_id: str) -> dict:
+    """Tailor an untailored job, then fill it, off the request thread.
+
+    A poor-fit verdict stops at checkpoint 1 with no documents. Approving or
+    filling it anyway used to launch `apply.py` against an empty folder, which
+    skipped with "resume.pdf is missing" and left the job sitting at
+    `approved` with nothing to show. The documents are written first, in the
+    job's own thread so the page can watch it, and the fill follows them.
+    """
+    from pipeline import retailor  # lazy: pipeline imports the server package
+
+    def work() -> str:
+        app_dir = retailor(job, OVERRULE, keep_status=True)
+        pid = runner.start_fill(job_id)
+        if pid:
+            store.set_status(app_dir, Status.APPROVED, f"filling started (pid {pid})")
+        return app_dir.name
+
+    try:
+        job_thread.start_change(job_id, OVERRULE, work)
+    except job_thread.ThreadError as exc:
+        raise HTTPException(409, str(exc))
+    return {"id": job_id, "status": Status.APPROVED.value, "filling": False,
+            "pid": None, "tailoring": True}
+
+
 @router.post("/{job_id}/approve")
 def approve(job_id: str, decision: Decision) -> dict:
     """Checkpoint 1 passed, and the fill starts straight away.
@@ -359,6 +401,9 @@ def approve(job_id: str, decision: Decision) -> dict:
         raise HTTPException(409, f"job is {job.status.value}, not awaiting review")
     store.set_status(app_dir, Status.APPROVED, decision.note)
     queue.update(job_id, status=Status.APPROVED)
+
+    if not _tailored(app_dir):
+        return _overrule_mismatch(job, job_id)
 
     pid = runner.start_fill(job_id)
     if pid:
@@ -387,6 +432,10 @@ def fill_now(job_id: str, request: FillRequest) -> dict:
         raise HTTPException(
             409, f"job is {job.status.value}; approve it before filling"
         )
+    if not _tailored(app_dir):
+        # Nothing was tailored (a poor-fit verdict). Write the documents
+        # first; the fill starts when they land.
+        return _overrule_mismatch(job, job_id)
     running = runner.fill_pid(job_id)
     if running and not request.force:
         raise HTTPException(

@@ -167,6 +167,16 @@ STATUS_JS = r"""
 # Tells the page's banner what automation is doing to it, so the human has
 # a signal other than a still cursor. content.js installs the function; a
 # page without it (the script not injected yet) simply ignores the call.
+async def _signal(page, state: str, note: str = "") -> None:
+    """Tell an already-attached page's banner what automation is doing.
+    Advice only: a page without our script, or one that refuses the
+    evaluate, changes nothing about the fill."""
+    try:
+        await page.evaluate(signal_js(state, note))
+    except Exception:  # noqa: BLE001 - the indicator is advice
+        pass
+
+
 def signal_js(state: str, note: str = "") -> str:
     return (f"window.__autopilotAutomation && window.__autopilotAutomation("
             f"{json.dumps(state)}, {json.dumps(note)})")
@@ -294,6 +304,10 @@ async def run(page: Session, target_id: str = "") -> AutofillResult:
         return result
     result.clicked = True
     log.info("pressed %r", text)
+    # Jobright's own fill takes seconds to tens of seconds. Without this the
+    # badge sat idle through the longest visible part of the run, and the
+    # purple core only appeared once our own step started.
+    await _signal(page, "working", "Jobright is filling the form")
 
     # Wait for Jobright to say it is done: its own message, its panel
     # settling on "N/M fields filled" with no "Autofilling" in sight, or as a

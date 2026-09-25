@@ -469,6 +469,10 @@ const VERB = {
 const LIVE = new Set(["tailoring", "approved", "filling"]);
 // "you" rows first, then the agent's, newest first inside each.
 const ORDER = ["awaiting_review", "filled", "filling", "approved", "tailoring", "queued"];
+// Newest first, everywhere. The shelves used to show the queue's own order,
+// which is oldest first: the job just submitted or just failed sat at the
+// bottom of a closed shelf and read as gone.
+const NEWEST = (a, b) => (b.added_at || "").localeCompare(a.added_at || "");
 
 const TONE = {
   awaiting_review: "wait", filled: "wait", approved: "agent", filling: "agent",
@@ -525,9 +529,9 @@ async function loadList() {
   if (open && (!shownStatus || open.status !== shownStatus)) show(current);
   const waiting = jobs.filter((j) => BUCKET[j.status] === "you");
   const inflight = jobs.filter((j) => ["you", "agent"].includes(BUCKET[j.status]))
-    .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
-  const applied = jobs.filter((j) => BUCKET[j.status] === "done");
-  const rejected = jobs.filter((j) => BUCKET[j.status] === "stop");
+    .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || NEWEST(a, b));
+  const applied = jobs.filter((j) => BUCKET[j.status] === "done").sort(NEWEST);
+  const rejected = jobs.filter((j) => BUCKET[j.status] === "stop").sort(NEWEST);
   $("count").textContent = jobs.length
     ? `${inflight.length} in flight · ${waiting.length} need you`
     : "";

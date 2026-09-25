@@ -487,10 +487,14 @@ title, a PERM advertisement — and why it applies to the facts in
 `base/applicant.md`. Without that file the facts are derived from the
 resume once and the bar says so, since a resume knows nothing about visas
 or start dates. Location anywhere in the United States is always green.
-A graduation requirement phrased as a latest-date cutoff is also green when
-the applicant graduates earlier (December 2026 satisfies "earned or expected
-by Summer 2027"). Those two rules are enforced after the model response, not
-left to prompt wording.
+A graduation requirement is also green when the applicant graduates earlier
+than it, whether it is phrased as a cutoff (December 2026 satisfies "earned
+or expected by Summer 2027") or as a cohort window (it satisfies a
+"spring/summer of 2027 college graduates" programme too): an earlier graduate
+is available for everything a later one is. A posting that wants a graduation
+no earlier than a date, or the applicant still enrolled, is the exception and
+stays red. Those rules are enforced after the model response, not left to
+prompt wording.
 
 Off Jobright, an OK or CAUTION verdict queues the job by itself after a
 three-second countdown drawn across the button; a click during it cancels.

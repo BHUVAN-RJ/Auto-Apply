@@ -453,3 +453,29 @@ def test_a_cover_letter_slot_holding_another_file_is_cleared_first(tmp_path):
     assert page.removed == "someone_elses_letter.pdf"
     assert report.cover_letter_uploaded and page.fields["6"]["value"] == "Jane_cover_letter.pdf"
     assert page.fields["5"]["value"] == ""
+
+
+def test_a_fact_asked_with_a_question_mark_is_not_a_question():
+    assert engine.describes_fact("What is your legal first name?")
+    assert engine.describes_fact("Preferred pronouns?")
+    assert engine.describes_fact("LinkedIn URL")
+    assert engine.describes_fact("What is your expected compensation range?")
+    assert not engine.describes_fact("Why do you want to work here?")
+    assert not engine.describes_fact("What are you looking for in your next role?")
+    assert not engine.describes_fact("Tell us about a project you are proud of")
+
+
+def test_free_questions_skips_the_facts():
+    fields = [
+        engine.Field(ref="a", kind="text", label="Preferred pronouns?"),
+        engine.Field(ref="b", kind="text", label="What is your legal first name?"),
+        engine.Field(ref="c", kind="textarea", label="Why this role?"),
+    ]
+    assert [f.ref for f in engine.Engine.free_questions(None, fields)] == ["c"]
+
+
+def test_a_one_line_box_gets_one_sentence():
+    long = ("I use he/him pronouns. Happy to share this on the form, and I appreciate "
+            "the question being asked.")
+    assert engine.Engine.one_line(long) == "I use he/him pronouns."
+    assert engine.Engine.one_line("Austin, TX") == "Austin, TX"

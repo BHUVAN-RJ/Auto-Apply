@@ -641,7 +641,7 @@ async def fill_async(
         # human changes between now and submitting is what was wrong.
         await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, url, target_id)
         if target_id:
-            await autofill.notify(cdp_url, target_id, "done", "Browser agent finished; review the form")
+            await autofill.notify(cdp_url, target_id, "done", "Filled and ready; your check, then Submit")
 
     # A screenshot proves the browser was alive, not that the form was filled.
     # A run that never reached done, or that errored on every step other than
@@ -732,7 +732,7 @@ async def _finish_without_agent(cdp_url: str, url: str, target_id: str, filled: 
     ]))
     if target_id:
         await autofill.notify(cdp_url, target_id, "done" if filled.resume_uploaded else "error",
-                              "Documents attached; review the form" if filled.resume_uploaded
+                              "Filled and ready; your check, then Submit" if filled.resume_uploaded
                               else "The tailored resume did not attach; attach it by hand")
     return FillResult(
         ok=filled.resume_uploaded,

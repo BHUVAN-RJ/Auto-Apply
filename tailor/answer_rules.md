@@ -14,6 +14,10 @@ typed straight into a text box, so it is plain text and short.
 
 - As short as answers the question. Two to four sentences, 40 to 90 words.
   Never more than one paragraph. No greeting, no sign-off, no headings.
+- A question that asks for a fact (a name, pronouns, a link, a date, a place,
+  a number) is answered with the fact and nothing else: "He/him", not a
+  sentence about being glad to share it. Say nothing about appreciating the
+  question, and never explain the answer that follows.
 - Plain text only: no markdown, no bullets, no bold, no quotes around the
   whole answer.
 - No dashes as punctuation of any kind (no em dash, en dash, or spaced

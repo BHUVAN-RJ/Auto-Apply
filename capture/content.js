@@ -291,10 +291,15 @@ function render(result, { pending = false } = {}) {
                         transition: transform .15s ease; }
       .badge:hover .assistant-core { transform: scale(1.35); }
       .shell.working .assistant-core { fill: #b48cff; animation: flow 1.1s ease-in-out infinite; }
+      /* Purple flowing = automation is working, ours or Jobright's. Green and
+         still = the form is filled and the only thing left is your look at it
+         and your click on Submit. Red = something did not go on. */
+      .shell.done .assistant-core { fill: #35d07f; animation: none; }
       .shell.error .assistant-core { fill: #ff5c5c; }
       @keyframes flow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.7); } }
       @media (prefers-reduced-motion: reduce) { .shell.working .assistant-core { animation: none; transform: scale(1.4); } }
       .auto { display: none; color: #b48cff; font-weight: 600; margin-top: 3px; }
+      .shell.done .auto { color: #35d07f; }
       .shell.working .auto, .shell.done .auto, .shell.error .auto { display: block; }
       .shell.error .auto { color: #ff5c5c; }
       .shell.working .auto::after { content: "…"; animation: dots 1.2s steps(4) infinite; }

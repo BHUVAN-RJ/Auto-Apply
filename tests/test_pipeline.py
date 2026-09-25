@@ -320,3 +320,30 @@ def test_the_jobs_model_reaches_the_resume_and_the_letter(monkeypatch):
     pipeline.process(plain)
 
     assert seen == {"resume": None, "letter": None}
+
+
+def test_company_read_off_the_title_when_no_metadata_names_it():
+    assert pipeline.company_from(
+        "Job Application for Software Engineer - New Grad at SeatGeek",
+        "https://job-boards.greenhouse.io/embed/job_app?for=seatgeek&token=8227548",
+    ) == "SeatGeek"
+    assert pipeline.company_from("Forward Deployed Engineer @ Sim", "") == "Sim"
+    assert pipeline.company_from("MIT-Software Engineer-New Grad |Helios|", "") == "Helios"
+
+
+def test_company_falls_back_to_the_ats_slug_in_the_url():
+    assert pipeline.company_from(
+        "Product Implementation Specialist", "https://jobs.ashbyhq.com/scribe/9d41/application",
+    ) == "Scribe"
+    assert pipeline.company_from(
+        "2027 University Graduate - Software Engineer",
+        "https://adobe.wd5.myworkdayjobs.com/external_experienced/job/San-Jose/x_R172083",
+    ) == "Adobe"
+    assert pipeline.company_from(
+        "Forward Deployed Engineer", "https://jobs.ashbyhq.com/trunk%20tools/414cdb32/application",
+    ) == "Trunk Tools"
+
+
+def test_a_title_with_no_employer_in_it_stays_unknown():
+    assert pipeline.company_from("Software Engineer at a fast-growing startup", "") == ""
+    assert pipeline.company_from("Junior AI Engineer (Open to remote) | Apply now!", "") == ""
