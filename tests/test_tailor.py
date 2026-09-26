@@ -485,3 +485,95 @@ def test_a_thin_run_on_the_last_attempt_is_a_warning_not_a_failure(monkeypatch):
     assert result.tex.strip() == thin.strip()
     assert any("EXPERIENCE bullets were rewritten" in w for w in result.warnings)
     assert any("bullet 2" in r for r in result.rejections)
+
+
+# The prompt's numbers: what the model is told it has room for, and the pooled
+# budget of a block section. Both were the gap the measurement over 106 real
+# runs found: the block was named in lines only, and the caps leaned generous.
+
+def test_the_room_offered_is_rounded_down_and_never_negative():
+    """`budget` carries the checker's tolerance; `room` is what the model is
+    told, and it leans the other way. A master bullet already over the bare
+    rectangle has no room rather than a negative amount of it."""
+    assert layout.room("x" * 47, 40) == (2, 80, 47), "33 spare on the second line"
+    tight = "x" * 44
+    assert layout.budget(tight, 40)[1] == 46, "the checker allows the slack"
+    assert layout.room(tight, 40)[1] == 44, "the model is not offered it"
+    assert layout.room("x" * 45, 40) == (1, 45, 45), "no room, not minus five"
+
+
+def test_the_prompt_numbers_the_bullets_the_way_a_rejection_does():
+    """The list used to be built over `\\resumeItem` alone while rejections
+    counted every `\\item`, so "bullet 1" in the budget was "bullet 2" in the
+    rejection that enforced it."""
+    message = tailor._build_user_message(POSTING, PROJECT_RESUME, "")
+    numbered = [line for line in message.splitlines() if line.startswith("- bullet ")]
+    assert len(numbered) == 1, "one EXPERIENCE bullet, and PROJECTS is pooled instead"
+    index = int(numbered[0].split()[2].rstrip(":"))
+    grown = PROJECT_RESUME.replace(
+        "Built a scalable Python service handling 50K requests per day",
+        "Built and operated a scalable Python service handling 50K requests per day, "
+        "owning it from design through production")
+    with pytest.raises(tailor.TailorError, match=f"bullet {index}:"):
+        tailor._validate(PROJECT_RESUME, grown)
+    assert "spare before it takes another line" in numbered[0]
+
+
+def test_the_block_section_carries_its_pooled_characters():
+    """A per-entry cap to read and a pooled rule to be judged by is why a
+    longer project swapped in looked illegal on the numbers it was given."""
+    note = tailor.block_budgets(PROJECT_RESUME, 40)
+    assert "PROJECTS is measured as one block" in note
+    assert "4 printed lines" in note and "entry 1" in note and "entry 2" in note
+    assert "spare to move between them" in note
+
+
+def test_a_block_that_grew_is_told_what_to_cut(monkeypatch):
+    """The one rejection in the set that used to hand the model no number."""
+    grown = PROJECT_RESUME.replace(
+        "Hydra: a load-test harness that drives Docker topologies and fits a model to them",
+        "Hydra: a load-test harness driving Docker topologies with k6 and Prometheus, "
+        "fitting a Universal Scalability Law model and projecting saturation points")
+    with pytest.raises(tailor.TailorError, match=r"Cut \d+ characters"):
+        tailor._validate(PROJECT_RESUME, grown)
+    report = tailor.overrun_report(PROJECT_RESUME, grown)
+    assert "PROJECTS" in report and "Cut" in report
+    assert "overflow is elsewhere" not in report, "a block overrun used to read as nothing"
+
+
+# The swap floor: a story the resume does not carry, whose stack the posting
+# names, is expected on the page. 18 of 36 jobs with a candidate swapped none.
+
+CANDIDATE = ("### auto-apply (not on the resume - may take the place of a PROJECTS entry)\n\n"
+             "Link: https://example.com/auto-apply\n"
+             "Stack: Python, FastAPI, pytest\n")
+SWAP_POSTING = Posting(url="https://example.com/2", text="Python, FastAPI and pytest. " * 20,
+                       title="Backend Engineer", company="Example Corp")
+
+
+def test_a_story_the_posting_asks_for_and_the_resume_lacks_must_be_swapped_in():
+    missed = tailor.unused_swap(PROJECT_RESUME, CANDIDATE, SWAP_POSTING.text)
+    assert missed and "auto-apply" in missed and "fastapi" in missed
+
+    swapped = PROJECT_RESUME.replace(
+        r"\resumeItem{\normalsize{AudiTex: a text-to-speech extension that runs a model in the browser}}",
+        r"\resumeItem{\normalsize{\href{https://example.com/auto-apply}{Auto-Apply}: tailors resumes}}")
+    assert tailor.unused_swap(swapped, CANDIDATE, SWAP_POSTING.text) is None
+
+
+def test_nothing_is_demanded_when_the_posting_shares_no_stack_or_the_story_has_no_link():
+    assert tailor.unused_swap(PROJECT_RESUME, CANDIDATE, "We are a Salesforce shop.") is None
+    linkless = CANDIDATE.replace("Link: https://example.com/auto-apply\n", "")
+    assert tailor.unused_swap(PROJECT_RESUME, linkless, SWAP_POSTING.text) is None
+    on_resume = CANDIDATE.replace("not on the resume", "already on the resume")
+    assert tailor.unused_swap(PROJECT_RESUME, on_resume, SWAP_POSTING.text) is None
+
+
+def test_a_missed_swap_is_sent_back_once_and_shipped_with_a_warning(monkeypatch):
+    reworded = PROJECT_RESUME.replace("scalable Python service", "scalable Python backend")
+    sent = stub_model(monkeypatch, reply(reworded))
+    result = tailor.tailor(SWAP_POSTING, resume_tex=PROJECT_RESUME, profile=CANDIDATE,
+                           max_attempts=2)
+    assert len(sent) == 2 and "no PROJECTS entry was swapped" in sent[1]
+    assert any("no PROJECTS entry was swapped" in w for w in result.warnings)
+    assert any("auto-apply" in r for r in result.rejections)

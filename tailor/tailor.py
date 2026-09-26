@@ -301,9 +301,11 @@ def _check_lengths(original: str, tailored: str) -> list[str]:
         if was is None or now is None:
             continue
         if now > was:
-            grew.append(f"{name} as a whole: {was} lines -> {now}; the section has to "
-                        "come back the same height, so cut the other entries to pay "
-                        "for the one you grew")
+            # With the arithmetic, not without it: this used to say only "cut
+            # the other entries to pay for the one you grew", the one
+            # rejection in the set that handed the model no number, and a
+            # PROJECTS overrun then cost an attempt as often as not.
+            grew.append(f"{name} as a whole: {was} lines -> {now}. {_block_overrun(original, tailored, name, width)}")
         elif now < was:
             warnings.append(f"{name} lost {was - now} line(s) ({was} -> {now})")
 
@@ -313,6 +315,27 @@ def _check_lengths(original: str, tailored: str) -> list[str]:
     if grew:
         raise TailorError("these grew past their line budget: " + "; ".join(grew))
     return warnings
+
+
+def _block_chars(tex: str, name: str, width: int) -> tuple[int, int]:
+    """(printed lines, visible characters) of one block section."""
+    bodies = [body for body, section in _bullets_with_sections(tex) if section == name]
+    lines = sum(layout.line_count(body, width) for body in bodies)
+    return lines, sum(len(layout.visible(body)) for body in bodies)
+
+
+def _block_overrun(original: str, tailored: str, name: str, width: int) -> str:
+    """What to cut from a block section, in characters, per entry."""
+    was, _ = _block_chars(original, name, width)
+    _, used = _block_chars(tailored, name, width)
+    fits = was * width + layout.SLACK
+    bodies = [body for body, section in _bullets_with_sections(tailored) if section == name]
+    entries = "; ".join(f"entry {i} {len(layout.visible(body))}"
+                        for i, body in enumerate(bodies, 1))
+    return (f"The section holds {fits} characters across its {was} lines and you "
+            f"returned {used} ({entries}). Cut {max(1, used - fits)} characters from "
+            "the entries, whichever of them the posting needs least, and keep the "
+            "one you grew. Do not drop an entry.")
 
 
 def _section_lines(tex: str, name: str, width: int) -> Optional[int]:
@@ -431,12 +454,25 @@ def overrun_report(original: str, tailored: str) -> str:
         now, _, used = layout.budget(after, width)
         if now > was:
             grew.append((index, was, now, used, was * width + layout.SLACK))
-    if not grew:
+
+    # Block sections were skipped here, so a second page caused by PROJECTS
+    # got "no bullet grew, look elsewhere" - the one overflow the report could
+    # not name. It is the arithmetic of the pool that names it.
+    blocks = []
+    for name in BLOCK_SECTIONS:
+        was, now = _section_lines(original, name, width), _section_lines(tailored, name, width)
+        if was is not None and now is not None and now > was:
+            blocks.append(f"- {name}: {was} printed lines before, {now} now. "
+                          + _block_overrun(original, tailored, name, width))
+
+    if not grew and not blocks:
         return (
             "No bullet grew past its line budget, so the overflow is elsewhere: "
             "check the summary and the skills lines, which must also keep the "
             "number of printed lines they have."
         )
+    if not grew:
+        return "This section runs onto an extra line:\n" + "\n".join(blocks)
 
     grew.sort(key=lambda row: row[3] - row[4], reverse=True)
     lines = "\n".join(
@@ -444,7 +480,8 @@ def overrun_report(original: str, tailored: str) -> str:
         f"where {fits} fit. Cut {used - fits}."
         for index, was, now, used, fits in grew[:6]
     )
-    return f"These bullets run onto an extra line:\n{lines}"
+    report = f"These bullets run onto an extra line:\n{lines}"
+    return report + ("\n" + "\n".join(blocks) if blocks else "")
 
 
 # ------------------------------------------------------- what was invented --
@@ -622,6 +659,59 @@ def under_tailored(original: str, tailored: str) -> Optional[str]:
             + ", ".join(f"bullet {i}" for i in kept))
 
 
+# ------------------------------------------------ the swap that never was --
+
+# A story the resume does not carry reaches the prompt marked as one that may
+# take a PROJECTS entry's place. Half of the runs that had such a story used
+# none of them (18 of 36 jobs, 2026-09-25), and roughly a third of those kept
+# an entry the posting asked nothing about. The volume floor fixed the same
+# thing for EXPERIENCE bullets, so this is the same shape: named, counted, and
+# rejected while attempts remain.
+SWAP_TERMS = int(os.environ.get("AUTOPILOT_SWAP_TERMS", "2"))
+CANDIDATE_HEAD = re.compile(r"^### (\S+) \(not on the resume", re.M)
+
+
+def swap_candidates(profile_text: str) -> list[tuple[str, str]]:
+    """(slug, its story) for every story in the prompt that the resume does
+    not already carry. The marker is written by `profile.stories`."""
+    heads = list(CANDIDATE_HEAD.finditer(profile_text or ""))
+    out = []
+    for i, head in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(profile_text)
+        out.append((head.group(1), profile_text[head.end():end]))
+    return out
+
+
+def unused_swap(tailored: str, profile_text: str, posting_text: str) -> Optional[str]:
+    """The story that matched the posting and was left on the shelf, named.
+
+    None when a candidate's link is on the tailored resume (a swap happened),
+    when no candidate shares `SWAP_TERMS` stack terms with the posting, or when
+    the ones that match have no `Link:` line - a story without a link may never
+    be swapped in, so demanding one would be a rejection nothing can satisfy.
+    """
+    from .profile import stack_overlap
+
+    links = set(HREF.findall(tailored))
+    matched = []
+    for slug, text in swap_candidates(profile_text):
+        link = LINK_LINE.search(text)
+        if not link:
+            continue
+        if link.group(1) in links:
+            return None
+        terms = stack_overlap(text, posting_text or "")
+        if len(terms) >= SWAP_TERMS:
+            matched.append((slug, sorted(terms)))
+    if not matched:
+        return None
+    named = "; ".join(f"{slug} ({', '.join(terms)})" for slug, terms in matched[:3])
+    return ("no PROJECTS entry was swapped, though the posting names the stack of a "
+            f"story that is not on the resume yet: {named}. Swap the weakest entry "
+            "for the one the posting asks for, one out and one in, or say in the "
+            "rationale why every entry you kept beats it")
+
+
 HREF = re.compile(r"\\href\{([^}]*)\}")
 LINK_LINE = re.compile(r"^Link:\s*(\S+)\s*$", re.M)
 
@@ -674,21 +764,34 @@ def load_profile(path: Optional[Path] = None, stories: Optional[list[str]] = Non
 
 def _build_user_message(posting: Posting, resume: str, profile: str) -> str:
     width = layout.chars_per_line()
-    rows = [
-        (f"bullet {i}", lines, cap, used)
-        for i, (lines, cap, used) in enumerate(bullet_budgets(resume), 1)
-    ]
+    # Every bullet is numbered over the whole document, because that is how a
+    # rejection names one; only the editable ones are listed, since a budget
+    # for a frozen section is a budget the model may not spend.
+    # Numbered the way a rejection numbers them - over `_bullets_with_sections`,
+    # which counts the `\item` entries of EDUCATION and the skills block too.
+    # The list used to be built over `bullets()` instead, which sees only
+    # `\resumeItem`, so "bullet 1" in the budget was "bullet 3" in the
+    # rejection that enforced it. Only the editable ones are listed: a budget
+    # for a frozen section is a budget the model may not spend, and the summary
+    # and the skills lines have their own rows below.
+    rows = []
+    for i, (body, section) in enumerate(_bullets_with_sections(resume), 1):
+        if section not in EDITABLE_SECTIONS or section in BLOCK_SECTIONS:
+            continue
+        if section in ("SUMMARY", "TECHNICAL SKILLS"):
+            continue
+        rows.append((f"bullet {i}", *layout.room(body, width)))
     # The summary and each skills line are held to their printed lines the
     # same way (`_check_single_items`), and used not to be listed here: a
     # DoorDash run spent all four attempts on a summary it had never been
     # given a size for, and an earlier one on skills line 7. A budget the
     # checker enforces has to be a budget the model was told.
-    rows += [(name, *layout.budget(body, width))
+    rows += [(name, *layout.room(body, width))
              for name, body in single_items(resume) if body]
     budget = "\n".join(
         f"- {name}: {lines} printed line{'s' if lines != 1 else ''}, "
-        f"{used} characters now, up to {cap} and it still prints on {lines}"
-        for name, lines, cap, used in rows
+        f"{used} characters now, {fits - used} spare before it takes another line"
+        for name, lines, fits, used in rows
     )
 
     sections = [f"## Job posting\n\n{posting.to_markdown()}"]
@@ -696,22 +799,60 @@ def _build_user_message(posting: Posting, resume: str, profile: str) -> str:
         sections.append(
             "## Candidate profile (background not necessarily on the resume)\n\n" + profile
         )
-    project_lines = _section_lines(resume, "PROJECTS", width)
     sections.append(
         "## The line budget — what keeps this resume on one page\n\n"
         f"One printed line of this resume holds about {width} characters. Each "
         "EXPERIENCE bullet must print on the same number of lines as it does now. "
-        "The word count is yours to change: write to the budget, not around it."
-        + (f"\n\nPROJECTS is measured as one block: its entries take {project_lines} "
-           "printed lines together today and must take exactly that many when you "
-           "return them. Move lines between the entries as the posting deserves, "
-           "and write the shorter description wherever you can."
-           if project_lines else "")
+        "The word count is yours to change: write to the budget, not around it.\n\n"
+        "The last line of an item is usually only part full, and the spare below "
+        "is what is left on it, counted down rather than up: spend it and the item "
+        "still prints on the same number of lines. The numbers are this resume's "
+        "own bullet numbering, which is how a rejection will name one; a bullet "
+        "missing from the list is in a frozen section or measured below as the "
+        "summary or a skills line."
+        + block_budgets(resume, width)
         + f"\n\n{budget}"
     )
     sections.append(layout_note(resume))
     sections.append(f"## Master resume LaTeX\n\n```tex\n{resume}\n```")
     return "\n\n".join(sections)
+
+
+def block_budgets(resume: str, width: Optional[int] = None) -> str:
+    """The pooled budget of each block section, per entry and in total.
+
+    A block section is measured over all of its entries, and until now the
+    prompt said so in lines only while still listing each entry its own
+    character cap - a per-entry rule to read and a pooled rule to be judged
+    by. A longer entry swapped in then looked illegal on the numbers the model
+    had, which is one reason a second project was never swapped. So the pool
+    is spelled out: what each entry uses, what the section holds, what is
+    spare across it.
+    """
+    width = width or layout.chars_per_line()
+    out = []
+    for name in BLOCK_SECTIONS:
+        bodies = [body for body, section in _bullets_with_sections(resume)
+                  if section == name]
+        if not bodies:
+            continue
+        lines = sum(layout.line_count(body, width) for body in bodies)
+        used = sum(len(layout.visible(body)) for body in bodies)
+        fits = max(used, lines * width)
+        entries = "; ".join(
+            f"entry {i} {len(layout.visible(body))} characters"
+            for i, body in enumerate(bodies, 1)
+        )
+        out.append(
+            f"\n\n{name} is measured as one block, not entry by entry: its "
+            f"{len(bodies)} entries take {lines} printed lines together today and "
+            f"must take exactly that many when you return them. Together they hold "
+            f"{fits} characters and use {used} ({entries}), so there are "
+            f"{fits - used} spare to move between them. An entry may grow as far as "
+            f"the others are cut to pay for it: that is how a project worth more "
+            f"space than the one it replaces gets it."
+        )
+    return "".join(out)
 
 
 def layout_note(resume: str) -> str:
@@ -847,6 +988,23 @@ def tailor(
                 )
                 continue
             warnings = warnings + [thin]
+
+        # The same shape as the volume floor: a rejection while there are
+        # attempts left, a warning on the last one, because a resume that kept
+        # its projects is worth shipping and a failed job is not.
+        missed = unused_swap(tailored, profile, posting.text)
+        if missed:
+            if attempt < max_attempts:
+                last_error = missed
+                rejected.append({"attempt": attempt, "reason": missed, "tex": tailored})
+                feedback = (
+                    f"\n\n## Your previous attempt was rejected\n\n{missed}.\n\n"
+                    "One entry out, one in, the section back to the same printed "
+                    "lines, the new entry's Link line as its only URL. Keep every "
+                    "other edit you have made."
+                )
+                continue
+            warnings = warnings + [missed]
 
         if page_check is not None:
             pages = page_check(tailored)

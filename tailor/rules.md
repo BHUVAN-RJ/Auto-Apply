@@ -68,6 +68,12 @@ posting better:
   `Kept/<name>` line per surviving entry naming the posting term it
   proves. Reading the profile index and finding nothing better is a fine
   answer; not looking is not.
+- **A story marked "not on the resume" whose stack the posting names is
+  expected to be swapped in.** Returning every entry untouched while such
+  a story sits in the request is rejected, and the rejection names the
+  story and the terms it shares with the posting. Keeping them all is
+  still allowed on the last attempt, with the `Kept/` lines carrying the
+  argument.
 - The new entry's name is hyperlinked exactly as the existing entries are
   (`\href{<Link>}{...}` with the same wrapping macros), using the story's
   `Link:` line verbatim. A story without a `Link:` line is never swapped in.
@@ -296,12 +302,18 @@ printed lines. So the rule is the line count, not the character count:
 
 - **Every `EXPERIENCE` bullet comes back on the same number of printed
   lines.** The request carries the budget: how many lines each bullet
-  takes now, how many characters it uses, and how many characters fit on
-  those lines. Write to that budget.
+  takes now, how many characters it uses, and how many characters are
+  spare before it takes another line. Write to that budget.
+- **The spare is the part of the last line that is empty**, counted down
+  rather than up. An item whose spare is 0 is already full: it may be
+  rewritten, but only by trading a word for a shorter one.
 - **`PROJECTS` is measured as one block.** The entries may move lines
   between themselves — a story swapped in may deserve a line the entry it
   replaced did not, and another entry pays for it — but the section comes
-  back the same height, to the line. The request gives that total.
+  back the same height, to the line. The request gives the block's total
+  characters, what each entry uses, and the spare across the whole
+  section: that pool, not the entry, is what a swapped-in project is
+  written against.
 - **Write the shorter description.** When you rewrite or swap in a project
   description, say it in fewer words than the entry it replaces: cut the
   filler and the second example, keep the result, the measure and the

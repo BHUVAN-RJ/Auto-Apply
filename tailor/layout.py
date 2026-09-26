@@ -153,3 +153,21 @@ def budget(fragment: str, width: Optional[int] = None) -> tuple[int, int, int]:
     length = len(visible(fragment))
     lines = line_count(fragment, width)
     return lines, lines * width + SLACK, length
+
+
+def room(fragment: str, width: Optional[int] = None) -> tuple[int, int, int]:
+    """(lines, characters that fit, characters used) - the room rounded down.
+
+    `budget` adds `SLACK` on top of the rectangle, which is the tolerance the
+    checker judges by. What the model is *told* has to lean the other way: a
+    line is only approximately a number of characters, the last line of a
+    wrapped item is partly filled, and a cap that is six characters generous
+    is a cap that sometimes costs an attempt. So the room offered is the bare
+    rectangle, `lines * width`, and never less than what the item already
+    uses - a master bullet sitting over the rectangle has no room rather than
+    a negative amount of it.
+    """
+    width = width or chars_per_line()
+    length = len(visible(fragment))
+    lines = line_count(fragment, width)
+    return lines, max(length, lines * width), length

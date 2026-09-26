@@ -1648,3 +1648,79 @@ collapses. A certain match has no Add button at all; a `confident` one
 keeps "Add anyway", because it may be another role at the same company.
 Nothing else about the screen changes, and the dedupe in `queue.add` is
 still the thing that actually prevents the duplicate.
+
+## Phase 20c — measured over 106 tailored resumes (2026-09-25)
+
+Every tailored resume on disk was read back and compared with the master it
+came from, reverse-applying each folder's `resume.diff` (the master had not
+drifted once across 106 runs, so the comparison is exact). The numbers, not
+an impression of them:
+
+- **199 of 636 `EXPERIENCE` bullets changed (31%)**, but 110 of those are
+  more than 0.9 similar to the master — a single term swapped, "response
+  latency" to "inference latency" — and only 22 are a real rewrite. Genuine
+  X-Y-Z rewriting ran at 3.5%. Per run the median is 1 of 6, and 19 runs
+  changed none.
+- **The summary changed in 101 of 106 runs; 66 runs reordered the skills
+  lines without trading a term.** `PROJECTS` is the one section rewritten
+  deeply (median similarity 0.65), because that is where a swap lands.
+- **726 characters of line budget sat unused** across the editable items, and
+  the median run came back 2 characters *shorter* than the master. The
+  headroom was never the constraint; being told about it was.
+- **51 rejections were a line budget** (bullet 17, summary 16, skills 12,
+  block 5), 6 were a second page, 4 were "returned unchanged". 48 runs needed
+  2 attempts, 21 needed 3 or 4. A model rejected once ships the smallest edit
+  that passes, which is the mechanism behind every thin resume.
+- **Projects were swapped in 26 runs, 18 of 95 jobs** — none at all before
+  the stories existed, and 18 of the 36 jobs that *had* a story swapped
+  nothing. Reading those 18 rationales: 9 kept the right entries and said
+  why, 3 had no candidate at all, 6 passed over a story the posting asked
+  for, three of those having spent all four attempts on line budgets.
+
+### Decisions
+
+- **Swaps track the size of the pool, not the strength of the prompt.** A
+  pool of four candidates produced two swaps in five runs of six; a pool of
+  one produced none in nine of ten. `profile.pick` returned one ranked list
+  of four and spent two or three of its slots on stories for projects and
+  roles the resume already carries, so the tailor was handed nothing to swap
+  in. The slots are now split — `SWAP_SLOTS` (3) not on the resume,
+  `DEPTH_SLOTS` (2) on it, candidates first — and a pool left short is
+  backfilled from the stories the picker passed over whose `Stack:` the
+  posting names. A story already on the resume is still worth carrying: it
+  justifies that entry's figures and may replace a bullet under the same
+  role. It just may not crowd out the candidates. `profile.on_resume` decides
+  the group from the story's `Link:` on the page, else 60% of the slug's own
+  distinctive words in the resume's visible text; on the 15 stories on file
+  it separates them exactly.
+- **Each story says, in the prompt, what may be done with it.** Marked
+  "already on the resume" or "not on the resume — may take the place of a
+  `PROJECTS` entry". The model used to have to work that out from the master.
+- **The room offered leans low.** `layout.budget` carries `SLACK`, the
+  tolerance the checker judges by; `layout.room` is what the model is told —
+  the bare rectangle, never less than the item already uses. The last line of
+  a wrapped item is only part full and that part is the spare; a cap six
+  characters generous is a cap that costs an attempt, and a master bullet
+  already over the rectangle now reads 0 spare rather than room it does not
+  have.
+- **A block section carries its pooled characters.** The prompt gave
+  `PROJECTS` a total in printed lines while still listing each entry its own
+  character cap: a per-entry rule to read and a pooled rule to be judged by,
+  under which a longer project swapped in looks illegal. `block_budgets` now
+  names what each entry uses, what the section holds and what is spare across
+  it, and `_block_overrun` puts the same arithmetic into the rejection and
+  into `overrun_report` — which skipped block sections entirely, so a second
+  page caused by `PROJECTS` came back as "no bullet grew, look elsewhere",
+  the one overflow the report could not name.
+- **The prompt numbers bullets the way a rejection does.** The budget list
+  was built over `\resumeItem` while the checker counts every `\item`, so
+  "bullet 1" in the budget was "bullet 3" in the rejection enforcing it.
+  Frozen sections are no longer given budgets the model may not spend.
+- **A missed swap costs an attempt, softly.** `tailor.unused_swap`: a story
+  marked "not on the resume", carrying a `Link:`, whose `Stack:` shares
+  `SWAP_TERMS` (2) terms with the posting, is expected on the page. Returning
+  every entry untouched is rejected with the story and the shared terms
+  named while attempts remain, and is a warning on the last one — the same
+  shape as the change floor, for the same reason. A story without a `Link:`
+  is never demanded: the rules forbid swapping it in, and a rejection nothing
+  can satisfy is worse than no rejection.
