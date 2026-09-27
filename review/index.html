@@ -278,6 +278,18 @@
   input[type="file"]:focus-visible + .hint, .filepick:has(+ input:focus-visible) { outline: 2px solid var(--focus); }
 
   /* The floating decision. Big, bottom right, only on jobs waiting on you. */
+  /* The Use Opus handoff: a prompt to take away and a box to bring the
+     answer back to. Wide, because what goes in it is a whole LaTeX file. */
+  .card.handoff .row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin: .7rem 0; }
+  .card.handoff textarea { width: 100%; box-sizing: border-box; padding: .6rem; resize: vertical;
+                           border: 2px solid var(--line); background: var(--bg); color: inherit;
+                           font-family: inherit; font-size: 11px; line-height: 1.5; }
+  .card.handoff button { font: inherit; font-size: 11px; text-transform: uppercase;
+                         letter-spacing: .08em; font-weight: 600; padding: .5rem .9rem;
+                         border: 2px solid var(--ink); background: var(--bg); color: var(--ink);
+                         cursor: pointer; }
+  .card.handoff button:hover:not(:disabled) { background: var(--ink); color: var(--bg); }
+  .card.handoff button:disabled { opacity: .45; cursor: not-allowed; }
   .fab { position: fixed; right: 20px; bottom: 20px; z-index: 10; display: flex; gap: .6rem; align-items: center; }
   /* With a note box, the bar stacks: the box above the decision. */
   .fab:has(.ask) { flex-direction: column; align-items: flex-end; }
@@ -1019,6 +1031,7 @@ async function show(id) {
   if ($("reject")) $("reject").onclick = () => openReject(id);
   if ($("submitted")) $("submitted").onclick = () => markSubmitted(id);
   if ($("submitNow")) $("submitNow").onclick = () => submitNow(id, data);
+  if ($("copyPrompt")) wireHandoff(id);
   if ($("revise")) $("revise").onclick = () => revise(id);
   // The note box: one line until it is touched, then room to write, and
   // the re-tailor button only once there is a note.
@@ -1092,6 +1105,27 @@ function banners(data) {
     html += `<div class="banner warn"><strong>This form is behind Apply and a sign-in.</strong>
       Open the posting, sign in until the application form is actually on the screen, then press Approve and
       Autopilot puts the tailored resume on it. Nothing was lost — the resume and letter below are ready.</div>`;
+  }
+  // "Use Opus" stops here rather than spending: the prompt the API would
+  // have been sent is behind Copy, and the box underneath takes the LaTeX
+  // back. The same checkers run on it either way.
+  if (data.handoff) {
+    html += `<div class="card handoff" id="handoff">
+      <h2>Tailor this one in Claude</h2>
+      <p class="hint">You asked for Opus on this job. Copy the prompt, paste it into Claude,
+        then paste the <code>tex</code> block it gives you back here. Autopilot checks it exactly
+        the way it checks an API answer — sections, links, line budgets, invented figures —
+        then compiles it, writes the cover letter and brings the job back here.</p>
+      <div class="row">
+        <button class="act" id="copyPrompt">Copy the prompt</button>
+        <span class="hint" id="copyNote"></span>
+      </div>
+      <textarea id="pasted" rows="6" placeholder="Paste the tailored LaTeX here…"></textarea>
+      <div class="row">
+        <button class="act" id="usePasted" disabled>Use this resume</button>
+        <span class="hint" id="pasteNote"></span>
+      </div>
+    </div>`;
   }
   if (data.reject_label) {
     html += `<div class="banner stop"><strong>You rejected this: ${escape(data.reject_label)}.</strong>
@@ -1319,6 +1353,56 @@ async function markSubmitted(id) {
   await act(id, async () => {
     await api(`/review/${id}/submitted`, { method: "POST", body: "{}" });
   });
+}
+
+// "Use Opus", done by hand. The prompt is whatever the pipeline wrote when
+// it stopped - the same text the API call would have carried - and it is
+// fetched only when the button is pressed, because it is the master resume
+// and the whole posting and the list polls this page every few seconds.
+function wireHandoff(id) {
+  const box = $("pasted");
+  const use = $("usePasted");
+  const note = $("pasteNote");
+  box.oninput = () => { use.disabled = !box.value.trim(); };
+
+  $("copyPrompt").onclick = async () => {
+    const say = $("copyNote");
+    say.textContent = "Fetching…";
+    try {
+      const out = await api(`/review/${id}/handoff`);
+      await navigator.clipboard.writeText(out.prompt);
+      say.textContent = `Copied — ${out.characters.toLocaleString()} characters. `
+        + "Paste it into Claude.";
+    } catch (err) {
+      // Clipboard access can be refused; the prompt is no use unseen, so
+      // fall back to putting it where it can be selected by hand.
+      say.textContent = "Could not reach the clipboard — the prompt is in the box below, "
+        + "select it and copy.";
+      try { box.value = (await api(`/review/${id}/handoff`)).prompt; } catch (_) {}
+      use.disabled = true;
+    }
+  };
+
+  use.onclick = async () => {
+    const reply = box.value.trim();
+    if (!reply) return;
+    use.disabled = true;
+    note.textContent = "Checking it, compiling, writing the letter…";
+    try {
+      const out = await api(`/review/${id}/handoff`,
+                            { method: "POST", body: JSON.stringify({ reply }) });
+      if (out.warnings && out.warnings.length) {
+        alert("Accepted, with warnings:\n\n" + out.warnings.join("\n"));
+      }
+      await loadList();
+      await show(id);
+    } catch (err) {
+      // The person is the retry loop here, so what they pasted stays put
+      // and the reason goes above it.
+      note.textContent = err.message;
+      use.disabled = false;
+    }
+  };
 }
 
 // The one button that presses Submit for you. Everything else in the app

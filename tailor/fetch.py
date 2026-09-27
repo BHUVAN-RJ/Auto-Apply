@@ -45,6 +45,32 @@ class Posting:
     # saw, or Jobright's copy. Set by the pipeline when it picked.
     text_source: str = ""
 
+    @classmethod
+    def from_markdown(cls, text: str, url: str = "", title: str = "",
+                      company: str = "") -> "Posting":
+        """The posting back out of its own `posting.md`.
+
+        The archive keeps the posting as markdown with a header, and the
+        handoff path needs the posting object again hours later, when the
+        person comes back with a resume they fetched by hand. Only the body
+        matters to the checkers; the header fields are read when they are
+        there and taken from the queue row when they are not.
+        """
+        head, _, body = text.partition("\n---\n")
+        if not body:
+            head, body = "", text
+        fields = {"company": company, "location": "", "url": url, "title": title}
+        for line in head.splitlines():
+            line = line.strip()
+            if line.startswith("# ") and not fields["title"]:
+                fields["title"] = line[2:].strip()
+            for label, key in (("**Company:**", "company"), ("**Location:**", "location"),
+                               ("**Source:**", "url")):
+                if line.startswith(label):
+                    fields[key] = line[len(label):].strip() or fields[key]
+        return cls(url=fields["url"], text=body.strip(), title=fields["title"],
+                   company=fields["company"], location=fields["location"])
+
     def to_markdown(self) -> str:
         header = [f"# {self.title or 'Job posting'}"]
         if self.company:

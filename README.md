@@ -265,6 +265,29 @@ Three ways out:
 There is also **I submitted it**, for a job you applied for yourself somewhere
 else. It records what you did, from wherever the job had got to.
 
+### Use Opus without paying for Opus
+
+The strongest model rewrites five of six experience bullets where the cheap
+ones rewrite one — and costs about twenty times as much per job through the
+API. You are probably already paying for Claude, though, and pasting a prompt
+into a chat you have open costs nothing.
+
+So the banner's green **Use Opus** button does not spend. The job is screened,
+the posting fetched and the stories picked as usual, and then it stops at the
+review page with a card: **Copy the prompt**. Paste that into Claude, paste
+the `tex` block it gives you back into the box underneath, and the pipeline
+carries on — compile, cover letter, checkpoint 1 — as though the API had
+answered.
+
+The prompt is built by the same code that builds the API one, so what you hand
+to Claude is what the model would have been sent. The resume you bring back
+goes through the same checkers: sections, links, printed line budgets,
+invented figures and names. If it fails one, you get the reason in words with
+your paste still in the box, and you can go back and ask again.
+
+Prefer to just buy the call? Turn `opus_by_hand` off in `data/settings.json`
+and the button spends `OPENROUTER_PREMIUM_MODEL` the way it used to.
+
 ### Fills wait for you, and go one at a time
 
 A switch at the top of the page decides whether anything opens a browser tab.

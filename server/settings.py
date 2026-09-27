@@ -61,8 +61,15 @@ def onboarded_mark() -> Path:
 # go, the jobs run **one at a time**: one tab, filled to checkpoint 2 or
 # stopped for a reason, and only then the next. On by default, because the
 # safe half of a switch is the half that touches nobody's browser.
+# opus_by_hand: what the banner's "Use Opus" button does. On (the default),
+# the job stops at checkpoint 1 with the whole prompt behind a Copy button:
+# the person pastes it into the Claude they already pay for and pastes the
+# LaTeX back, and the pipeline validates and finishes it exactly as if the
+# API had answered. Off, the button spends `OPENROUTER_PREMIUM_MODEL`
+# instead, which is about twenty times a normal job.
 DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True,
-            "onboarded": False, "scout_checks_per_day": 4, "hold_fills": True}
+            "onboarded": False, "scout_checks_per_day": 4, "hold_fills": True,
+            "opus_by_hand": True}
 
 router = APIRouter()
 
@@ -75,6 +82,7 @@ class Settings(BaseModel):
     onboarded: Optional[bool] = None
     scout_checks_per_day: Optional[int] = None
     hold_fills: Optional[bool] = None
+    opus_by_hand: Optional[bool] = None
 
 
 def load() -> dict:
@@ -113,6 +121,11 @@ def auto_fill() -> bool:
 
 def auto_learn() -> bool:
     return bool(load().get("auto_learn", False))
+
+
+def opus_by_hand() -> bool:
+    """Whether "Use Opus" hands the prompt over instead of buying the call."""
+    return bool(load().get("opus_by_hand", True))
 
 
 def hold_fills() -> bool:

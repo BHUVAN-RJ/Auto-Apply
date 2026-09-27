@@ -145,10 +145,20 @@ def test_use_opus_marks_the_job_with_the_expensive_model(launched, monkeypatch):
     """The button is armed during the countdown and read when the job is
     queued. The row carries the resolved model name, not a flag, so the
     folder says what it was written with even if the setting moves."""
-    from tailor import llm
+    from server import settings as settings_module
+    from tailor import byhand, llm
 
     monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "expensive/model")
     client = TestClient(app)
+
+    # The default: Opus is asked for by hand, so the row carries the handoff
+    # and the pipeline stops with a prompt to copy rather than buying the
+    # most expensive call in the app.
+    body = client.post("/capture", json={"url": "https://example.com/jobs/8", "premium": True}).json()
+    assert queue.get(body["id"]).tailor_model == byhand.BY_HAND
+
+    # With that switched off it is the API model, as it always was.
+    monkeypatch.setattr(settings_module, "opus_by_hand", lambda: False)
     body = client.post("/capture", json={"url": "https://example.com/jobs/9", "premium": True}).json()
     assert queue.get(body["id"]).tailor_model == "expensive/model"
     # Not pressed: nothing on the row, so the cheap default tailors it.
@@ -160,6 +170,8 @@ def test_use_opus_marks_the_job_with_the_expensive_model(launched, monkeypatch):
 def test_use_opus_pressed_on_jobrights_page_reaches_the_employer_tabs_capture(launched, monkeypatch):
     """Jobright's Apply opens the employer tab, and that tab is what queues
     the job, so the choice travels by posting id like auto-approve does."""
+    from server import settings as settings_module
+    monkeypatch.setattr(settings_module, "opus_by_hand", lambda: False)
     monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "expensive/model")
     client = TestClient(app)
     assert client.post("/prefs", json={"jr_id": "6aad9999", "premium": True}).json() == {"ok": True}

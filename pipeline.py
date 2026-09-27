@@ -25,7 +25,7 @@ from browser import autofill, chrome
 from server import postings, queue, runner, seen, settings
 from server import screen as screen_server
 from server.models import Job, Status
-from tailor import cover, fetch, profile, quality, tailor
+from tailor import byhand, cover, fetch, profile, quality, tailor
 from tex import compile as texc
 from tex import mark
 
@@ -248,6 +248,27 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     base_tex = paths.BASE / "resume.tex"
     target = base_page_count()
     stories = pick_stories(app_dir, posting)
+
+    # "Use Opus" without the API bill: the prompt is built here exactly as the
+    # call would have built it, written next to the posting, and the job stops
+    # at checkpoint 1 with a Copy button instead of a resume. The person
+    # pastes it into the chat they already pay for and pastes the LaTeX back;
+    # `POST /review/{id}/handoff` validates it the same way and finishes this
+    # function's other half.
+    if byhand.is_by_hand(job.tailor_model):
+        hand = byhand.build(posting, base_tex.read_text(),
+                            profile=tailor.load_profile(stories=stories),
+                            extra_instruction=extra_instruction)
+        store.write(app_dir, "handoff.md", hand.prompt)
+        store.set_status(app_dir, held or Status.AWAITING_REVIEW,
+                         "waiting for a resume tailored by hand (Use Opus)")
+        if not keep_status or revive:
+            queue.update(job.id, status=Status.AWAITING_REVIEW)
+        print(f"  Use Opus: the prompt is ready to copy ({hand.characters} characters)")
+        tell_tab(job, "done", "Ready to copy: paste the prompt into Claude, "
+                              "paste the resume back")
+        return app_dir
+
     try:
         result = tailor.tailor(
             posting,
@@ -304,6 +325,33 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
             "added this job. Read them before you send them.\n",
         )
 
+    return finish(app_dir, job, posting, result, extra_instruction, stories,
+                  base_tex, target, held, keep_status, revive)
+
+
+def read_posting(app_dir: Path, job: Job) -> fetch.Posting:
+    """The posting this folder was built from, back off disk.
+
+    The handoff comes back hours later, and re-fetching would be a different
+    posting: the one the prompt was built from is the one the checkers must
+    judge the answer against.
+    """
+    path = app_dir / "posting.md"
+    text = path.read_text(errors="replace") if path.exists() else ""
+    return fetch.Posting.from_markdown(text, url=job.url, title=job.title or "",
+                                       company=job.company or "")
+
+
+def finish(app_dir: Path, job: Job, posting, result, extra_instruction: str,
+           stories, base_tex: Path, target, held, keep_status: bool, revive: bool) -> Path:
+    """Everything after a tailored resume exists: the documents, the compile,
+    the cover letter, the status and checkpoint 1.
+
+    Split out so a resume pasted in by hand ("Use Opus") travels the identical
+    path to one the API returned - same files, same page check, same cover
+    letter, same approval. A second copy of this would be a second set of
+    rules about what a finished application is.
+    """
     store.write(app_dir, "resume.tex", result.tex)
     store.write(app_dir, "resume.diff", result.diff or "(no changes)\n")
     store.write(

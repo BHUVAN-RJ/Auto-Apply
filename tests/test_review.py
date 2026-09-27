@@ -772,9 +772,15 @@ def test_a_change_in_the_thread_retailors_and_leaves_the_job_alone(client, monke
 
 def test_a_change_on_opus_marks_the_row_before_it_runs(client, monkeypatch):
     """"Re-tailor with Opus" is the same decision the banner's button makes:
-    it sticks to the row, so the job stays an Opus job afterwards."""
+    it sticks to the row, so the job stays an Opus job afterwards.
+
+    With `opus_by_hand` off it names the API model; on (the default) it names
+    the handoff, and the pipeline stops with a prompt to copy instead.
+    """
     import time
+    from server import settings as settings_module
     job_id, app_dir = reviewable_job()
+    monkeypatch.setattr(settings_module, "opus_by_hand", lambda: False)
     monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "expensive/model")
     models = []
 
@@ -794,6 +800,46 @@ def test_a_change_on_opus_marks_the_row_before_it_runs(client, monkeypatch):
         time.sleep(0.05)
     assert models == ["expensive/model"], "the re-tailor ran on the model the button names"
     assert queue.get(job_id).tailor_model == "expensive/model"
+
+
+def test_use_opus_hands_the_prompt_over_instead_of_buying_the_call(client, monkeypatch):
+    """The default. Opus rewrites five of six bullets where the cheap field
+    rewrites one, and costs twenty times as much - but the person is already
+    paying for Claude, so the button stops and offers the prompt."""
+    import time
+    from tailor import byhand
+    job_id, app_dir = reviewable_job()
+    models = []
+
+    def fake_retailor(job, instruction, keep_status=False):
+        models.append(job.tailor_model)
+        return app_dir
+
+    import pipeline
+    monkeypatch.setattr(pipeline, "retailor", fake_retailor)
+    client.post(f"/review/{job_id}/thread",
+                json={"text": "stronger, please", "action": "change", "premium": True})
+    for _ in range(100):
+        if not client.get(f"/review/{job_id}/thread").json()["running"]:
+            break
+        time.sleep(0.05)
+    assert models == [byhand.BY_HAND]
+    assert queue.get(job_id).tailor_model == byhand.BY_HAND
+
+
+def test_the_prompt_is_served_whole_and_the_pasted_resume_is_checked(client, monkeypatch):
+    """Copy hands over what the API would have been sent; the reply comes
+    back through the same checkers, and a bad paste is refused with words."""
+    job_id, app_dir = reviewable_job()
+    assert client.get(f"/review/{job_id}/handoff").status_code == 404
+    store.write(app_dir, "handoff.md", "RULES\n\n---\n\nthe whole prompt")
+    body = client.get(f"/review/{job_id}/handoff").json()
+    assert "the whole prompt" in body["prompt"] and body["characters"] > 0
+
+    # Nothing that reads as LaTeX: refused, and nothing is written.
+    bad = client.post(f"/review/{job_id}/handoff", json={"reply": "Sure, I can help!"})
+    assert bad.status_code == 422 and "no LaTeX" in bad.json()["detail"]
+    assert (app_dir / "handoff.md").exists()
 
 
 def test_reveal_names_the_files_and_shows_them_in_finder(client, monkeypatch):

@@ -56,6 +56,23 @@ DEFAULT_PREMIUM_MODEL = "anthropic/claude-opus-5.5"
 
 
 def premium_model() -> str:
+    """What "Use Opus" puts on the job's row.
+
+    By default that is not a model at all: it is `byhand.BY_HAND`, and the
+    pipeline stops and offers the prompt to copy rather than buying the most
+    expensive call in the app. `settings.opus_by_hand` off restores the API
+    model. Resolved here so the banner, the review thread and the pipeline
+    cannot disagree about what the word means.
+    """
+    from server import settings
+    from tailor import byhand
+
+    if settings.opus_by_hand():
+        return byhand.BY_HAND
+    return os.environ.get("OPENROUTER_PREMIUM_MODEL", DEFAULT_PREMIUM_MODEL)
+
+
+def premium_api_model() -> str:
     return os.environ.get("OPENROUTER_PREMIUM_MODEL", DEFAULT_PREMIUM_MODEL)
 
 

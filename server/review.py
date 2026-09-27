@@ -134,6 +134,11 @@ def detail(job_id: str) -> dict:
         # The fill found no form: the page keeps it behind Apply and a
         # sign-in. Not an error, and not a reason to close the job.
         "needs_sign_in": read("needs_sign_in.txt"),
+        # A job captured with "Use Opus": the prompt is written and waiting
+        # to be copied, and there are no documents until the person brings
+        # the resume back. The text itself is fetched separately - it is the
+        # whole master resume plus the posting, and the list polls `detail`.
+        "handoff": (app_dir / "handoff.md").exists(),
         "screen": _screen(app_dir),
         "screen_error": read("screen_error.txt"),
         "cover_letter": read("cover_letter.md"),
@@ -588,6 +593,63 @@ def submit_now(job_id: str) -> dict:
     return {"id": job_id, "status": Status.SUBMITTED.value, "submitted": True,
             "pressed": result.get("pressed", ""), "quote": quote,
             "changes": corrections.changes(app_dir)}
+
+
+class Pasted(BaseModel):
+    reply: str = ""
+
+
+@router.get("/{job_id}/handoff")
+def handoff_prompt(job_id: str) -> dict:
+    """The prompt to paste into Claude, for a job captured with Use Opus.
+
+    Written by the pipeline when it stopped (`handoff.md`), served whole so
+    the page's Copy button hands over exactly what the API would have been
+    sent - rules, posting, stories, master resume, reply format.
+    """
+    _, app_dir = _job_and_dir(job_id)
+    path = app_dir / "handoff.md"
+    if not path.exists():
+        raise HTTPException(404, "this job has no prompt waiting to be copied")
+    text = path.read_text()
+    return {"id": job_id, "prompt": text, "characters": len(text)}
+
+
+@router.post("/{job_id}/handoff")
+def handoff_reply(job_id: str, pasted: Pasted) -> dict:
+    """The LaTeX the person brought back, held to every rule the API path is.
+
+    Same checkers, same compile, same cover letter, same checkpoint 1 - the
+    only difference is where the text came from. A rejection comes back as
+    words for them to act on, with what they pasted still in the box, since
+    here the person is the retry loop.
+    """
+    import pipeline as pipeline_module
+    from tailor import byhand, tailor as tailor_module
+
+    job, app_dir = _job_and_dir(job_id)
+    if not (app_dir / "handoff.md").exists():
+        raise HTTPException(409, "this job is not waiting for a resume")
+
+    posting = pipeline_module.read_posting(app_dir, job)
+    stories = profile.read_used(app_dir)
+    base_tex = paths.BASE / "resume.tex"
+    try:
+        result = byhand.accept(pasted.reply, posting, base_tex.read_text(),
+                               profile=tailor_module.load_profile(stories=stories))
+    except tailor_module.TailorError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    try:
+        pipeline_module.finish(app_dir, job, posting, result, "", stories, base_tex,
+                               pipeline_module.base_page_count(), None, False, False)
+    except Exception as exc:  # noqa: BLE001 - a bad compile is the person's to see
+        raise HTTPException(422, f"the resume did not compile: {exc}") from exc
+    # The prompt has been answered; leaving it would offer the Copy button
+    # over a finished application.
+    (app_dir / "handoff.md").unlink(missing_ok=True)
+    return {"id": job_id, "status": Status.AWAITING_REVIEW.value,
+            "warnings": result.warnings, "folder": app_dir.name}
 
 
 def _form_tab(job: Job, app_dir: Path) -> str:
