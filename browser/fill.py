@@ -24,7 +24,7 @@ from typing import Optional
 import paths
 from server import settings
 
-from . import ats, autofill, chrome, forms, guard
+from . import ats, autofill, chrome, forms, guard, signin
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -121,6 +121,10 @@ DOCS_BY_CODE = "AUTOPILOT_DOCS_BY_CODE"
 # documents by code, a screenshot, and the tab is the human's. The fill
 # counts as done when the tailored resume is on the form.
 AGENT_ENV = "AUTOPILOT_AGENT"
+# Wait at a sign-in wall rather than hand the job back. `0` restores the old
+# behaviour: no form, no fill, `needs_sign_in.txt` and a trip to the review
+# page to press Fill again.
+SIGNIN_ENV = "AUTOPILOT_WAIT_FOR_SIGNIN"
 
 # Where the applicant is, as every location field on every form must read.
 AUTOFILL_STEP = """1. If a Jobright autofill button or panel is offered, click it and let it
@@ -517,12 +521,43 @@ async def fill_async(
         log.info(filled.summary())
     elif adapter and not profile:
         filled.note = "base/form.json is missing"
+    # The sign-in wall, watched rather than reported. Workday, Oracle,
+    # McKinsey and the rest keep the application behind an account, and we
+    # never press Apply and never type a credential - but the person signing
+    # in themselves is a minute, and the fill used to spend that minute
+    # failing and a round trip getting sent back. The two detectors in
+    # `signin.py` are asked of one tab, followed by its target id rather
+    # than its URL, so single sign-on can take the page off to Google and
+    # back without the tab being lost. When the form appears, the fill runs
+    # from the first page as though the wall had never been there.
+    gate = None
+    if not filled.attempted and os.environ.get(SIGNIN_ENV, "1") != "0":
+        try:
+            async def say(line: str) -> None:
+                await autofill.notify(cdp_url, gate_tab[0], "working", line)
+
+            gate_tab = [""]
+            gate_tab[0] = autofill.find_tab(cdp_url, url)
+            tab, gate = await signin.ready_tab(cdp_url, url, notify=say)
+            gate_tab[0] = tab
+            if gate.saw_signin:
+                log.info("sign-in wall: waited %.0fs, form %s",
+                         gate.waited, "reached" if gate.ready else "never appeared")
+        except Exception as error:  # noqa: BLE001 - then the old path, unchanged
+            log.info("sign-in watch: %s", error)
+            gate = None
+
     if not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
         # The injector presses Autofill when the human opens the form; when
         # that tab is still open the fill works there, no second tab and no
         # second press.
         try:
-            pressed = await autofill.reuse(cdp_url, url)
+            if gate is not None and gate.ready and gate.target_id:
+                # The watch already decided which tab this is, through a
+                # provider and back; matching on the URL again would lose it.
+                pressed = await autofill.in_tab(cdp_url, gate.target_id)
+            else:
+                pressed = await autofill.reuse(cdp_url, url)
         except Exception as error:  # noqa: BLE001 - then press afresh
             log.info("could not reuse the opened tab: %s", error)
             pressed = None

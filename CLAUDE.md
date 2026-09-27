@@ -931,6 +931,31 @@ invariants first.
   or rejected; it is on the reviewable fab as well as the filled one. The
   automatic paths (`mark_seen`, the watch, `/submitted-seen`) still want
   FILLED or FILLING, because there a stray "thank you" is the risk.
+- **The sign-in is watched, not reported** (2026-09-27, asked for, and the
+  other half of the 2026-09-26 sign-in entry). A form behind an account
+  stopped the run: `needs_sign_in.txt`, back to checkpoint 1, sign in, come
+  back to the review page, press Fill again. The documents were always
+  fine; the round trip existed because nobody was watching the tab.
+  `browser/signin.py` takes the flow apart into two detectors that never
+  consult each other - `looks_like_signin` (a password box, an identity
+  host, or a sign-in phrase **that is the whole line**, since "users log in
+  to manage their orders" is in half the job descriptions in the country;
+  `ALWAYS` / `ON_ITS_OWN`, and a resume slot outranks any header) and
+  `looks_like_form` (somewhere to put the resume, or `FORM_FIELDS` real
+  fields, never on a provider's host). They are joined only by
+  `wait_for_form`, which follows **the tab, not the link**: single sign-on
+  leaves the employer entirely (`IDENTITY_HOSTS`: Google, Microsoft, Apple,
+  Okta, Auth0, `id.workday.com`) and comes back, and the CDP target id is
+  the one thing that holds still through it. `signin.ready_tab` reuses the
+  tab already open on the job rather than opening a second beside a
+  half-finished sign-in, and `autofill.in_tab` presses in that exact tab,
+  because matching on the URL again would lose it. The fill then runs from
+  the **first page** as though the wall had never been there - page 1
+  autofilled, Continue, the resume swapped on page 2. Nothing is typed,
+  clicked or read: the credential is the person's. `SIGNIN_TIMEOUT` 600 s,
+  the banner says "Waiting while you sign in - I will carry on from the
+  first page", and `AUTOPILOT_WAIT_FOR_SIGNIN=0` restores the old
+  hand-back. Next: `browser/workday.py`'s page walk on top of it.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

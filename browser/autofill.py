@@ -503,6 +503,19 @@ async def reuse(cdp_url: str, url: str) -> Optional[AutofillResult]:
     return result
 
 
+async def in_tab(cdp_url: str, target_id: str) -> AutofillResult:
+    """Press Autofill in this exact tab. Used when something else has
+    already decided which tab the form is on - the sign-in watch, which
+    follows one tab through a provider and back, where matching on the URL
+    would have lost it."""
+    async with attached(cdp_url, target_id=target_id) as (page, _):
+        status = await page.evaluate(STATUS_JS) or {}
+        already = from_status(status, target_id)
+        if already is not None:
+            return already
+        return await run(page, target_id)
+
+
 async def notify(cdp_url: str, target_id: str, state: str, note: str = "") -> None:
     """Show `state` on the tab's banner. Best effort: a tab that is gone, or
     has no banner, changes nothing about the fill."""
