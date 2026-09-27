@@ -231,6 +231,11 @@ def test_a_decided_job_is_described_by_its_outcome_not_by_where_it_is_kept():
     # answer yet - a screen still running, and a countdown about to queue.
     assert 'if (!pending && !(add && add.classList.contains("counting"))) {' in script
     assert "const AUTO_COLLAPSE_MS = 3000;" in script
+    # Opening the badge is a look, not a decision to keep the bar: the same
+    # three seconds run again. Reading it holds them.
+    assert "const expand = () => {" in script and "    autoCollapse();\n  };" in script
+    assert 'shell.addEventListener("mouseenter", stopCollapse);' in script
+    assert 'shell.addEventListener("mouseleave", leave);' in script
     # And it is in the bar's body, in place of the ordinary seen line: the
     # same fact twice, once loudly and once quietly, reads as two facts.
     assert "${applied}\n          ${seen && !applied ?" in script

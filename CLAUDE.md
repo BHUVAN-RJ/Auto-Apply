@@ -905,7 +905,11 @@ invariants first.
   while it shows. And **every banner folds into the badge after 3 s**
   (`AUTO_COLLAPSE_MS`, was 5 s and gated to `seen`/`submitted` pages with
   the applied block held open for good): the two that do not fold are a
-  screen still running and a countdown about to queue. That reverses the
+  screen still running and a countdown about to queue. **Expanding the
+  badge starts the same three seconds again** - opening it is a look, not a
+  decision to keep the bar - and hovering or tabbing into the bar holds the
+  countdown (`stopCollapse`, restarted on `mouseleave` / `focusout`), so it
+  only ever takes back a bar nobody is reading. That reverses the
   2026-09-25 rule that the applied bar never collapses; the reason it was
   written (a *line inside* a bar that folded away) no longer describes it.
 - **"Already applied" pointed at the wrong row, and dated it wrong**

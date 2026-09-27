@@ -603,6 +603,11 @@ function render(result, { pending = false } = {}) {
     bannerCollapsed = false;
     host.dataset.collapsed = "false";
     shell.classList.remove("collapsed");
+    // Opening the badge is a look, not a decision to keep the bar. It gets
+    // the same three seconds a fresh verdict does, and the countdown across
+    // the ✕ says so. Reading it or reaching for a button holds it open
+    // (below), so the timer only ever takes back a bar nobody is using.
+    autoCollapse();
   };
   // Clicks crossing a closed shadow root are retargeted to its host on some
   // ATS pages.  Let the host restore the badge as well as its inner button.
@@ -611,7 +616,14 @@ function render(result, { pending = false } = {}) {
   // corner badge. Restoring it only expands this DOM; it never screens again.
   let closing = 0;
   let collapseTimer = null;
+  const stopCollapse = () => {
+    clearTimeout(collapseTimer);
+    collapseTimer = null;
+    cancelAnimationFrame(closing);
+    closeBar.style.width = "0";
+  };
   const autoCollapse = () => {
+    stopCollapse();
     const from = performance.now();
     collapseTimer = setTimeout(() => {
       collapseTimer = null;
@@ -669,6 +681,16 @@ function render(result, { pending = false } = {}) {
     // autopilot" tab may be the one a fill is working on.
     if (!onJobright && result?.created) closeSelf();
   };
+  // A bar being read is a bar in use: hovering it, or tabbing into it, holds
+  // the countdown, and leaving starts it again. Without this the three
+  // seconds ran out under the cursor of someone halfway through the reason
+  // a job was rejected.
+  shell.addEventListener("mouseenter", stopCollapse);
+  shell.addEventListener("focusin", stopCollapse);
+  const leave = () => { if (!bannerCollapsed && !pending) autoCollapse(); };
+  shell.addEventListener("mouseleave", leave);
+  shell.addEventListener("focusout", leave);
+
   const cancel = () => {
     clearTimeout(timer); timer = null;
     cancelAnimationFrame(frame);
