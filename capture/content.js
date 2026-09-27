@@ -55,13 +55,16 @@ const CHECKS = "years of experience, visa and sponsorship, export control, clear
 // and two seconds was not enough to read the verdict and press it.
 const AUTO_ADD_MS = 3000;
 const AUTO_ADD = new Set(["ok", "caution"]);
-// Once the job is queued the bar has done its work and closes itself after
-// this long, counted down in red across the ✕. Not before: on Jobright's
-// page the job is queued by the employer tab its Apply opened, so the bar
-// asks the server whether that has happened, this often, for this long,
-// and only then starts the countdown. A job that never lands leaves the
-// bar open, saying so.
-const AUTO_COLLAPSE_MS = 5000;
+// Once the bar has a verdict to give, it has done its work: it closes
+// itself after this long, counted down in red across the ✕, and becomes
+// the corner badge in the verdict's colour. Every banner, on every page -
+// applied, rejected, filled, screened clean. Not while the screen is still
+// running, and not while the add countdown is going: on Jobright's page
+// the job is queued by the employer tab its Apply opened, so the bar asks
+// the server whether that has happened, this often, for this long, and
+// only then starts the countdown. A job that never lands leaves the bar
+// open, saying so.
+const AUTO_COLLAPSE_MS = 3000;
 const QUEUED_POLL_MS = 2000;
 const QUEUED_WAIT_MS = 90000;
 
@@ -188,6 +191,25 @@ function watchState(jobId) {
 }
 
 let confirmTimer = null;
+// The watch exists to stop the banner painting a verdict over the
+// confirmation page a submitted form turns into. It was never meant to
+// silence the tab for good, and it did: a Workday tab that had held a
+// fill was then used to sign in and open the real application form, and
+// the banner never came back — no verdict, and no way to put the tailored
+// resume on the slot, because `submissionWatched` is restored from
+// sessionStorage on every page in that tab.
+//
+// So the suppression lasts only while the page in front of us actually
+// reads as a confirmation. The `confirmTimer` and the stored job id stay,
+// so a confirmation reached later is still marked; and `/screen` answers
+// `submitted` for a confirmation page in string work before any rule
+// runs, which is the second guard against painting over it.
+function notTheConfirmation() {
+  if (CONFIRMED.test(document.body?.innerText || "")) return false;
+  submissionWatched = false;
+  return true;
+}
+
 function watchSubmission(jobId) {
   if (confirmTimer) return;
   submissionWatched = true;
@@ -222,33 +244,87 @@ const SEEN_STATUS = {
 // the bar has and the Add button goes away with it.
 const APPLIED_STATUS = new Set(["submitted", "filled", "filling"]);
 
+// When it happened, to the minute and in the reader's own time zone. "on
+// 2026-09-20" is not an answer to "did I apply to this one?" if two
+// applications went out that day.
+function appliedWhen(at) {
+  if (!at) return "";
+  const when = new Date(at);
+  if (isNaN(when)) return at.slice(0, 10);
+  const today = new Date();
+  const sameDay = when.toDateString() === today.toDateString();
+  const time = when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return sameDay ? `today at ${time}`
+    : `on ${when.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} at ${time}`;
+}
+
 function appliedNotice(seen) {
   if (!seen || !APPLIED_STATUS.has(seen.status)) return "";
-  const when = seen.at ? seen.at.slice(0, 10) : "";
-  const what = seen.status === "submitted"
-    ? `You already applied to this job with Autopilot${when ? ` on ${when}` : ""}.`
+  const when = appliedWhen(seen.at);
+  // The heading has to be true. "ALREADY APPLIED" over a job that is only
+  // filled - the tailored form sitting in a tab waiting for the person's
+  // own Submit - says the one thing that has not happened yet, and reads as
+  // the block pointing at the wrong job. Only a submitted job is applied;
+  // the other two are in flight and say so, in amber rather than red.
+  const head = seen.status === "submitted" ? "ALREADY APPLIED"
+    : seen.status === "filled" ? "ALREADY IN AUTOPILOT" : "FILLING THIS NOW";
+  const what = seen.status === "submitted" ? `Applied${when ? ` ${when}` : ""}`
     : seen.status === "filled"
-      ? "Autopilot already filled this job's form; it is waiting for your Submit."
-      : "Autopilot is filling this job's form right now.";
+      ? `Form filled${when ? ` ${when}` : ""} and waiting for your Submit — do not start it again`
+      : "Autopilot is filling this job's form right now";
   const which = [seen.company, seen.title].filter(Boolean).join(" — ");
-  const sure = seen.level === "high"
-    ? "Same posting."
-    : "Looks like the same posting; check it before adding it again.";
-  return `<div class="applied">
-      <b>ALREADY APPLIED</b>
-      <span>${esc(what)}</span>
-      ${which ? `<span class="which">${esc(which)}</span>` : ""}
-      <span class="which">${esc(sure)}</span>
+  // One line under the heading, and the whole block is the button: it said
+  // the same thing five ways (what, when, company, "Same posting.", "Show me
+  // what I sent →") and the bar carried a second button saying it again.
+  // What is left is what has to be read from across the room; the rest is
+  // the tooltip, and the cursor says it can be clicked.
+  const line = seen.level === "high" ? `${what}${which ? ` · ${which}` : ""}`
+    : `Looks like the same job · ${what}${which ? ` · ${which}` : ""}`;
+  const promise = seen.status === "submitted"
+    ? "Show me what I sent: the posting, the resume and letter that went with it, and the whole history"
+    : "Open this job in Autopilot: the resume and letter on it, and where the fill has got to";
+  return `<div class="applied${seen.status === "submitted" ? "" : " pending"}"
+       data-act="open" role="button" tabindex="0" title="${esc(promise)}">
+      <b>${head}</b>
+      <span>${esc(line)}</span>
     </div>`;
 }
 
+// A job that is finished with is described by its outcome, not by where
+// it is kept. "Already in autopilot · Rejected" led with the plumbing and
+// buried the answer; on a posting someone is looking at a second time the
+// answer is "Applied", "Rejected — visa", or "Failed".
+const DECIDED = {
+  submitted: "APPLIED",
+  skipped: "REJECTED",
+  failed: "FAILED",
+};
+
 function seenLine(seen) {
-  const when = seen.at ? ` ${seen.at.slice(0, 10)}` : "";
-  const state = `${SEEN_STATUS[seen.status] || seen.status}${["submitted", "skipped"].includes(seen.status) ? when : ""}`;
+  const decided = DECIDED[seen.status];
+  const when = appliedWhen(seen.at);
+  if (decided) {
+    const why = seen.status === "skipped" && seen.reject ? ` — ${seen.reject}` : "";
+    const head = `${decided}${why}${when ? ` ${when}` : ""}`;
+    // At `confident` the match may be another role at the same company, so
+    // the outcome is prefixed rather than stated.
+    return seen.level === "high" ? head : `LOOKS LIKE THE SAME JOB · ${head}`;
+  }
+  // Still in flight: where it has got to is the useful thing.
+  const state = SEEN_STATUS[seen.status] || seen.status;
   return seen.level === "high"
-    ? `Already in autopilot · ${state}`
+    ? `In autopilot · ${state}`
     : `Looks like a job already in autopilot: ${seen.company || ""}${seen.company && seen.title ? " — " : ""}${seen.title || ""} · ${state}`;
 }
+// What the button promises, which is what the person wants next: the
+// documents they sent, the reason they rejected it, or the error.
+function openLabel(seen) {
+  if (APPLIED_STATUS.has(seen.status)) return "Show me what I sent";
+  if (seen.status === "skipped") return "Show me why I rejected it";
+  if (seen.status === "failed") return "Show me what happened";
+  return "Open in autopilot";
+}
+
 function isPosting() {
   return !onJobright || location.pathname.startsWith("/jobs/info/");
 }
@@ -367,13 +443,29 @@ function render(result, { pending = false } = {}) {
       button.close span { position: relative; z-index: 1; }
       li.unchecked b { color: #a0a0a0; }
       .seen { display: block; color: #fff; font-weight: 600; margin-top: 3px; }
+      /* A decided job says its outcome, and the line is the way to it. */
+      .seen.decided { cursor: pointer; letter-spacing: .06em; text-decoration: underline;
+                      text-underline-offset: 3px; }
+      .seen.decided:hover, .seen.decided:focus-visible { color: #ffd479; outline: none; }
       /* The one thing on this bar that has to be read from across the room. */
-      .applied { display: block; margin: 4px 0 2px; padding: 8px 10px; background: #2a0d0d;
-                 border: 3px solid #ff5c5c; }
-      .applied b { display: block; color: #ff5c5c; font-size: 17px; font-weight: 800;
-                   letter-spacing: .12em; line-height: 1.2; }
-      .applied span { display: block; color: #fff; font-size: 13px; font-weight: 600; margin-top: 3px; }
-      .applied span.which { color: #ffb3b3; font-weight: 400; }
+      /* One row, not a panel: the words that have to carry across the room
+         are "ALREADY APPLIED", and everything after them is one line of
+         detail beside it. Three stacked lines in a boxed block took a
+         third of the bar to say what fits on one. */
+      .applied { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 2px;
+                 padding: 3px 8px; background: #2a0d0d; border: 2px solid #ff5c5c;
+                 min-width: 0; }
+      .applied b { color: #ff5c5c; font-size: 13px; font-weight: 800;
+                   letter-spacing: .1em; line-height: 1.3; white-space: nowrap; }
+      .applied span { color: #fff; font-size: 12px; font-weight: 600; min-width: 0;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .applied { cursor: pointer; }
+      .applied:hover, .applied:focus-visible { background: #3a1010; outline: none; }
+      /* Filled or filling: still a job not to start twice, but nothing has
+         been applied for yet, so it is not the red one. */
+      .applied.pending { background: #2a1f06; border-color: #ffb74d; }
+      .applied.pending b { color: #ffb74d; }
+      .applied.pending:hover, .applied.pending:focus-visible { background: #3a2a08; }
       .files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; align-items: center; }
       .files .hint { color: #a0a0a0; font-size: 11px; }
       .changes { display: none; margin-top: 6px; border-top: 1px solid #333; padding-top: 6px; }
@@ -419,13 +511,15 @@ function render(result, { pending = false } = {}) {
           ${about ? `<span class="about">${esc(about)}</span>` : ""}
           <span class="auto"></span>
           ${applied}
-          ${seen ? `<span class="seen">${esc(seenLine(seen))}</span>` : ""}
-          ${seen && seen.level === "high" ? `<div class="files" id="files"></div>` : ""}
+          ${seen && !applied ? `<span class="seen${DECIDED[seen.status] ? " decided" : ""}"
+            ${DECIDED[seen.status] ? 'data-act="open" role="button" tabindex="0"' : ""}
+            >${esc(seenLine(seen))}</span>` : ""}
+          ${seen ? `<div class="files" id="files"></div>` : ""}
           <div class="changes" id="changes"></div>
           ${flags ? `<ul>${flags}</ul>` : ""}
         </div>
         <div class="actions">
-          ${seen ? `<button class="open" data-act="open"><span>Open in autopilot</span></button>` : ""}
+          ${seen && !applied ? `<button class="open" data-act="open"><span>${esc(openLabel(seen))}</span></button>` : ""}
           ${canRetry ? `<button data-act="again">Again</button>` : ""}
           ${canAdd ? `<label class="approve" title="Checked: once the resume is tailored the fill starts by itself. Unchecked: it waits for your approval on the review page."><input type="checkbox" checked> auto-approve</label>` : ""}
           ${canAdd ? `<button class="opus" data-act="opus" aria-pressed="${usePremium}" title="Tailor this job's resume and cover letter with the expensive model. About eight times the cost of a normal job, and it rewrites far more of the resume. The countdown keeps running.">${usePremium ? "Opus on" : "Use Opus"}</button>` : ""}
@@ -582,17 +676,41 @@ function render(result, { pending = false } = {}) {
     bar.style.width = "0";
     label(idle);
   };
-  if (add && AUTO_ADD.has(verdict) && !seen) {
+  // A tab the person opened themselves is never queued by a countdown: the
+  // injector marks only Jobright's own Apply tabs, and a form found by hand
+  // is a page being read, not a decision made.
+  if (add && AUTO_ADD.has(verdict) && !seen && !window.__autopilotHandOpened) {
     add.classList.add("counting");
     label(onJobright ? "Opening job page" : "Adding to autopilot");
     started = performance.now();
     timer = setTimeout(act, AUTO_ADD_MS);
     frame = requestAnimationFrame(draw);
   }
-  if (!pending && (seen || verdict === "submitted") && !applied) {
+  // Every banner folds itself away, not only the ones that had nothing left
+  // to ask. The bar's job is to say the verdict; the badge is what stays,
+  // in the verdict's own colour, and one tap brings the bar back with the
+  // same result and no second screen. The two exceptions are the only ones
+  // that are not a finished answer: a screen still running, and a countdown
+  // that is about to queue the job (that one collapses when it lands).
+  //
+  // The applied block used to be held out of this, because a line inside a
+  // bar that folded away after five seconds is how one job was applied for
+  // twice. It is not a line inside a bar any more - it is the loudest thing
+  // the banner draws, and the badge behind it keeps the colour - so it
+  // folds like everything else.
+  if (!pending && !(add && add.classList.contains("counting"))) {
     autoCollapse();
   }
 
+  // The applied block is a div acting as a button, so it needs the keys a
+  // button would have had.
+  shadow.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target?.closest?.("[role=button][data-act]");
+    if (!el) return;
+    e.preventDefault();
+    el.click();
+  });
   shadow.addEventListener("click", (e) => {
     const action = e.target?.closest?.("[data-act]")?.dataset?.act;
     if (action === "close") {
@@ -627,7 +745,11 @@ function render(result, { pending = false } = {}) {
     }
   });
   document.documentElement.appendChild(host);
-  if (seen && seen.level === "high") loadFiles(shadow, seen.id);
+  // The tailored files are offered for any match, certain or likely: the
+  // form a person opened by hand is exactly where "put" is wanted, and the
+  // match there is often `confident` rather than `high`. Nothing is put on
+  // the form without the click.
+  if (seen) loadFiles(shadow, seen.id);
 }
 
 // The tailored PDFs for this job, as chips. Drag one onto the form's own
@@ -860,7 +982,7 @@ async function screen({ force = false, waited = 0 } = {}) {
   // A filled form, or the confirmation it turned into, is not a posting
   // to screen: the verdict would paint over "submitted" and the screen
   // would run on a thank-you page.
-  if (submissionWatched && !force) return;
+  if (submissionWatched && !force && !notTheConfirmation()) return;
   const text = pageText();
   if (text.length < MIN_TEXT) {
     const url = location.href;
@@ -898,7 +1020,7 @@ async function screen({ force = false, waited = 0 } = {}) {
 function schedule() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
-  if (submissionWatched) return;
+  if (submissionWatched && !notTheConfirmation()) return;
   bannerCollapsed = false;
   setTimeout(() => {
     if (location.href === lastUrl) screen();

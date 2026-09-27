@@ -86,3 +86,34 @@ def test_no_prompt_grants_submission():
     for prompt in prompts.CATALOG:
         text = prompt.stock().lower()
         assert "you may submit" not in text and "press submit" not in text.replace("never press submit", ""), prompt.name
+
+
+# 6. The one place Submit is pressed is the person's own button, and the
+#    agent cannot reach it. `browser/press_submit.py` exists because a human
+#    asked for a Submit button on the review page; nothing about the agent
+#    changes, and this is what keeps it that way.
+
+def test_only_the_review_endpoint_presses_submit():
+    presser = "press_submit"
+    # Nothing the agent runs imports it: not the fill, not the browser stack,
+    # not the script the approve button launches.
+    for path in list((ROOT / "browser").rglob("*.py")) + [ROOT / "apply.py", ROOT / "pipeline.py"]:
+        if path.name == "press_submit.py":
+            continue
+        assert presser not in path.read_text(), path
+    # And it is reached from exactly one place in the server: the endpoint the
+    # review page's button posts to.
+    callers = [p for p in (ROOT / "server").rglob("*.py") if presser in p.read_text()]
+    assert [p.name for p in callers] == ["review.py"], callers
+
+
+def test_the_guard_still_refuses_the_control_the_button_presses():
+    """The presser aims at `guard.SUBMIT_PATTERNS`; the agent is refused it.
+    One list, two uses - so a pattern added for one is added for both."""
+    import json
+
+    from browser import press_submit
+
+    for pattern in guard.SUBMIT_PATTERNS:
+        assert json.dumps(pattern) in press_submit._SUBMIT_SOURCE
+    assert press_submit._SUBMIT_SOURCE in press_submit.CANDIDATES_JS

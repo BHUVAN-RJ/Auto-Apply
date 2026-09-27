@@ -131,6 +131,9 @@ def detail(job_id: str) -> dict:
         "diff": read("resume.diff"),
         "suggestions": read("suggestions.md"),
         "mismatch": read("mismatch.md"),
+        # The fill found no form: the page keeps it behind Apply and a
+        # sign-in. Not an error, and not a reason to close the job.
+        "needs_sign_in": read("needs_sign_in.txt"),
         "screen": _screen(app_dir),
         "screen_error": read("screen_error.txt"),
         "cover_letter": read("cover_letter.md"),
@@ -348,12 +351,8 @@ def artifact(job_id: str, name: str):
 
 # What the tailor model is told when the reviewer approves a job it called a
 # poor fit. The verdict is a recommendation; approval is the answer to it.
-OVERRULE = (
-    "You judged this posting a poor fit and tailored nothing. The reviewer has "
-    "read that and is applying anyway, so the fit question is settled and is "
-    "not yours to reopen: tailor the resume for this posting under every rule "
-    "above, and do not reply with MISMATCH."
-)
+# The text lives with the tailor, beside the one the pipeline sends itself.
+OVERRULE = tailor.OVERRULE
 
 
 def _tailored(app_dir: Path) -> bool:
@@ -408,8 +407,10 @@ def approve(job_id: str, decision: Decision) -> dict:
     pid = runner.start_fill(job_id)
     if pid:
         store.set_status(app_dir, Status.APPROVED, f"filling started (pid {pid})")
+    elif runner.held():
+        store.set_status(app_dir, Status.APPROVED, "approved; waiting for the fills to be let go")
     return {"id": job_id, "status": Status.APPROVED.value, "filling": bool(pid),
-            "pid": pid}
+            "pid": pid, "held": runner.held() and not pid}
 
 
 # Every state a fill may be started from. FILLING is included deliberately: a
@@ -441,6 +442,16 @@ def fill_now(job_id: str, request: FillRequest) -> dict:
         raise HTTPException(
             409, {"error": "fill_running", "pid": running,
                   "message": f"a fill is already running for this job (pid {running})"},
+        )
+    # One tab at a time, across jobs as well as within one. Two fills share
+    # the one Chrome window the app owns and open their tabs on top of each
+    # other; this is the same rule the hold enforces in bulk.
+    other = runner.any_fill_running()
+    if other and other != job_id and not request.force:
+        raise HTTPException(
+            409, {"error": "another_fill_running", "job": other,
+                  "message": "another job is being filled right now; let it finish, "
+                             "or force this one to take the browser"},
         )
     if running:
         runner.stop_fill(job_id)
@@ -493,10 +504,17 @@ def mark_submitted(job_id: str, decision: Decision) -> dict:
     endpoint is reachable only from the review page.
     """
     job, app_dir = _job_and_dir(job_id)
-    # FILLING is accepted too: the human may finish and submit the form while
-    # the agent is still poking at it. Their submission wins; the agent stops.
-    if job.status not in (Status.FILLED, Status.FILLING):
-        raise HTTPException(409, f"job is {job.status.value}, not filled")
+    # From any live status, not only FILLED. FILLING was always accepted (the
+    # human may finish the form while the agent is still poking at it; their
+    # submission wins and the agent stops), and the same is true earlier:
+    # someone who opened the posting and applied on the employer's site
+    # before the fill ever ran is telling us a fact about the world, not
+    # asking the pipeline for permission. Refusing it left the job sitting
+    # in flight as a job still to do. Only a job already finished with is
+    # refused, because there the button would be undoing a decision rather
+    # than recording one.
+    if job.status in (Status.SUBMITTED, Status.SKIPPED):
+        raise HTTPException(409, f"job is already {job.status.value}")
     killed = runner.stop_fill(job_id)
     note = decision.note or "submitted by hand"
     if killed:
@@ -514,6 +532,61 @@ def mark_submitted(job_id: str, decision: Decision) -> dict:
     # whole thing here read as a crash (2026-09-19).
     tab = "closed" if chrome.close_tab(_form_tab(job, app_dir)) else "not_open"
     return {"id": job_id, "status": Status.SUBMITTED.value, "tab": tab,
+            "changes": corrections.changes(app_dir)}
+
+
+@router.post("/{job_id}/submit")
+def submit_now(job_id: str) -> dict:
+    """Press Submit on this job's form, because the person asked for it here.
+
+    The never-submit rule is about the agent, and it does not move: no model
+    reaches this, no browser-use action is registered for it, `apply.py` does
+    not import the presser, and the guard still refuses every submit control
+    the agent sees. This is checkpoint 2 taken from the review page instead of
+    from the form's own tab - one human click, confirmed in the page first,
+    for the times the tailored form is already correct and walking over to the
+    browser window is the only thing left.
+
+    The form must be filled and its tab still open. The press waits for the
+    page to become a confirmation: it does, the job is SUBMITTED with the
+    confirmation's own words; it does not, the job is left exactly where it
+    was and the reply says so, because a validation error is not a submission.
+    The tab is never closed here - the confirmation is what the person wants
+    to see.
+    """
+    from browser import press_submit
+
+    job, app_dir = _job_and_dir(job_id)
+    if job.status not in (Status.FILLED, Status.FILLING):
+        raise HTTPException(409, f"job is {job.status.value}, not filled")
+    target_id = _form_tab(job, app_dir)
+    if not target_id:
+        raise HTTPException(409, "the form's tab is not open; fill it again or submit by hand")
+
+    # The last look at the form before it goes, so the changes the person may
+    # still choose to remember are the ones they submitted.
+    corrections.capture(job.url, app_dir)
+    try:
+        result = press_submit.press_now(corrections.cdp_url(), target_id)
+    except press_submit.NoSubmitControl as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - a dead socket is not a submission
+        raise HTTPException(502, f"could not press submit: {exc}") from exc
+
+    if not result.get("confirmed"):
+        return {"id": job_id, "status": job.status.value, "submitted": False,
+                "pressed": result.get("pressed", ""),
+                "detail": "pressed Submit, but the form is still on the screen: "
+                          "check the browser for what it is asking for"}
+    runner.stop_fill(job_id)
+    quote = result.get("text") or ""
+    note = f"submitted from the review page (pressed “{result.get('pressed', '')}”)"
+    if quote:
+        note += f": “{quote[:120]}”"
+    store.set_status(app_dir, Status.SUBMITTED, note)
+    queue.update(job_id, status=Status.SUBMITTED)
+    return {"id": job_id, "status": Status.SUBMITTED.value, "submitted": True,
+            "pressed": result.get("pressed", ""), "quote": quote,
             "changes": corrections.changes(app_dir)}
 
 

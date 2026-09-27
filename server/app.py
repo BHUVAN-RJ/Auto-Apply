@@ -27,6 +27,7 @@ from .github import router as github_router
 from .review import router as review_router
 from .scout import router as scout_router
 from .screen import router as screen_router
+from .screening import router as screening_router
 from .settings import router as settings_router
 from .voice import router as voice_router
 
@@ -77,6 +78,7 @@ class StatusUpdate(BaseModel):
 
 app.include_router(review_router)
 app.include_router(screen_router)
+app.include_router(screening_router)
 app.include_router(settings_router)
 app.include_router(profile_router)
 app.include_router(form_router)
@@ -103,6 +105,10 @@ def _start_watch() -> None:
     # roles at the level recorded and mailed. Nothing queued by itself.
     from scout import run as scout_run
     scout_run.start()
+    # One tab at a time: while the hold is on nothing opens, and when it
+    # comes off the approved jobs are filled one after another.
+    from server import runner as job_runner
+    job_runner.start_serial()
 
 
 @app.get("/health")
@@ -266,7 +272,25 @@ def process_now(job_id: str) -> dict:
 
 @app.get("/jobs")
 def jobs() -> list[dict]:
-    return [j.model_dump(mode="json") | {"id": j.id} for j in queue.all_jobs()]
+    """Every row, with the moment a decided one was decided.
+
+    `added_at` is when the posting was noticed; the closed shelves are read
+    as a record of what was sent and when, and two applications can go out
+    on one day, so each decided row carries the time it reached that status
+    off its own folder's history.
+    """
+    from archive import store
+    from server.models import Status
+
+    out = []
+    for job in queue.all_jobs():
+        row = job.model_dump(mode="json") | {"id": job.id}
+        wanted = (Status.SUBMITTED if job.status is Status.SUBMITTED
+                  else Status.SKIPPED if job.status is Status.SKIPPED else None)
+        if wanted and job.app_dir:
+            row["decided_at"] = store.reached_at(Path(job.app_dir), wanted) or job.added_at
+        out.append(row)
+    return out
 
 
 @app.get("/jobs/{job_id}")

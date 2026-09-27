@@ -119,8 +119,7 @@ def test_capture_refuses_source_pages_and_dedupes(monkeypatch):
     assert first["created"] and not second["created"] and second["id"] == first["id"]
 
 
-def test_screen_reply_carries_seen(monkeypatch):
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: '{"summary": "s", "flags": []}')
+def test_screen_reply_carries_seen():
     queue.add(Job(url=ASHBY, company="Fieldguide", title="SWE"))
     client = TestClient(app)
     hit = client.post("/screen", json={"url": ASHBY + "?jr_id=" + JR, "text": "a posting", "title": "T"}).json()
@@ -160,3 +159,35 @@ def test_a_live_employer_row_beats_a_rejected_jobright_row_for_the_same_posting(
     live, _ = queue.add(Job(url=ASHBY + "?jr_id=" + JR, company="Fieldguide"))
     match = seen.find("https://somewhere.else/apply?jr_id=" + JR)
     assert match.id == live.id and match.status == "queued"
+
+
+def test_the_job_that_was_applied_for_is_the_one_the_banner_points_at(tmp_path, monkeypatch):
+    """Adding a duplicate of a job already submitted makes a second row, in
+    flight. Asking "have I applied to this?" then answered with the new row -
+    "In autopilot · waiting for your review" - about a job that had already
+    gone out. The row that got furthest is the answer."""
+    from server.models import Status
+
+    sent = seen.Known("aaaa", "https://boards.example.com/jobs/1", "Backend Engineer",
+                      "Example Corp", Status.SUBMITTED.value, "2026-09-20T10:00:00+00:00", None)
+    again = seen.Known("bbbb", "https://boards.example.com/jobs/1", "Backend Engineer",
+                       "Example Corp", Status.AWAITING_REVIEW.value, "2026-09-26T10:00:00+00:00", None)
+    monkeypatch.setattr(seen, "known", lambda: [again, sent])
+    match = seen.find("https://boards.example.com/jobs/1")
+    assert match and match.id == "aaaa" and match.status == "submitted"
+
+
+def test_a_decided_row_is_dated_by_its_decision_not_by_when_it_was_noticed(tmp_path):
+    """`added_at` is when the posting was seen. The banner says when it was
+    applied for, and the two are days apart."""
+    from archive import store
+    from server.models import Status
+
+    folder = tmp_path / "app"
+    folder.mkdir()
+    store.set_status(folder, Status.AWAITING_REVIEW)
+    store.set_status(folder, Status.SUBMITTED)
+    row = seen.Known("aaaa", "https://x/1", "T", "C", Status.SUBMITTED.value,
+                     "2026-09-01T00:00:00+00:00", folder)
+    assert row.decided_at != row.at
+    assert row.decided_at == store.reached_at(folder, Status.SUBMITTED)

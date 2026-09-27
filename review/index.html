@@ -166,6 +166,12 @@
      never moves the list, and the list never drags the job with it. The
      page itself does not scroll; each pane does. */
   main { display: grid; grid-template-columns: 300px 1fr; flex: 1; min-height: 0; overflow: hidden; }
+  /* A tab with nothing to list gets the whole width. Screening is a page
+     of switches, not a set of documents to pick between; a column
+     repeating every rule's name beside the rules themselves was the same
+     information twice. */
+  main.nonav { grid-template-columns: 1fr; }
+  main.nonav > nav { display: none; }
   main > nav, main > section.detail { overflow-y: auto; overflow-x: hidden; min-height: 0; }
   main > section.detail.chatpane { overflow: hidden; }
   @media (max-width: 800px) {
@@ -199,11 +205,20 @@
                    letter-spacing: .03em; line-height: 1.3; }
   nav .row .co { display: block; color: var(--muted); font-size: 11px; margin-top: .15rem; }
   nav .row .why { display: block; color: var(--red); font-size: 11px; margin-top: .15rem; }
+  /* The one thing a prompt row adds to its own title, on the title's line. */
+  nav .row .role i { font-style: normal; font-size: 10px; letter-spacing: .06em; }
+  nav .row .role i.ok { color: var(--green); }
+  nav .row .role i.err { color: var(--red); }
+  nav .row[aria-current="true"] .role i { color: var(--bg); }
   nav .row[aria-current="true"] .why { color: var(--bg); }
   nav .row .verb { position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
                    font-size: 11px; font-weight: 600; color: var(--tone); text-transform: uppercase; letter-spacing: .06em; }
   nav .row[data-tone="you"] .verb { background: var(--tone); color: var(--bg); padding: .35rem .55rem; }
   nav .row[aria-current="true"][data-tone="you"] .verb { color: var(--ink); }
+  nav .row .when { position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+                   font-size: 10px; color: var(--muted); letter-spacing: .04em;
+                   font-variant-numeric: tabular-nums; white-space: nowrap; }
+  nav .row[aria-current="true"] .when { color: var(--bg); }
   nav .row[data-live="1"] .verb::after { content: "…"; animation: dots 1.2s steps(4) infinite; }
   @keyframes dots { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 -20% 0 0); } }
   @media (prefers-reduced-motion: reduce) { nav .row[data-live="1"] .verb::after { animation: none; } }
@@ -219,7 +234,8 @@
   nav .shelf .chev { color: var(--muted); }
   nav .shelf[aria-expanded="true"] { background: var(--ink); color: var(--bg); --muted: var(--bg); }
   nav .shelfrows { margin: 0 16px; border: 2px solid var(--line); border-top: 0; }
-  nav .shelfrows .row { padding-right: 16px; }
+  /* Room for the date sitting on the right of every closed row. */
+  nav .shelfrows .row { padding-right: 92px; }
   nav .shelfrows .row:last-child { border-bottom: 0; }
   nav .empty { padding: 1rem 16px; }
 
@@ -392,6 +408,29 @@
   .setupbar a { color: inherit; }
   textarea.promptedit { width: 100%; min-height: 60vh; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace;
                         white-space: pre; overflow-wrap: normal; overflow-x: auto; tab-size: 2; }
+  textarea.promptedit.short { min-height: 6rem; white-space: pre-wrap; }
+
+  /* Screening: the rules as switches, and what each one reads. */
+  table.kv.rules td:first-child { width: auto; color: var(--ink); }
+  .switch { display: flex; gap: .5rem; align-items: baseline; cursor: pointer; }
+  .switch input { accent-color: var(--purple); }
+  .sev { text-transform: uppercase; font-size: 11px; letter-spacing: .06em; width: 4rem; }
+  .sev.hard { color: var(--red); }
+  .sev.soft { color: var(--warn); }
+  input.num { width: 4rem; background: var(--bg); color: var(--ink);
+              border: 1px solid var(--line); padding: .2rem .3rem; font: inherit; }
+  pre.pats { overflow-x: auto; font-size: 12px; line-height: 1.6; color: var(--muted);
+             border: 1px solid var(--line); padding: .5rem .7rem; white-space: pre; }
+  .rule { display: grid; grid-template-columns: 1fr auto auto; gap: .5rem; align-items: baseline;
+          padding: .45rem .1rem; border-bottom: 1px solid var(--line); }
+  .rule .rl { font-weight: 600; }
+  .rule .why { grid-column: 1 / -1; }
+  .rule .why summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+  .ask { border: 2px solid var(--purple); padding: .8rem .9rem; margin: .9rem 0 1.4rem; }
+  .ask .chat { display: flex; flex-direction: column; gap: .5rem; margin-bottom: .7rem; }
+  .ask .msg { display: flex; gap: .6rem; font-size: 13px; }
+  .ask .msg b { color: var(--muted); font-weight: 600; min-width: 5.5rem; }
+  .ask .msg.her b { color: var(--purple); }
   .proposal { border: 2px solid var(--line); padding: .7rem .9rem; margin: .8rem 0; }
   .proposal[data-source="learned"] { border-color: var(--purple); }
   .proposal .req { white-space: pre-wrap; font-weight: 600; }
@@ -401,6 +440,19 @@
   .proposal .diff { border: 1px solid var(--line); margin: .4rem 0; max-height: 50vh; overflow-y: auto; }
   .history button.act { font-size: 11px; padding: .2rem .5rem; }
 
+  /* The one switch that decides whether the browser is touched at all, so
+     it is a switch and not a checkbox in a menu: amber while it is holding
+     jobs back, green while they are running. */
+  header .hold { display: inline-flex; align-items: center; gap: .45rem; cursor: pointer;
+                 background: none; border: 2px solid var(--line); color: var(--muted); font: inherit;
+                 font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+                 font-weight: 600; padding: .3rem .6rem; }
+  header .hold::before { content: ""; width: 8px; height: 8px; background: currentColor; }
+  header .hold[aria-pressed="true"] { border-color: var(--warn); color: var(--warn); }
+  header .hold[aria-pressed="false"] { border-color: var(--green); color: var(--green); }
+  header .hold[aria-pressed="false"][data-busy="1"]::before { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { header .hold::before { animation: none !important; } }
   header button.report { background: none; border: 1px solid var(--line); color: var(--muted); font: inherit;
                          font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: .3rem .6rem;
                          cursor: pointer; }
@@ -429,9 +481,12 @@
     <button id="tabProfile" aria-current="false">Profile</button>
     <button id="tabProjects" aria-current="false">Projects</button>
     <button id="tabScout" aria-current="false">Scout<span class="broken" id="scoutBroken" hidden style="margin-left:.5rem">Broken</span></button>
+    <button id="tabScreening" aria-current="false">Screening</button>
     <button id="tabPrompts" aria-current="false">Prompts</button>
   </div>
   <span class="count" id="count"></span>
+  <!-- The line. Held, no job opens a tab; let go, they fill one at a time. -->
+  <button class="hold" id="holdFills" aria-pressed="true" hidden></button>
   <button class="pstat" id="profileStat" aria-current="false" hidden></button>
   <button class="report" id="reportOpen" title="Report a problem or request a feature">Report</button>
 </header>
@@ -555,22 +610,82 @@ if (location.hash.length > 1) view = "jobs";
 function switchView(name) {
   view = name;
   try { localStorage.setItem("view", name); } catch (_) {}
+  document.querySelector("main").classList.toggle("nonav", name === "screening");
   $("tabJobs").setAttribute("aria-current", name === "jobs");
   $("tabProfile").setAttribute("aria-current", name === "profile");
   $("tabProjects").setAttribute("aria-current", name === "projects");
   $("tabScout").setAttribute("aria-current", name === "scout");
+  $("tabScreening").setAttribute("aria-current", name === "screening");
   $("tabPrompts").setAttribute("aria-current", name === "prompts");
   if (name !== "profile") { Profile.leave(); $("detail").classList.remove("chatpane"); }
+  if (name !== "screening") Screening.leave();
   if (name === "jobs") loadList();
   else if (name === "profile") Profile.open();
   else if (name === "scout") Scout.open();
+  else if (name === "screening") Screening.open();
   else if (name === "prompts") Prompts.open();
   else Projects.open();
 }
+// The line at the top of the page. Held (the default), the pipeline still
+// screens, tailors, compiles and approves - it just never opens a browser
+// tab, because a person adding six jobs while scrolling a list is not a
+// person ready to check six forms. Let go, the approved jobs fill one at a
+// time: one tab, to checkpoint 2 or to a stop that needs them, then the
+// next. `server/runner.py: serial_tick` is the whole scheduler.
+let holding = true;
+// Set the moment the switch is let go and cleared as soon as the list shows
+// a job actually filling, so the button says something true in the seconds
+// between the click and the first tab: the scheduler ticks every 3 s.
+let starting = false;
+let lastCounts = { waiting: 0, filling: false };
+
+function paintHold(waiting, filling) {
+  const button = $("holdFills");
+  if (!button) return;
+  if (waiting === undefined) ({ waiting, filling } = lastCounts);
+  else lastCounts = { waiting, filling };
+  if (filling) starting = false;
+  button.hidden = false;
+  button.setAttribute("aria-pressed", holding ? "true" : "false");
+  button.dataset.busy = filling || starting ? "1" : "0";
+  // Held, the person is still gathering: the app is collecting jobs, not
+  // withholding anything, and the number is how many are ready to go.
+  // Let go, it says what is happening to them now.
+  button.textContent = holding
+    ? (waiting ? `Collecting jobs · ${waiting} ready` : "Collecting jobs")
+    : starting ? "Starting applications…"
+      : filling ? (waiting ? `Applying · ${waiting} more in queue` : "Applying to a job")
+        : waiting ? `Applying · ${waiting} in queue` : "Ready to apply";
+  button.title = holding
+    ? "Adding jobs to the flight. They are screened, tailored and approved, and they "
+      + "wait here — nothing opens a browser tab. Click to start applying, one job at a time."
+    : "Applying to the queue, one job at a time: each one to your check, or to a stop "
+      + "that needs you, before the next opens. Click to go back to collecting jobs.";
+}
+
+async function toggleHold() {
+  holding = !holding;
+  starting = !holding;
+  paintHold();
+  try {
+    const out = await api("/settings", { method: "POST",
+      body: JSON.stringify({ hold_fills: holding }) });
+    holding = !!out.hold_fills;
+  } catch (err) {
+    holding = !holding;
+    starting = false;
+    alert(err.message);
+  }
+  await loadList();
+}
+
+$("holdFills").onclick = toggleHold;
+
 $("tabJobs").onclick = () => switchView("jobs");
 $("tabProfile").onclick = () => switchView("profile");
 $("tabProjects").onclick = () => switchView("projects");
 $("tabScout").onclick = () => switchView("scout");
+$("tabScreening").onclick = () => switchView("screening");
 $("tabPrompts").onclick = () => switchView("prompts");
 
 async function loadList() {
@@ -587,6 +702,21 @@ async function loadList() {
   $("count").textContent = jobs.length
     ? `${inflight.length} in flight · ${waiting.length} need you`
     : "";
+  paintHold(jobs.filter((j) => j.status === "approved").length,
+            jobs.some((j) => j.status === "filling"));
+
+  // A closed row's answer is when it happened. "done" / "stop" said what
+  // the shelf it is sitting on already says; the date is the thing that is
+  // not written anywhere else on the row, and two applications can go out
+  // on the same day, so the time goes with it.
+  const when = (j) => {
+    if (!["done", "stop"].includes(BUCKET[j.status])) return "";
+    const at = new Date(j.decided_at || j.added_at || "");
+    if (isNaN(at)) return "";
+    const day = at.toLocaleDateString([], { day: "numeric", month: "short" });
+    const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `${day} · ${time}`;
+  };
 
   const row = (j) => `
       <button class="row" data-id="${j.id}" data-tone="${BUCKET[j.status]}"
@@ -597,7 +727,8 @@ async function loadList() {
           ? `<span class="why">${escape(reasonLabel(j.reject_reason))}${
               j.reject_note ? " — " + escape(j.reject_note) : ""}</span>`
           : j.status === "failed" ? `<span class="why">failed</span>` : ""}
-        ${VERB[j.status] ? `<span class="verb">${VERB[j.status]}</span>` : ""}
+        ${when(j) ? `<span class="when">${escape(when(j))}</span>`
+          : VERB[j.status] ? `<span class="verb">${VERB[j.status]}</span>` : ""}
       </button>`;
   const shelf = (name, tone, group) => `
       <button class="shelf" data-shelf="${name}" data-tone="${tone}"
@@ -816,6 +947,7 @@ async function show(id) {
         </div>
         <div class="decide">
           <button class="small danger act" id="reject">Reject</button>
+          <button class="small act" id="submitted">I submitted it</button>
           <button class="big act" id="approve">Approve</button>
         </div>
       </div>` : ""}
@@ -823,13 +955,15 @@ async function show(id) {
       <div class="fab">
         <button class="small danger act" id="reject">Reject</button>
         <button class="small act" id="fillNow">Fill again</button>
-        <button class="big act" id="submitted">I submitted it</button>
+        <button class="small act" id="submitted">I submitted it</button>
+        <button class="big act" id="submitNow">Submit it</button>
       </div>` : ""}
   `;
 
   if ($("approve")) $("approve").onclick = () => approve(id);
   if ($("reject")) $("reject").onclick = () => openReject(id);
   if ($("submitted")) $("submitted").onclick = () => markSubmitted(id);
+  if ($("submitNow")) $("submitNow").onclick = () => submitNow(id, data);
   if ($("revise")) $("revise").onclick = () => revise(id);
   // The note box: one line until it is touched, then room to write, and
   // the re-tailor button only once there is a note.
@@ -869,8 +1003,41 @@ function head(job, data) {
     </div>`;
 }
 
+// When a status was first reached, in the reader's own time zone. The
+// history is the record; the banner is the answer to "when did I apply?",
+// which the banner on the posting page promises before it sends anyone
+// here.
+function reachedAt(data, status) {
+  const row = (data.history || []).find((h) => h.status === status);
+  if (!row?.at) return "";
+  const when = new Date(row.at);
+  if (isNaN(when)) return row.at;
+  return when.toLocaleString([], { weekday: "short", day: "numeric", month: "short",
+                                   hour: "numeric", minute: "2-digit" });
+}
+
 function banners(data) {
   let html = "";
+  // Opened from the posting page's ALREADY APPLIED block, this is what the
+  // person came for: that it went, when it went, and what went with it.
+  if (["submitted", "filled", "filling"].includes(data.status)) {
+    const when = reachedAt(data, data.status);
+    const sent = (data.artifacts || []).includes("resume.pdf");
+    const what = data.status === "submitted" ? "You submitted this application"
+      : data.status === "filled" ? "Autopilot filled this form and it is waiting for your Submit"
+      : "Autopilot is filling this form now";
+    html += `<div class="banner ${data.status === "submitted" ? "go" : "warn"}">
+      <strong>${escape(what)}${when ? ` · ${escape(when)}` : ""}.</strong>
+      ${sent ? "The resume and cover letter below are exactly what went with it; the posting as it read that day is further down."
+             : "No documents were written for this one."}</div>`;
+  }
+  // Not a failure: the documents are written and the page simply has no
+  // form on it yet. Said in place of an error, with what to do next.
+  if (data.needs_sign_in && !["submitted", "filled"].includes(data.status)) {
+    html += `<div class="banner warn"><strong>This form is behind Apply and a sign-in.</strong>
+      Open the posting, sign in until the application form is actually on the screen, then press Approve and
+      Autopilot puts the tailored resume on it. Nothing was lost — the resume and letter below are ready.</div>`;
+  }
   if (data.reject_label) {
     html += `<div class="banner stop"><strong>You rejected this: ${escape(data.reject_label)}.</strong>
       ${data.reject_note ? escape(data.reject_note) : ""}</div>`;
@@ -889,9 +1056,15 @@ function banners(data) {
     html += `<div class="banner warn"><strong>Screen failed:</strong> ${escape(data.screen_error.split("\n")[0])}</div>`;
   }
   if (data.mismatch) {
+    // The documents are written even on a poor fit now, so the line under
+    // the verdict says which of the two happened: the model refused twice
+    // (no resume, the old behaviour) or it was overruled and tailored.
+    const tailored = (data.artifacts || []).includes("resume.pdf");
     html += `<div class="banner warn"><strong>This looks like a poor fit.</strong>
       ${escape(data.mismatch.replace(/^#.*\n/, "").split("\n\n")[0].trim())}
-      <br>Nothing was tailored. It is still your call.</div>`;
+      <br>${tailored
+        ? "Tailored anyway, because you added it. Read it before you send it."
+        : "Nothing was tailored. It is still your call."}</div>`;
   }
   // The folder's error.txt belongs to this attempt; the queue's error field
   // is only current while the job is actually failed.
@@ -1086,9 +1259,25 @@ async function fillAgain(id) {
 }
 
 async function markSubmitted(id) {
-  if (!confirm("Only confirm this after you submitted the form yourself.")) return;
+  if (!confirm("Only confirm this after you submitted the form yourself.\n\n"
+    + "Autopilot marks the job done and stops working on it.")) return;
   await act(id, async () => {
     await api(`/review/${id}/submitted`, { method: "POST", body: "{}" });
+  });
+}
+
+// The one button that presses Submit for you. Everything else in the app
+// stops at the filled form on purpose; this is the person saying "send it",
+// so it asks once, by name, and it says plainly what came back - a form
+// still on the screen is not a submission, and the page must not pretend
+// it was.
+async function submitNow(id, data) {
+  const what = [data.title, data.company].filter(Boolean).join(" at ") || "this application";
+  if (!confirm(`Submit ${what} now?\n\nThis presses Submit on the form in the browser. `
+    + `It cannot be undone.`)) return;
+  await act(id, async () => {
+    const out = await api(`/review/${id}/submit`, { method: "POST", body: "{}" });
+    if (!out.submitted) alert(out.detail || "Pressed Submit; the form is still on the screen.");
   });
 }
 
@@ -1172,7 +1361,13 @@ function escape(value) {
 // resume alone when nothing is written), so the header shows a fact, not
 // a switch. The setting is pinned on for older data/settings.json files.
 api("/settings")
-  .then((data) => data.use_profile || api("/settings", { method: "POST", body: JSON.stringify({ use_profile: true }) }))
+  .then((data) => {
+    // The switch at the top starts wherever the server has it, not where
+    // the page guesses: a hold set yesterday is still a hold today.
+    holding = data.hold_fills !== false;
+    paintHold();
+    return data.use_profile || api("/settings", { method: "POST", body: JSON.stringify({ use_profile: true }) });
+  })
   .catch(() => {});
 
 async function loadProfileStat() {
@@ -1214,6 +1409,7 @@ function pollNow() {
   if (view === "jobs") { loadList(); loadProfileStat(); }
   else if (view === "profile") Profile.poll();
   else if (view === "scout") Scout.poll();
+  else if (view === "screening") Screening.poll();
   else if (view === "prompts") Prompts.poll();
   else Projects.poll();
   loadScoutBroken();
@@ -1750,8 +1946,9 @@ const Onboard = (() => {
   let signedIn = false;
   let timer = null;
 
-  const steps = () => ["welcome", "key", "resume", "jobright", "profile"];
+  const steps = () => ["welcome", "key", "resume", "jobright", "screening", "profile"];
   let upload = null;      // the last /setup/resume reply: compiled, compile_error
+  let screening = null;   // GET /screening, for the screening step
 
   function show(state) {
     s = state;
@@ -1836,6 +2033,20 @@ const Onboard = (() => {
         yet? Take the template, write yours into it (any editor, or Overleaf), and upload it here.</p>
         <div class="actions">${back}<button class="act primary" id="obNext" ${s.resume ? "" : "disabled"}>Next</button>
           <button class="act" id="obLater">Do this later</button></div>`;
+    } else if (name === "screening") {
+      const rules = (screening?.rules || []);
+      const groups = [...new Set(rules.map((r) => r.category))];
+      body = `<div class="q">What should stop a job</div>
+        <p>Autopilot reads every posting against these before it tailors anything — in code, with no model, so it costs
+        nothing and says the same thing twice. A <b>hard</b> rule turns the banner red and the job waits for you; a
+        <b>soft</b> one is amber and goes ahead. Untick anything that does not apply to you.</p>
+        ${rules.length ? groups.map((g) => `<div class="sec">${escape(g.replace(/_/g, " "))}</div>` +
+          rules.filter((r) => r.category === g).map((r) => `
+            <label class="switch"><input type="checkbox" data-ob-rule="${escape(r.name)}" ${r.enabled ? "checked" : ""}>
+              <span>${escape(r.label)} <i class="sev ${escape(r.severity)}">${escape(r.severity)}</i></span></label>`).join("")).join("")
+          : `<p class="hint">Loading…</p>`}
+        <p class="hint">You can change these any time, and ask for new ones in your own words, on the Screening tab.</p>
+        <div class="actions">${back}<button class="act primary" id="obNext">Next</button></div>`;
     } else {
       body = `<div class="q">You're set.</div>
         <p>Open a posting on Jobright and Autopilot takes it from there. Every job lands on the Jobs tab; the filled form
@@ -1892,6 +2103,15 @@ const Onboard = (() => {
         render();
       };
     }
+    if (name === "screening") {
+      $("obNext").onclick = next;
+      for (const box of $("onboard").querySelectorAll("[data-ob-rule]")) {
+        box.onchange = () => api(`/screening/rule/${box.dataset.obRule}`,
+          { method: "POST", body: JSON.stringify({ enabled: box.checked }) })
+          .then((d) => { screening = d; }).catch(() => {});
+      }
+      if (!screening) api("/screening").then((d) => { screening = d; render(); }).catch(() => {});
+    }
     if (name === "profile") {
       const finish = async (target) => {
         try { await api("/setup/done", { method: "POST" }); } catch (_) {}
@@ -1936,6 +2156,265 @@ const Onboard = (() => {
       dialog.close();
     } catch (err) { $("rmsg").textContent = err.message; }
   };
+})();
+
+// ------------------------------------------------------------ Screening --
+// What makes a posting a reject, as switches rather than a model call. The
+// verdict on the banner is computed from exactly these rules, so a box
+// unticked here is a flag that stops appearing on the next posting opened.
+//
+// One pane, no list beside it: a column repeating every rule's name next to
+// the rules themselves was the same information twice. The assistant is at
+// the top, because adding a rule is the thing a person comes here to do;
+// the switches are under it, and a rule's own patterns are folded away
+// until someone asks.
+//
+// The assistant speaks: opening the tab she asks what to add, and the orb
+// listens, the same bubble and the same voice as the profile interview.
+// She writes rules, never verdicts, and nothing she writes is saved
+// without Add.
+const Screening = (() => {
+  let data = null;        // GET /screening
+  let proposal = null;    // what she last returned
+  let turns = [];         // the conversation, newest last
+  let busy = false;
+  let paused = false;
+  let listenNext = false;
+  let greeted = false;
+  let msg = "";
+
+  const GREETING = "Hey — what kind of screening would you like to add?";
+
+  async function open() {
+    await refresh();
+    if (!Profile.voice) await Profile.refreshVoice();
+    render();
+    Voice.setHost(api_host);
+    Voice.setHandsFree(true);
+    if (!greeted) {
+      greeted = true;
+      turns = [{ who: "her", text: GREETING }];
+      render();
+      listenNext = true;
+      say(GREETING);
+    }
+  }
+
+  function leave() {
+    Voice.interrupt();
+    Voice.cancelListening();
+    Voice.setHost(null);
+  }
+
+  async function refresh() {
+    try { data = await api("/screening"); }
+    catch (err) { data = { rules: [], categories: [], error: err.message }; }
+  }
+
+  async function poll() { /* nothing here changes on its own */ }
+
+  // ------------------------------------------------------------- render --
+
+  function switchRow(r) {
+    return `<div class="rule">
+      <label class="switch"><input type="checkbox" data-toggle="${escape(r.name)}" ${r.enabled ? "checked" : ""}>
+        <span class="rl">${escape(r.label)}</span></label>
+      <span class="sev ${escape(r.severity)}">${escape(r.severity)}</span>
+      ${r.value !== null && r.value !== undefined
+        ? `<input class="num" type="number" min="0" max="20" value="${r.value}" data-value="${escape(r.name)}"
+                  title="Flag a posting asking for this many years or more">`
+        : ""}
+      <details class="why"><summary>why</summary>
+        <p class="hint">${escape(r.note)}</p>
+        ${r.patterns?.length ? `<pre class="pats">${r.patterns.map(escape).join("\n")}</pre>` : ""}
+        ${r.unless?.length ? `<p class="hint">Cancelled when the same sentence says:</p>
+          <pre class="pats">${r.unless.map(escape).join("\n")}</pre>` : ""}
+        ${r.origin === "yours" ? `<button class="act danger" data-delete="${escape(r.name)}">Delete this rule</button>` : ""}
+      </details>
+    </div>`;
+  }
+
+  function transcript() {
+    return turns.map((t) => `<div class="msg ${t.who === "you" ? "you" : "her"}">
+      <b>${t.who === "you" ? "You" : "Autopilot"}</b><span>${escape(t.text)}</span></div>`).join("");
+  }
+
+  function proposalHtml() {
+    const p = proposal;
+    if (!p) return "";
+    if (!p.rule) return `<div class="banner stop">${escape(p.problem || "No rule came back.")}</div>`;
+    return `<div class="proposal">
+      <div class="req">${escape(p.rule.label || p.rule.name)}
+        <span class="sev ${escape(p.rule.severity)}">${escape(p.rule.severity)}</span></div>
+      ${p.explain ? `<p class="hint">${escape(p.explain)}</p>` : ""}
+      <pre class="pats">${(p.rule.patterns || []).map(escape).join("\n")}</pre>
+      ${(p.rule.unless || []).length ? `<p class="hint">Cancelled when the same sentence says:</p>
+        <pre class="pats">${p.rule.unless.map(escape).join("\n")}</pre>` : ""}
+      ${p.problem ? `<div class="banner stop">${escape(p.problem)}</div>` : ""}
+      ${p.preview ? `<div class="banner ${p.preview.too_wide ? "stop" : "warn"}">
+        <b>${p.preview.hits} of your last ${p.preview.postings} postings</b> would have carried this flag.
+        ${p.preview.too_wide ? "That is a lot — read it before you add it." : ""}
+        ${(p.preview.samples || []).map((sm) => `<div class="hint">“${escape(sm.quote)}”</div>`).join("")}
+      </div>` : ""}
+      <div class="actions">
+        <button class="act primary" id="jessAdd" ${p.problem ? "disabled" : ""}>Add it</button>
+        <button class="act" id="jessDrop">No thanks</button>
+      </div></div>`;
+  }
+
+  function render() {
+    const rules = data?.rules || [];
+    const on = rules.filter((r) => r.enabled).length;
+    $("list").innerHTML = "";
+    $("count").textContent = `${on} of ${rules.length} rules on`;
+    const groups = [...new Set(rules.map((r) => r.category))];
+    $("detail").innerHTML = `
+      <div class="head"><h2>What stops a job</h2></div>
+      <p class="hint">Every posting is read against these before anything is tailored — in code, no model, so it is
+      instant and free. <b>Hard</b> turns the banner red and the job waits for you; <b>soft</b> is amber and goes
+      ahead. ${escape(data?.facts_source === "resume"
+        ? "Checked against facts taken from your resume, so visa and dates are unknown."
+        : "Checked against your applicant facts.")}</p>
+
+      <div class="ask">
+        <div class="chat">${transcript()}</div>
+        <textarea class="promptedit short" id="jessBox" spellcheck="false"
+          placeholder="Flag a posting that asks for a security clearance."></textarea>
+        <div class="actions">
+          <button class="act primary" id="jessAsk" ${busy ? "disabled" : ""}>${busy ? "Writing…" : "Write the rule"}</button>
+          <span class="hint" id="screenMsg">${escape(msg)}</span>
+        </div>
+        ${proposalHtml()}
+      </div>
+
+      ${data?.error ? `<div class="banner stop">${escape(data.error)}</div>` : ""}
+      ${groups.map((g) => `<h3>${escape(g.replace(/_/g, " "))}</h3>
+        ${rules.filter((r) => r.category === g).map(switchRow).join("")}`).join("")}
+      ${Profile.orbHtml(paused)}`;
+    wire();
+  }
+
+  function wire() {
+    for (const box of $("detail").querySelectorAll("[data-toggle]")) {
+      box.onchange = () => act(`/screening/rule/${box.dataset.toggle}`,
+        { enabled: box.checked }, box.checked ? "On. The next posting uses it." : "Off.");
+    }
+    for (const num of $("detail").querySelectorAll("[data-value]")) {
+      num.onchange = () => act(`/screening/rule/${num.dataset.value}`, { value: Number(num.value) }, "Saved.");
+    }
+    for (const b of $("detail").querySelectorAll("[data-delete]")) {
+      b.onclick = async () => {
+        if (!confirm("Delete this rule? A stock rule would only be switched off; this one goes.")) return;
+        try { data = await api(`/screening/rule/${b.dataset.delete}`, { method: "DELETE" }); msg = "Deleted."; }
+        catch (err) { msg = err.message; }
+        render();
+      };
+    }
+    const box = $("jessBox");
+    box.onkeydown = (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(box.value); }
+    };
+    $("jessAsk").onclick = () => ask(box.value);
+    if ($("jessAdd")) $("jessAdd").onclick = () => add();
+    if ($("jessDrop")) $("jessDrop").onclick = () => { proposal = null; render(); };
+    wireOrb();
+  }
+
+  function wireOrb() {
+    Bubble.attach($("orb"));
+    Profile.placeOrb();
+    Profile.dragOrb($("orb"), $("orbwrap"), togglePause);
+  }
+
+  // ---------------------------------------------------------- the voice --
+
+  function togglePause() {
+    paused = !paused;
+    if (paused) { listenNext = false; Voice.interrupt(); Voice.cancelListening(); orb("paused", 0); }
+    else { orb("idle", 0); Voice.listen(); }
+  }
+
+  function orb(state, level) {
+    const el = $("orb");
+    if (!el) return;
+    if (paused && state !== "paused") state = "paused";
+    if (state) {
+      el.className = `orb ${state}`;
+      el.title = state === "paused" ? "Tap to resume" : "Tap to pause";
+      const label = $("orblabel");
+      if (label) label.textContent = state === "paused" ? "Paused" : state === "error" ? "Error" : "";
+    }
+    if (level != null) el.style.setProperty("--level", Math.min(1, level).toFixed(2));
+    Bubble.set(state || null, level);
+  }
+
+  function say(text) { const s = Voice.sentenceSpeaker(!paused); s.feed(text); s.flush(); }
+
+  function speechDone() {
+    if (Voice.isListening() || Voice.isPending()) return;
+    if (!listenNext || busy || paused || view !== "screening") { if (!busy) orb("idle", 0); return; }
+    listenNext = false;
+    Voice.listen({ quiet: true });
+  }
+
+  function idle() {
+    return new Promise((resolve) => {
+      const tick = () => (busy ? setTimeout(tick, 100) : resolve());
+      tick();
+    });
+  }
+
+  // What Voice hands the orb, the mic and the speaker to while this tab is
+  // open. The same shape the profile interview has.
+  const api_host = {
+    orb, caption() {}, send: (text) => ask(text), idle, speechDone,
+    get paused() { return paused; },
+    get voice() { return Profile.voice; },
+  };
+
+  // ----------------------------------------------------------- the work --
+
+  async function ask(text) {
+    text = (text || "").trim();
+    if (!text || busy) { if (!text) { msg = "Say what should be flagged."; render(); } return; }
+    turns.push({ who: "you", text });
+    busy = true; msg = ""; proposal = null;
+    render();
+    orb("thinking", 0);
+    try {
+      proposal = await api("/screening/ask", { method: "POST", body: JSON.stringify({ request: text }) });
+    } catch (err) { proposal = null; msg = err.message; }
+    busy = false;
+    const said = proposal?.problem
+      || (proposal?.rule ? `${proposal.explain || `I wrote a rule called ${proposal.rule.label}.`}`
+            + (proposal.preview ? ` It would have flagged ${proposal.preview.hits} of your last ${proposal.preview.postings} postings.` : "")
+            + " Add it?"
+          : msg || "Nothing came back.");
+    turns.push({ who: "her", text: said });
+    render();
+    listenNext = true;
+    say(said);
+  }
+
+  async function add() {
+    try {
+      data = await api("/screening/rule", { method: "POST", body: JSON.stringify(proposal.rule) });
+      const name = proposal.rule.label;
+      proposal = null; msg = "";
+      turns.push({ who: "her", text: `Added. ${name} is on, and the next posting is read against it.` });
+      render();
+      listenNext = true;
+      say("Added. The next posting is read against it.");
+    } catch (err) { msg = err.message; render(); }
+  }
+
+  async function act(path, body, done) {
+    try { data = await api(path, { method: "POST", body: JSON.stringify(body) }); msg = done; }
+    catch (err) { msg = err.message; }
+    render();
+  }
+
+  return { open, leave, poll };
 })();
 
 // -------------------------------------------------------------- Prompts --
@@ -1984,14 +2463,19 @@ const Prompts = (() => {
     const edited = list.filter((p) => p.edited).length;
     $("count").textContent = `${list.length} prompts · ${edited} edited`;
     const groups = [...new Set(list.map((p) => p.group))];
+    // One line per prompt: what it is. "stock · tailor.format" under every
+    // row was the same word forty times and the file name beside a title
+    // that already says it. Only a row that is *not* stock has something
+    // to add, and it says it on the title's own line; the name is on the
+    // prompt's page, where it is of use.
     $("list").innerHTML = `<button class="row" data-name="workshop-view" data-tone="agent" aria-current="${viewing === "workshop"}">
-        <span class="role">Workshop</span><span class="cov">${pending ? `${pending} to review` : "ask for a change"}</span></button>` +
+        <span class="role">Workshop</span>${pending ? `<span class="cov">${pending} to review</span>` : ""}</button>` +
       groups.map((g) => `<div class="group">${escape(g)} <span class="n">${list.filter((p) => p.group === g).length}</span></div>` +
         list.filter((p) => p.group === g).map((p) => `
           <button class="row" data-name="${escape(p.name)}" data-tone="${p.conflict ? "stop" : p.edited ? "you" : "done"}"
-                  aria-current="${viewing === p.name}">
-            <span class="role">${escape(p.title)}</span>
-            <span class="cov">${p.conflict ? '<span class="err">update conflict</span>' : p.edited ? '<span class="ok">edited</span>' : "stock"} · ${escape(p.name)}</span>
+                  aria-current="${viewing === p.name}" title="${escape(p.name)}">
+            <span class="role">${escape(p.title)}${p.conflict ? ' <i class="err">update conflict</i>'
+              : p.edited ? ' <i class="ok">edited</i>' : ""}</span>
           </button>`).join("")).join("");
     for (const b of $("list").querySelectorAll("button[data-name]")) {
       b.onclick = async () => {
@@ -2516,18 +3000,20 @@ const Profile = (() => {
     scrollChat();
   }
 
-  function orbHtml() {
+  // `held` is the pausing chat's own state: the Screening tab borrows this
+  // markup and has a paused flag of its own.
+  function orbHtml(held = paused) {
     return `<div class="orbwrap" id="orbwrap">
-      <div class="orb ${paused ? "paused" : "idle"}" id="orb" title="${paused ? "Tap to resume" : "Tap to pause"}">
+      <div class="orb ${held ? "paused" : "idle"}" id="orb" title="${held ? "Tap to resume" : "Tap to pause"}">
         ${Bubble.svg()}
-        <span class="orblabel" id="orblabel">${paused ? "Paused" : ""}</span></div></div>`;
+        <span class="orblabel" id="orblabel">${held ? "Paused" : ""}</span></div></div>`;
   }
 
   function wireOrb() {
     Voice.setHandsFree(true);
     Bubble.attach($("orb"));
     placeOrb();
-    dragOrb($("orb"), $("orbwrap"));
+    dragOrb($("orb"), $("orbwrap"), togglePause);
   }
 
   // The orb goes where it was last dropped, kept inside the window.
@@ -2546,7 +3032,7 @@ const Profile = (() => {
   // Drag the bubble anywhere; a press that barely moves is the pause tap.
   // While it moves the trailing side swells, like something pushed through
   // air, and it settles with a little wobble on drop.
-  function dragOrb(orb, wrap) {
+  function dragOrb(orb, wrap, onTap) {
     let start = null, last = null, moved = false;
     orb.onpointerdown = (event) => {
       if (event.button !== 0) return;
@@ -2575,7 +3061,7 @@ const Profile = (() => {
       orb.releasePointerCapture?.(event.pointerId);
       const wasDrag = moved;
       start = null;
-      if (!wasDrag) { togglePause(); return; }
+      if (!wasDrag) { onTap(); return; }
       const rect = wrap.getBoundingClientRect();
       try { localStorage.setItem("orbpos", JSON.stringify({ x: rect.left, y: rect.top })); } catch (_) {}
       Bubble.push(Math.random() * Math.PI * 2, 0.9);  // the landing wobble
@@ -2834,7 +3320,11 @@ const Profile = (() => {
       .replace(/\n{2,}/g, "<p>");
   }
 
-  return { open, leave, poll, send, orb, caption, speechDone, idle, docMarkdown, get voice() { return voice; },
+  // orbHtml, placeOrb and dragOrb are pure DOM and belong to whichever
+  // chat is on screen; the Screening tab's assistant borrows them rather
+  // than keeping a second copy of a draggable bubble.
+  return { open, leave, poll, send, orb, caption, speechDone, idle, docMarkdown, orbHtml, placeOrb, dragOrb,
+           refreshVoice, get voice() { return voice; },
            setViewing(v) { viewing = v; leave(); renderNav(); }, back() { viewing = null; refresh().then(render); },
            set form(f) { form = f; renderNav(); },
            get paused() { return paused; } };
@@ -2967,6 +3457,15 @@ const Bubble = (() => {
 // Speech API when a half is not set up. Recording is raw PCM encoded to a
 // 16 kHz WAV here, so the server needs no ffmpeg.
 const Voice = (() => {
+  // Whose conversation this is. Two tabs have one: the profile interview
+  // and the Screening tab's rule assistant. They implement the same few
+  // things (`orb`, `caption`, `send`, `idle`, `speechDone`, `paused`,
+  // `voice`), and only one is on screen at a time, so the orb, the mic and
+  // the speaker are handed to whichever it is.
+  let host = null;
+  const who = () => host || Profile;
+  const setHost = (h) => { host = h; };
+
   let recording = null;   // {ctx, source, processor, chunks, rate, stream}
   let recognition = null; // browser SpeechRecognition
   let playing = [];       // queue of Audio for local TTS
@@ -3003,17 +3502,17 @@ const Voice = (() => {
     if (recording?.watch) { engage(); return; }
     if (recording || recognition) return;
     stopSpeaking();
-    const local = Profile.voice?.stt?.ready;
+    const local = who().voice?.stt?.ready;
     try {
       if (local) await startLocal(); else if (browserSTT()) startBrowser();
       else if (quiet) return;
       else return alert("No speech input available: set up local voice, or use Chrome for browser speech.");
       $("mic")?.classList.add("on");
-      Profile.orb("listening", 0);
+      who().orb("listening", 0);
     } catch (err) {
       // Auto-start with no gesture or no grant: stay idle, the tap asks again.
-      if (quiet) { Profile.orb("idle", 0); return; }
-      Profile.orb("error", 0); alert(`Microphone: ${err.message}`);
+      if (quiet) { who().orb("idle", 0); return; }
+      who().orb("error", 0); alert(`Microphone: ${err.message}`);
     }
   }
 
@@ -3030,7 +3529,7 @@ const Voice = (() => {
     rec.watch = false;
     rec.started = performance.now();
     $("mic")?.classList.add("on");
-    Profile.orb("listening", 0);
+    who().orb("listening", 0);
   }
 
   function cancelListening() {
@@ -3084,7 +3583,7 @@ const Voice = (() => {
         spokeAt = now;
         return;
       }
-      Profile.orb(null, rms * 8);
+      who().orb(null, rms * 8);
       if (!handsFree) return;
       if (rms > SPEECH) spokeAt = now;
       else if (spokeAt && now - spokeAt > SILENCE_MS) stop();
@@ -3097,7 +3596,7 @@ const Voice = (() => {
 
   // Open the mic in watch mode while a reply plays, hands-free and local only.
   async function watchForBargeIn() {
-    if (!BARGE_IN || !handsFree || Profile.paused || recording || recognition || !Profile.voice?.stt?.ready) return;
+    if (!BARGE_IN || !handsFree || who().paused || recording || recognition || !who().voice?.stt?.ready) return;
     try { await startLocal(true); } catch (_) { /* no mic: the tap still interrupts */ }
   }
 
@@ -3117,7 +3616,7 @@ const Voice = (() => {
       if ($("say")) $("say").value = (finalText + interim).trim();
     };
     recognition.onerror = (event) => { if (event.error !== "no-speech") alert(`Speech: ${event.error}`); };
-    recognition.onend = () => { recognition = null; $("mic")?.classList.remove("on"); const t = $("say")?.value; if (t) Profile.send(t); else Profile.orb("idle", 0); };
+    recognition.onend = () => { recognition = null; $("mic")?.classList.remove("on"); const t = $("say")?.value; if (t) who().send(t); else who().orb("idle", 0); };
     recognition.start();
   }
 
@@ -3134,16 +3633,16 @@ const Voice = (() => {
     button?.classList.remove("on");
     button?.classList.add("busy");
     if ($("say")) $("say").placeholder = "Transcribing…";
-    Profile.orb("thinking", 0);
-    Profile.caption("…");
+    who().orb("thinking", 0);
+    who().caption("…");
     try {
       const wav = encodeWav(downsample(concat(chunks), rate, 16000), 16000);
       const res = await fetch("/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
       const { text } = await res.json();
-      if (text) { await Profile.idle(); Profile.send(text); }
-      else { Profile.caption("Heard nothing"); if (!Profile.paused) listen({ quiet: true }); else Profile.orb("idle", 0); }
-    } catch (err) { Profile.orb("error", 0); alert(`Transcription: ${err.message}`); }
+      if (text) { await who().idle(); who().send(text); }
+      else { who().caption("Heard nothing"); if (!who().paused) listen({ quiet: true }); else who().orb("idle", 0); }
+    } catch (err) { who().orb("error", 0); alert(`Transcription: ${err.message}`); }
     finally { pending = false; button?.classList.remove("busy"); }
   }
 
@@ -3226,7 +3725,7 @@ const Voice = (() => {
 
   function enqueue(sentence) {
     if (!sentence || muted) return;
-    if (Profile.voice?.tts?.ready) {
+    if (who().voice?.tts?.ready) {
       const item = { sentence, audio: null, ready: fetch("/voice/speak", { method: "POST",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: sentence }) })
         .then((r) => r.ok ? r.blob() : null).then((blob) => { if (blob) item.audio = new Audio(URL.createObjectURL(blob)); }) };
@@ -3235,14 +3734,14 @@ const Voice = (() => {
     } else if (window.speechSynthesis) {
       const utterance = new SpeechSynthesisUtterance(sentence);
       utterance.lang = "en-US";
-      utterance.onstart = () => Profile.orb("speaking", 0.5);
-      utterance.onend = () => { if (!speechSynthesis.pending) Profile.speechDone(); };
+      utterance.onstart = () => who().orb("speaking", 0.5);
+      utterance.onend = () => { if (!speechSynthesis.pending) who().speechDone(); };
       speechSynthesis.speak(utterance);
     }
   }
   async function playNext() {
     if (current) return;
-    if (!playing.length) { Profile.speechDone(); return; }
+    if (!playing.length) { who().speechDone(); return; }
     current = playing.shift();
     await current.ready;
     if (current?.pause) { const item = current; setTimeout(() => { if (current === item) { current = null; playNext(); } }, item.pause); return; }
@@ -3250,7 +3749,7 @@ const Voice = (() => {
     current.audio.onended = () => { current = null; playNext(); };
     current.audio.onerror = () => { current = null; playNext(); };
     meter(current.audio);
-    Profile.orb("speaking", 0);
+    who().orb("speaking", 0);
     try { await current.audio.play(); } catch (_) { current = null; playNext(); }
     watchForBargeIn();
   }
@@ -3267,7 +3766,7 @@ const Voice = (() => {
       analyser.getByteTimeDomainData(data);
       let sum = 0;
       for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-      Profile.orb(null, Math.sqrt(sum / data.length) * 4);
+      who().orb(null, Math.sqrt(sum / data.length) * 4);
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -3280,6 +3779,6 @@ const Voice = (() => {
   }
 
   return { listen, cancelListening, browserSTT, sentenceSpeaker, stopSpeaking, interrupt, stopWatching,
-           setHandsFree, isSpeaking, isListening, isPending };
+           setHandsFree, isSpeaking, isListening, isPending, setHost };
 })();
 </script>

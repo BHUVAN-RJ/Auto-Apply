@@ -19,6 +19,19 @@ import paths
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", paths.DATA / "settings.json"))
+# Onboarding is finished once, for good. The flag is written twice: into
+# settings.json and into a file of its own beside it, so a settings file
+# that is replaced, reset or read from the wrong data directory cannot put
+# a person who has been using the app for weeks back on the first screen.
+# Whichever copy says yes is believed, and neither is ever unset. Resolved
+# per call, never frozen at import: a test (and the installer) moves
+# SETTINGS_PATH, and a marker written beside the old one is a marker in
+# somebody else's data folder.
+MARK_NAME = ".onboarded"
+
+
+def onboarded_mark() -> Path:
+    return SETTINGS_PATH.parent / MARK_NAME
 
 # use_profile: feed the applicant's facts and story documents to the models.
 # Off, or on with nothing written yet, means the resume alone, which is how
@@ -40,7 +53,16 @@ SETTINGS_PATH = Path(os.environ.get("AUTOPILOT_SETTINGS", paths.DATA / "settings
 # interview) were finished once; they are not shown again.
 # scout_checks_per_day: how often every watched careers page is read, unless
 # the watch sets its own. 4 = every six hours.
-DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True, "onboarded": False, "scout_checks_per_day": 4}
+# hold_fills: nothing opens a browser tab. Adding six jobs while scrolling a
+# list used to start six fills at once, six Chrome tabs fighting over one
+# window; and a person adding jobs is not a person ready to sit and check
+# forms. Held, the pipeline still runs in full - screen, tailor, compile,
+# cover letter, approve - and every job stops at its approval, waiting. Let
+# go, the jobs run **one at a time**: one tab, filled to checkpoint 2 or
+# stopped for a reason, and only then the next. On by default, because the
+# safe half of a switch is the half that touches nobody's browser.
+DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True,
+            "onboarded": False, "scout_checks_per_day": 4, "hold_fills": True}
 
 router = APIRouter()
 
@@ -52,6 +74,7 @@ class Settings(BaseModel):
     learn_prompts: Optional[bool] = None
     onboarded: Optional[bool] = None
     scout_checks_per_day: Optional[int] = None
+    hold_fills: Optional[bool] = None
 
 
 def load() -> dict:
@@ -61,13 +84,22 @@ def load() -> dict:
             data.update(json.loads(SETTINGS_PATH.read_text() or "{}"))
         except json.JSONDecodeError:
             pass
+    if onboarded_mark().exists():
+        data["onboarded"] = True
     return data
 
 
 def save(**changes) -> dict:
     data = load() | changes
+    # One-way: nothing turns onboarding back off. A wizard shown to someone
+    # who finished it a month ago reads as the app having lost their work.
+    if load().get("onboarded"):
+        data["onboarded"] = True
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    mark = onboarded_mark()
+    if data.get("onboarded") and not mark.exists():
+        mark.write_text("onboarding finished; this file is never removed\n")
     return data
 
 
@@ -81,6 +113,12 @@ def auto_fill() -> bool:
 
 def auto_learn() -> bool:
     return bool(load().get("auto_learn", False))
+
+
+def hold_fills() -> bool:
+    """Whether no fill may open a tab right now. Read at call time, so the
+    switch on the page stops the next job without a restart."""
+    return bool(load().get("hold_fills", True))
 
 
 @router.get("/settings")

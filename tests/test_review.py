@@ -256,9 +256,23 @@ def test_a_human_can_mark_a_filled_job_submitted(client, monkeypatch):
     assert store.read_status(app_dir) == "submitted"
 
 
-def test_submitted_cannot_be_reached_before_the_form_is_filled(client):
-    """The agent halts at FILLED; nothing may jump the second checkpoint."""
+def test_a_human_can_say_they_submitted_it_before_the_fill_ever_ran(client):
+    """The button records what the person did, wherever the job had got to.
+
+    Someone who opened the posting and applied on the employer's own site
+    still has the job sitting in flight here; refusing the button because
+    the pipeline had not reached FILLED left it there as work to do. The
+    agent has no path to SUBMITTED either way: this endpoint is the page's.
+    """
+    job_id, app_dir = reviewable_job()
+    assert client.post(f"/review/{job_id}/submitted", json={}).json()["status"] == "submitted"
+    assert queue.get(job_id).status == Status.SUBMITTED
+    assert store.read_status(app_dir) == "submitted"
+
+
+def test_a_job_already_finished_with_is_not_marked_again(client):
     job_id, _ = reviewable_job()
+    client.post(f"/review/{job_id}/submitted", json={})
     assert client.post(f"/review/{job_id}/submitted", json={}).status_code == 409
 
 
@@ -318,9 +332,22 @@ def test_approving_starts_the_fill_when_autofill_is_switched_on(client, monkeypa
 def test_approving_still_works_when_autofill_is_off(client, monkeypatch):
     job_id, _ = reviewable_job()
     monkeypatch.setattr(runner, "start_fill", lambda jid: None)
+    monkeypatch.setattr(runner, "held", lambda: False)
     response = client.post(f"/review/{job_id}/approve", json={})
     assert response.json() == {"id": job_id, "status": "approved", "filling": False,
-                               "pid": None}
+                               "pid": None, "held": False}
+
+
+def test_approving_while_the_fills_are_held_queues_the_job(client, monkeypatch):
+    """The switch at the top of the page stops tabs opening, not work. The
+    job is approved, its documents are done, and it waits in line."""
+    job_id, app_dir = reviewable_job()
+    monkeypatch.setattr(runner, "start_fill", lambda jid: None)
+    monkeypatch.setattr(runner, "held", lambda: True)
+    body = client.post(f"/review/{job_id}/approve", json={}).json()
+    assert body["status"] == "approved" and body["filling"] is False and body["held"] is True
+    assert queue.get(job_id).status == Status.APPROVED
+    assert "let go" in (app_dir / "status.json").read_text()
 
 
 def test_rejecting_never_starts_the_fill(client, monkeypatch):
@@ -477,8 +504,9 @@ def test_submitting_while_filling_stops_the_agent(client, monkeypatch):
     assert queue.get(job_id).status == Status.SUBMITTED
 
 
-def test_submitting_needs_a_form_in_the_browser(client):
+def test_a_rejected_job_is_not_marked_submitted(client):
     job_id, _ = reviewable_job()
+    client.post(f"/review/{job_id}/reject", json={"reason": "other", "note": "no"})
     assert client.post(f"/review/{job_id}/submitted", json={}).status_code == 409
 
 

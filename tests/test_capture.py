@@ -189,9 +189,64 @@ def test_a_job_already_applied_for_shouts_and_the_bar_stays_open():
     assert 'const APPLIED_STATUS = new Set(["submitted", "filled", "filling"])' in script
     assert "function appliedNotice(seen)" in script
     assert "ALREADY APPLIED" in script
-    assert "You already applied to this job with Autopilot" in script
-    assert ".applied { display: block;" in script
-    # It stays open: the badge is how the warning was missed.
-    assert 'if (!pending && (seen || verdict === "submitted") && !applied) {' in script
-    # And it is in the bar's body, above the ordinary seen line.
-    assert "${applied}\n          ${seen ?" in script
+    assert "Applied" in script and "waiting for your Submit" in script
+    # And the heading is true of the status it is over: only a submitted job
+    # has been applied for. A filled one is the tailored form waiting in a
+    # tab for the person's own Submit, and shouting ALREADY APPLIED over it
+    # reads as the block pointing at the wrong job.
+    assert '"ALREADY APPLIED"' in script
+    assert '"ALREADY IN AUTOPILOT"' in script and '"FILLING THIS NOW"' in script
+    assert ".applied.pending" in script
+    # One row, not a panel: heading and one line of detail side by side.
+    # It used to stack what, when, the company, "Same posting." and a link,
+    # which took a third of the bar to say what fits on a line.
+    assert ".applied { display: flex;" in script
+    # And it is the way back to what was sent: the block itself is the
+    # button, with the promise in its tooltip. The bar's own open button is
+    # suppressed while it shows, because the same sentence twice reads as
+    # two different offers.
+    assert 'data-act="open" role="button"' in script
+    assert "Show me what I sent: the posting" in script
+    assert 'title="${esc(promise)}"' in script
+    assert "${seen && !applied ? `<button class=\"open\"" in script
+    assert "function appliedWhen(at)" in script
+
+
+def test_a_decided_job_is_described_by_its_outcome_not_by_where_it_is_kept():
+    """"Already in autopilot · Rejected" led with the plumbing. A posting
+    opened a second time is answered with APPLIED, REJECTED (and why), or
+    the failure, and that line is the way back to it."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert 'submitted: "APPLIED"' in script
+    assert 'skipped: "REJECTED"' in script
+    assert "seen.status === \"skipped\" && seen.reject" in script
+    assert "function openLabel(seen)" in script
+    assert '"Show me why I rejected it"' in script
+    # Said once: the loud block or the line, never both.
+    assert "${seen && !applied ?" in script
+    # Every banner folds into the badge once it has a verdict, including
+    # this one: the block is the loudest thing the banner draws and the
+    # badge keeps its colour, so holding it open was holding one bar open
+    # for good. The two that do not fold are the two that are not an
+    # answer yet - a screen still running, and a countdown about to queue.
+    assert 'if (!pending && !(add && add.classList.contains("counting"))) {' in script
+    assert "const AUTO_COLLAPSE_MS = 3000;" in script
+    # And it is in the bar's body, in place of the ordinary seen line: the
+    # same fact twice, once loudly and once quietly, reads as two facts.
+    assert "${applied}\n          ${seen && !applied ?" in script
+
+
+def test_the_submission_watch_only_silences_a_confirmation_page():
+    """It was meant to stop the banner painting a verdict over the page a
+    submitted form turns into. Restored from sessionStorage, it silenced
+    the tab for the rest of its life: a Workday tab that had held a fill
+    was signed into and opened on the real application form, and no banner
+    came back - no verdict, and no way to put the tailored resume on the
+    slot."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert "function notTheConfirmation()" in script
+    assert "if (submissionWatched && !force && !notTheConfirmation()) return;" in script
+    assert "if (submissionWatched && !notTheConfirmation()) return;" in script
+    # The job id and the poll stay: a confirmation reached later is still
+    # marked, and `/screen` answers `submitted` for one before any rule runs.
+    assert "sessionStorage.removeItem(JOB_KEY)" in script

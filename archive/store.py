@@ -110,6 +110,27 @@ def read_status(app_dir: Path) -> Optional[str]:
     return json.loads(path.read_text()).get("status")
 
 
+def reached_at(app_dir: Path, status: Status) -> Optional[str]:
+    """When this folder first reached that status, off the history.
+
+    A job's `added_at` is when it was noticed, which is not when it was
+    applied for: the banner on a posting opened a second time was saying
+    "Applied on the 24th" about a job added on the 24th and submitted on
+    the 26th.
+    """
+    path = app_dir / "status.json"
+    if not path.exists():
+        return None
+    try:
+        history = json.loads(path.read_text()).get("history") or []
+    except (OSError, ValueError):
+        return None
+    for entry in history:
+        if entry.get("status") == status.value:
+            return entry.get("at")
+    return None
+
+
 def _append_index(app_dir: Path, job: Job) -> None:
     exists = INDEX_PATH.exists()
     with open(INDEX_PATH, "a", newline="") as fh:

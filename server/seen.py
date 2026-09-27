@@ -30,7 +30,7 @@ from archive import store
 from tailor import quality
 
 from . import postings, queue
-from .models import Job, Status
+from .models import REJECT_LABELS, Job, Status
 
 REJECT_TTL_DAYS = 90
 TITLE_SIMILARITY = 0.8
@@ -80,6 +80,10 @@ class Match:
     title: str
     company: str
     reason: str
+    # Why it was rejected, when it was. The banner says "Rejected · visa"
+    # rather than "already in autopilot": on a posting the person is
+    # looking at again, the outcome is the answer and the plumbing is not.
+    reject: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -154,6 +158,21 @@ class Known:
     status: str
     at: str
     folder: Optional[Path]
+    reject: str = ""
+
+    @property
+    def decided_at(self) -> str:
+        """When it was submitted or rejected, else when it was added.
+
+        `at` is `added_at`, which is when the posting was noticed. A person
+        looking at a posting again is asking when they applied, and the two
+        are days apart.
+        """
+        wanted = (Status.SUBMITTED if self.status == Status.SUBMITTED.value
+                  else Status.SKIPPED if self.status == Status.SKIPPED.value else None)
+        if wanted and self.folder:
+            return store.reached_at(self.folder, wanted) or self.at
+        return self.at
 
     def text(self) -> str:
         if self.folder:
@@ -167,7 +186,8 @@ def known() -> list[Known]:
     rows: dict[str, Known] = {}
     for job in queue.all_jobs():
         rows[job.id] = Known(job.id, job.url, job.title, job.company, job.status.value,
-                             job.added_at, Path(job.app_dir) if job.app_dir else None)
+                             job.added_at, Path(job.app_dir) if job.app_dir else None,
+                             REJECT_LABELS.get(job.reject_reason, "") if job.reject_reason else "")
     if store.INDEX_PATH.exists():
         # Rows swept out of the queue live on in the archive index.
         for row in csv.DictReader(store.INDEX_PATH.open()):
@@ -183,12 +203,34 @@ def _expired(item: Known) -> bool:
     if item.status != Status.SKIPPED.value:
         return False
     try:
-        then = datetime.fromisoformat(item.at)
+        then = datetime.fromisoformat(item.decided_at)
     except ValueError:
         return False
     if then.tzinfo is None:
         then = then.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) - then > timedelta(days=REJECT_TTL_DAYS)
+
+
+# Several of our rows can match one posting: the Jobright page and the
+# employer page, an old application and a new duplicate someone added
+# today. The person is asking one question - what happened with this job -
+# and the honest answer is the row that got furthest, not the newest one.
+# A duplicate added this morning is "in autopilot" and the application sent
+# last week is "applied"; showing the first and hiding the second is how
+# "already applied" pointed at a job that had not been.
+APPLIED_FIRST = {
+    Status.SUBMITTED.value: 0,
+    Status.FILLED.value: 1,
+    Status.FILLING.value: 2,
+}
+
+
+def _best(item: "Known") -> tuple:
+    return (
+        APPLIED_FIRST.get(item.status, 3),
+        is_source_page(item.url),                  # the employer's row over Jobright's
+        item.status == Status.SKIPPED.value,       # a live row over a rejected duplicate
+    )
 
 
 def find(url: str, title: str = "", company: str = "", text: str = "") -> Optional[Match]:
@@ -199,7 +241,8 @@ def find(url: str, title: str = "", company: str = "", text: str = "") -> Option
     ats = ats_id(url)
 
     def result(level: str, item: Known, reason: str) -> Match:
-        return Match(level, item.id, item.status, item.at, item.title, item.company, reason)
+        return Match(level, item.id, item.status, item.decided_at, item.title, item.company,
+                     reason, item.reject)
 
     # Strongest signal first across every row, so the employer's own row
     # wins over the Jobright row that led to it.
@@ -213,9 +256,7 @@ def find(url: str, title: str = "", company: str = "", text: str = "") -> Option
     for check, reason in checks:
         hits = [item for item in rows if check(item)]
         if hits:
-            # The employer's row over the Jobright row that led to it, and a
-            # live row over a rejected duplicate.
-            hits.sort(key=lambda item: (is_source_page(item.url), item.status == Status.SKIPPED.value))
+            hits.sort(key=_best)
             return result("high", hits[0], reason)
 
     if not company:
@@ -226,15 +267,22 @@ def find(url: str, title: str = "", company: str = "", text: str = "") -> Option
     if not mine:
         return None
     my_hash = quality.simhash(text) if text else 0
+    hits: list[tuple[Known, str]] = []
     for item in rows:
         if norm_company(item.company) != mine or _expired(item):
             continue
         if title_similarity(title, item.title) >= TITLE_SIMILARITY:
-            return result("confident", item, "same role at the same company")
-        if my_hash:
+            hits.append((item, "same role at the same company"))
+        elif my_hash:
             theirs = item.text()
             if theirs and quality.distance(my_hash, quality.simhash(theirs)) <= TEXT_DISTANCE:
-                return result("confident", item, "same description at the same company")
+                hits.append((item, "same description at the same company"))
+    if hits:
+        # Same choice as above: the one that was applied for is the answer,
+        # not whichever row the loop reached first.
+        hits.sort(key=lambda pair: _best(pair[0]))
+        item, why = hits[0]
+        return result("confident", item, why)
     return None
 
 

@@ -22,10 +22,13 @@ is `mine`:
 - Commit their changes on `mine`, one per request, logged in
   `LOCAL_CHANGES.md` with the intent. `scripts/check.sh` after every
   change; a failing invariant means the change is undone.
-- A request about *how the models write or judge* (tone, length, what
-  counts as a reject) is a prompt change: point them to the Prompts tab
-  and its Workshop, or make it there, rather than editing a stock
-  `*_rules.md` in the clone (that one conflicts on every update).
+- A request about *how the models write* (tone, length) is a prompt
+  change: point them to the Prompts tab and its Workshop, or make it
+  there, rather than editing a stock `*_rules.md` in the clone (that one
+  conflicts on every update). A request about *what counts as a reject*
+  is a **screening rule**, not a prompt and not code: the Screening tab
+  writes one from a sentence, checks it, and previews it against their
+  own past postings. Never edit `tailor/screening.py` in their clone.
 - The rule below holds on every copy, whoever asks.
 
 The rest of this file is the maintainer's notes on how the code works.
@@ -39,6 +42,24 @@ the Invariants section of PLAN.md.
 
 Specifically:
 
+- **The person may press Submit from the review page** (2026-09-26,
+  `browser/press_submit.py` + `POST /review/{id}/submit`, the green
+  **Submit it** button on a filled job). This is checkpoint 2 taken from
+  the page instead of from the form's own tab, and nothing about the rule
+  above moves: no model reaches the endpoint, no browser-use action is
+  registered for it, `apply.py` and everything under `browser/` are
+  forbidden from importing the presser (`tests/test_invariants.py` #6),
+  and the guard still refuses every submit control the agent sees. The
+  same `guard.SUBMIT_PATTERNS` that the agent may never click is what the
+  presser aims at; `choose` skips a cancel / save-for-later / sign-in
+  label, prefers the form's own `type=submit`, and takes the lowest on the
+  page, since a multi-step form puts its final action last. The press is a
+  real `Input.dispatchMouseEvent` at the control's centre, not
+  `el.click()`. **A press is not a submission**: the job is marked
+  SUBMITTED only once the page becomes a confirmation (the form gone and
+  `watch.CONFIRMED` in its text, the same two halves as everywhere else),
+  within 25 s; otherwise the job is left exactly where it was and the page
+  says the form is still on the screen. The tab is never closed here.
 - `browser/guard.py` refuses any click that reads as submit/apply/send/finish.
   `evaluate` and `send_keys` are removed from the agent's vocabulary entirely.
 - The fill must leave the browser **window open** on the completed form. Never
@@ -197,7 +218,9 @@ Specifically:
 | `tailor/cover_rules.md` | the cover letter prompt, same rule |
 | `tailor/cover.py` | letter from the tailored resume; plain pdflatex template; failure is non-fatal |
 | `tailor/answers.py` + `answer_rules.md` | free-form form questions, answered by the tailor model (`OPENROUTER_ANSWER_MODEL` overrides) via the agent's `answer_question` action, and **by the human from the review page** (2026-09-18): `POST /review/{id}/ask` builds the same `Context` the fill would (posting, tailored resume, letter, profile with the picked stories, facts), the "Ask for an answer" card shows the reply with Copy, and `detail.questions` (`answers.open_questions` over `form_state.json` / `form_fill.json`: empty, `?` or > 60 chars, never visa) are one-tap prompts. Everything lands in `answers.md`; the page shows the whole file. Nothing is typed into the form by this path |
-| `tailor/screen.py` + `screen_rules.md` | on-page auto-reject screen: posting vs `base/applicant.md` Facts, fixed category enum, verdict recomputed from flags in code. Validator drops every soft location flag and explicitly-US hard location flags; it parses graduation and "by" cutoffs so an earlier graduation cannot become a timeline caution |
+| `tailor/screening.py` | **the rules the screen runs, in code** (2026-09-26). A `Rule` is a category, a severity, and either `patterns` (regexes, any one fires it) or a `check` in `CHECKS` for the four that need more than a phrase (`experience_years` reads the floor of every "N years" and compares it to the rule's `value`; `seniority_title` reads the title only, and never when it also says Member of Technical Staff / Associate / new grad; `location_foreign` reuses `scout.filter`'s country lists; `graduation_window` hands the sentence to `screen.py`'s date reading). `unless` cancels a match in the same sentence, which is how "we cannot guarantee sponsorship" stops being a refusal; a match whose sentence is a question is passed over, not accepted, because "Will you require sponsorship?" is on half the forms in the country. `STOCK` is the catalog, `data/screening.json` holds the person's switches, values and own rules, read at call time. `invalid()` refuses a pattern that does not compile or that matches ordinary prose. `AUTHOR_PROMPT` is the tab's assistant - it writes rules, never verdicts |
+| `tailor/screen.py` | on-page auto-reject screen: `screening.fired` over the posting, then the two policies that correct a flag (`enforce_location_policy`, `enforce_timeline_policy`), then `verdict_for`. **No model** (2026-09-26). Facts from `base/applicant.md`, softened to `soft` when they were derived from the resume (`soften_unknowns`), because a resume knows nothing about visas or dates |
+| `server/screening.py` | the Screening tab's API: `/screening` (list), `/screening/rule/{name}` (switch, value), `/screening/rule` (add / delete one of the person's own), `/screening/preview` (what a rule would have done to the postings already in `applications/`), `/screening/ask` (one model call, writes a rule from a sentence). Nothing is saved without a click, and a proposal is previewed against the corpus first: a rule that would have flagged a third of past jobs says so |
 | `server/screen.py` | `POST /screen`, URL-keyed cache in `data/screens.json`; the pipeline reuses it. **A confirmation page never reaches the model** (2026-09-20): `confirmation_quote` (the `watch.CONFIRMED` phrase, in a short page or near the top of a long one) answers `verdict: submitted` in string work, and when `seen` says the page is a filled job of ours, `review.mark_seen` marks it right there. Employer URLs reuse a cached Jobright verdict; without one, low-quality ATS text is combined with the saved Jobright copy in one model call |
 | `server/settings.py` | `use_profile` in `data/settings.json`; the page pins it on, the header only reports whether a story exists |
 | `tailor/profile.py` | what the models are told about the applicant. `context(slugs)` = profile.md + applicant facts + `base/stories/index.md` + the picked stories' `tailor.md` when the switch is on, profile.md alone otherwise. `pick(posting)` chooses the slugs (one cheap call); the pipeline records them in `stories_used.txt` and the cover letter and answers reuse them. **The slots are split** (2026-09-25): `SWAP_SLOTS` (3) stories the master resume does not carry and `DEPTH_SLOTS` (2) that it does, candidates first, the pool backfilled by `stack_overlap` from the stories the picker passed over so a run is never out of stock. `on_resume(slug, resume_tex, story)` decides which is which - the story's `Link:` on the page, else 60% of the slug's own distinctive words in the resume's visible text (exact on the 15 stories on file). `stories()` says it per story in the prompt, because a story already on the resume can only deepen its entry while one that is not may take a `PROJECTS` entry's place. `screen_facts()` falls back to facts derived from the resume, cached in `data/derived_facts.md` |
@@ -219,6 +242,7 @@ Specifically:
 | `server/form.py` | the preliminary interview: `GET/POST /profile/form`, fixed `QUESTIONS` (contact, location, work, education, source pinned to Other, EEO, work authorisation), `/profile/form/hints` = contacts from the resume cached in `data/contacts.json`. The Profile tab's `Form` module walks them one per screen (Enter next, Skip, Save and stop), then shows the file and the "Corrected fields" table with delete. Authorisation keys are on file but not in `forms.profile.KEYS`: collected, never auto-filled |
 | `browser/ats.py` + `ats_rules.md` | per-system notes for the browser model, picked by URL (oracle, greenhouse, ashby, workday, lever), sent verbatim under "Notes for this application system". Edit the markdown, not the Python. Oracle: one "Upload Attachment" control for every document, so the upload guard lets the cover letter onto a generic attachment slot (never onto a resume-named one) |
 | `browser/guard.py` | the never-submit deny-list |
+| `browser/press_submit.py` | the only place a Submit control is pressed, and the agent cannot reach it: the review page's **Submit it** button, through `POST /review/{id}/submit`. `choose` picks the control, `confirmed` decides whether the page that came back is a receipt |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
 | `archive/store.py` | immutable per-application folders |
@@ -277,6 +301,14 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 - **Chrome will not share a profile directory** with a running instance — it
   silently falls back to a throwaway and the login is lost. The fill loop owns
   `~/Library/Application Support/job-autopilot/chrome`.
+- **Two servers, two data folders, and the queue reads empty.** A stale
+  uvicorn started from the clone (no `AUTOPILOT_HOME`) keeps its data in
+  the clone; a restart through `scripts/autopilot` used to force
+  Application Support and showed an empty queue over 123 application
+  folders still on disk. Before concluding anything was deleted:
+  `pgrep -fl uvicorn`, then compare `ls ~/Library/Application\ Support/Autopilot/data`
+  with the clone's. `GET /setup` prints the `home` the server is actually
+  using.
 - **A stale uvicorn holds port 8787** and serves old code. If behaviour makes
   no sense, `pgrep -fl uvicorn` first. Scripts it launches run current code
   regardless, so "the pipeline works but the page is wrong" means this.
@@ -343,26 +375,30 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   the folder before `fetch.fetch` made every first run `unknown-company_...`.
   `pipeline.allocate` runs after the fetch; a failed fetch still gets a
   folder so its error has somewhere to land.
-- **A form question is not a requirement.** The screen's first real run
-  flagged "Will you now or in the future require sponsorship?" as a visa
-  flag. The rules say bare questions are not flags; if it recurs, that is
-  the section of `screen_rules.md` to sharpen.
-- **A stretch is not a reject.** The screen rejected every other US city,
-  cohorts a year off, and 1.5 years against "0-1". `screen_rules.md` lists
-  hard / soft / never per category; add a new false positive to the
-  "never" line of its category, not to the prose.
-- **Two screen rules are also code invariants now.** Every US location is
-  green, not caution; a degree earned before an "earned or expected by"
-  deadline satisfies it, and (2026-09-24) so does a degree earned before a
-  **cohort window** ("spring/summer of 2027 college graduates" rejected a
-  December 2026 graduate; graduating early only widens what fits).
-  `screen.graduation_window` reads the window's end off the flag's quote and
+- **A form question is not a requirement.** "Will you now or in the future
+  require sponsorship?" is on half the application forms in the country and
+  says nothing about the employer's policy; the model made it a hard reject
+  four times. `screening.is_question` passes over a match whose sentence is
+  one, and `sentence_around` keeps `i.e.` and `U.S.` inside the sentence so
+  the question mark is still there to be seen. A new false positive belongs
+  in that rule's `unless`, with the posting's own words in a test.
+- **A stretch is not a reject.** Every US city, cohorts a year off and 1.5
+  years against "0-1" were all rejected once. The three are now code: the
+  location policy, the graduation window, and `experience_years` reading
+  the *floor* of a range.
+- **Two screen policies are code invariants.** Every US location is green,
+  not caution; a degree earned before an "earned or expected by" deadline
+  satisfies it, and (2026-09-24) so does a degree earned before a **cohort
+  window** ("spring/summer of 2027 college graduates" rejected a December
+  2026 graduate; graduating early only widens what fits).
+  `screen.graduation_window` reads the window's end off the quote and
   `graduating_in_time` drops the flag; a posting that wants a graduation *no
-  earlier* than a date, or the applicant still enrolled, keeps it (`NOT_BEFORE`). `enforce_location_policy` and
-  `enforce_timeline_policy` correct model output before `verdict_for` runs.
-  Update their regression tests as well as `screen_rules.md` when changing
-  either policy. Cached US location flags are normalized on read; the known
-  timeline cache entry was repaired when the date validator shipped.
+  earlier* than a date, or the applicant still enrolled, keeps it
+  (`NOT_BEFORE`, and `screening._earliest` is the other half of it).
+  `enforce_location_policy` and `enforce_timeline_policy` still run after
+  the rules and before `verdict_for`, so a rule someone writes cannot undo
+  them. Update their regression tests when changing either. Cached US
+  location flags are normalized on read.
 - **The injector's browser socket drops without a close frame** (once,
   30 s after a new tab). It used to die there and every tab lost its
   banner silently. `Injector.run` reconnects; if the banner is missing,
@@ -562,7 +598,10 @@ invariants first.
   weight against names like `submissions`/`dotfiles` is the next step if
   it keeps happening.
 - Tailoring prompt strengthened (2026-09-21): built; judge on the next real runs, and again once `base/profile.md` and the stories exist. Next if asked: a code check that every new term in the tailored resume occurs in the master or a story (the paper's "deterministic verification"), on top of the number and link checks.
-- Screening for export control / PERM (2026-09-21, raised, not built): the rules already say ITAR/EAR/US persons/citizenship are hard; a posting with an export-control requirement still came through. Read that posting's `screen.json`, sharpen `screen_rules.md` and add the phrases to `filter.prescreen` and a code-side `enforce_export_policy` like the location one.
+- **Export control is caught, and the screen is no longer a model call**
+  (2026-09-21 raised, built 2026-09-26). Seven postings on the corpus
+  carried ITAR, EAR or "U.S. Person Required" and the model passed every
+  one. See the entry at the end of this section.
 - Scout notify/autopilot split (2026-09-21): built. Next if asked: a
   weight on the code pre-screen (a "senior" in the requirements text),
   a bulk paste of company URLs, and a Notifications badge count on the
@@ -573,12 +612,16 @@ invariants first.
   epoch 12, min quals 19) and `target_level=EARLY`, `location`, `q`
   carry over from the pasted URL. Next if asked: Telegram, a weight on
   the screen's verdict in the subject line, LinkedIn (no public API).
-- Hand-opened ATS tabs get no banner (2026-09-21, raised, not built):
-  `inject.py` marks only Jobright tabs and the tabs Jobright's Apply opened
-  (opener or `?jr_id=`). An Ashby posting opened by hand was captured
-  (context menu) and filled, but never screened, and Jobright's autofill
-  never ran there, so only the resume went on. Next if asked: mark tabs by
-  ATS host (`ashbyhq`, `greenhouse`, `lever`) regardless of opener.
+- **Hand-opened ATS tabs get the banner** (2026-09-21 raised, built
+  2026-09-26). `inject.is_ats` (and the same list in `background.js`) marks
+  an application form by host alone - Workday, Greenhouse, Ashby, Lever,
+  SmartRecruiters, BambooHR, Workable, iCIMS, Jobvite, Taleo,
+  SuccessFactors, Oracle, Eightfold, Dover - so a posting reached from a
+  company's own careers page is screened like one Apply opened. Those tabs
+  are deliberately **not** in `Injector.marked`: the injected script is
+  prefixed with `window.__autopilotHandOpened`, and the banner then never
+  counts down, never presses Autofill and may not close itself. A page
+  being read is not a decision made.
 - The watch overwrites `form_state.json` with an empty resume slot after
   the form's tab reloads (Ashby drops the file on reload); the review page
   then shows no resume. Raised 2026-09-21, not built: keep the last
@@ -702,6 +745,187 @@ invariants first.
   arithmetic, the room counted down, and the swap floor. Next if asked: the
   same treatment for the cover letter, and a count of bullets actually changed
   on the review page.
+- **A poor fit is tailored anyway** (2026-09-26). `tailor.Mismatch` used to
+  take an early return in `pipeline.process`: `mismatch.md`, no documents,
+  `awaiting_review` - and, because the return was before `auto_approve`,
+  `auto_fill` could never carry the job however it was set, so every poor
+  fit cost a click before anything existed to read. The verdict is kept and
+  shown, then the tailor is called once more with `tailor.OVERRULE_QUEUED`
+  ("the candidate chose this posting themselves ... never invent the thing
+  they lack") and the job travels the rest of the pipeline like any other.
+  Refused on that call too = the old behaviour, documents and all, and
+  Approve still overrules from the page (`review._overrule_mismatch`, whose
+  `OVERRULE` now lives beside it in `tailor/tailor.py`). Still prompt-only
+  on the other side: `screen.graduation_window` fixes "the 2027 cohort" for
+  a December 2026 graduate in code, the tailor has no such pass, so it calls
+  that a hard filter and costs the second call. Next if asked: give the
+  tailor the same deterministic treatment.
+- **The put chips are offered on any match** (2026-09-26). `loadFiles` ran
+  only at `seen.level === "high"`, which is the wrong half: a form the
+  person opened by hand is exactly where "put" is wanted and is usually
+  `confident`. Nothing goes on the form without the click.
+- **Onboarding is finished once, for good** (2026-09-26). `settings.save`
+  cannot unset `onboarded`, and the flag is written twice: `settings.json`
+  and a `.onboarded` file beside it (`settings.onboarded_mark()`, resolved
+  per call, never frozen at import). Either copy says yes and the wizard
+  stays away. A person weeks into the app was shown the first screen again,
+  which reads as the app having lost their work.
+- **A checkout keeps its own data** (2026-09-26). `scripts/autopilot`
+  exported `AUTOPILOT_HOME` unconditionally, so the maintainer's clone -
+  105 queue rows and 123 application folders in `data/` and
+  `applications/` - was pointed at an empty Application Support folder and
+  the queue read empty. Nothing was lost and nothing was moved: the script
+  now takes the clone's own data when it has a `data/queue.json` and the
+  app folder has none. `run/` and `logs/` are gitignored for the same
+  reason.
+- **Screening is code, and it has its own tab** (2026-09-26). The model is
+  retired. Measured first: every one of the 122 postings on disk replayed
+  through the rules and compared to the 199 verdicts the model had cached,
+  and all thirteen disagreements went to the rules - **seven** hard
+  export-control blocks it had passed (ITAR, EAR, "U.S. Person Required":
+  ASM, Sift Stack, Axon, three more) and **six** rejects it should never
+  have raised (a form's own sponsorship question three times, "100%
+  onsite" in a US city three times). Its wider cache held worse: `Will
+  sponsor`, `United States (remote)`, `$30/hr`, `NO RECRUITERS, PLEASE.`,
+  `E-Verify` and `0-1 years of experience` were all hard flags. Twelve
+  stock rules, each a checkbox, in `tailor/screening.py`; the person's
+  switches, thresholds and own rules in `data/screening.json`; a
+  **Screening tab** to change them and an onboarding step that shows them
+  once. Its assistant writes a *rule* from a sentence ("flag anything that
+  wants a clearance") - one model call per rule written, never per job -
+  and every proposal is checked (the patterns must compile and must not
+  match ordinary prose) and previewed against the postings already on
+  disk before it can be added. The old verdicts in `data/screens.json`
+  were left alone by decision: rules from now on. Next if asked: a
+  "re-screen everything" sweep, and the same rules in
+  `scout.filter.prescreen`, which still keeps its own smaller list.
+- **ALREADY APPLIED is the way back to what was sent** (2026-09-26). The red
+  block on the posting page is now the button (`data-act="open"`, Enter and
+  Space too, "Show me what I sent →"): it opens that job in the Autopilot
+  tab, focused. It says the time to the minute in the reader's own zone
+  (`appliedWhen`), not just a date - two applications can go out on one
+  day - and the review page answers it with a banner of its own
+  (`reachedAt` over the status history): "You submitted this application ·
+  Thu 17 Sept, 17:19", above the resume and letter that went with it.
+  Saying "already applied" and leaving someone to go and find it is the
+  same as not saying it.
+- **The Screening tab is one pane, and she speaks** (2026-09-26). The left
+  column repeating every rule's name beside the rules themselves was the
+  same information twice; `main.nonav` gives the tab the whole width and a
+  rule's patterns fold away under "why". The assistant sits at the top with
+  the orb: opening the tab she says "Hey - what kind of screening would you
+  like to add?", speaks it and listens, and the conversation is a
+  transcript rather than a form. `Voice` now talks to a **host** rather
+  than to `Profile` by name (`Voice.setHost`, `who()`), and the orb's DOM
+  (`orbHtml`, `placeOrb`, `dragOrb`, the tap callback) is borrowed from
+  `Profile` rather than copied; a host implements `orb`, `caption`, `send`,
+  `idle`, `speechDone`, `paused` and `voice`. Only one chat is on screen at
+  a time, which is what makes one orb enough.
+- **A decided job says its outcome, not where it is kept** (2026-09-26).
+  "Already in autopilot · Rejected" led with the plumbing and buried the
+  answer. On a posting opened a second time the banner now says `APPLIED`,
+  `REJECTED — <reason>` or `FAILED` with the time, and that line is a
+  button to the job (`DECIDED` and `openLabel` in `content.js`, whose
+  buttons promise what the person wants next: "Show me what I sent", "Show
+  me why I rejected it", "Show me what happened"). The reject reason
+  travels on `seen.Match.reject` from the queue row's `reject_reason`.
+  Only a job still in flight reads "In autopilot · Waiting for your
+  review", because there the progress *is* the answer. At `confident` the
+  outcome is prefixed with `LOOKS LIKE THE SAME JOB ·`, since it may be
+  another role at the same employer. The loud block and the line never
+  both appear: the same fact twice reads as two facts.
+- **A form behind a sign-in is not a failed job** (2026-09-26). Workday,
+  McKinsey, CVS and eleven others keep the application behind Apply and a
+  login, and the fill never presses Apply. It marked the job `failed`, and
+  a failed job sits in a collapsed shelf, so **fourteen** applications with
+  perfectly good tailored resumes read as gone (Morgan Stanley was the one
+  that made this visible). `FillResult.no_form` now takes the job back to
+  `awaiting_review` with `needs_sign_in.txt` and a banner saying what to do
+  - sign in until the form is on the screen, then Approve. The fourteen
+  were brought back. **And the gate that recognises it was wrong**: it
+  wanted fewer than five fields, and Workday's sign-in page has six, so
+  the fill treated a login screen as the application, found no resume
+  slot, and wrote a tailored sentence into a hidden box labelled "This
+  input is for robots only" - a spam trap. No file input anywhere is now
+  enough (`NOT_A_FORM`), and `engine.HONEYPOT` skips such a box in both
+  the answerer and the generic label matcher.
+- **The submission watch silenced a tab for good** (2026-09-26). It exists
+  to stop the banner painting a verdict over the page a submitted form
+  turns into, and it is restored from `sessionStorage` on every page of
+  that tab. So a Workday tab that had once held a fill was signed into,
+  navigated to the real application form, and got no banner at all - no
+  verdict, no put chips, no way to attach the tailored resume.
+  `notTheConfirmation()` limits the suppression to a page that actually
+  reads as a confirmation; the stored job id and the poll stay, so a
+  confirmation reached later is still marked, and `/screen` answering
+  `submitted` for one in string work is the second guard.
+- **Submit from the review page** (2026-09-26, asked for). A filled job's
+  fab now reads Reject / Fill again / I submitted it / **Submit it**; the
+  last presses Submit on the form's own tab over CDP after one confirm
+  dialog naming the job, and marks the job only on a confirmation page.
+  The never-submit rule is unchanged for the agent and is now checked from
+  the other side too (invariant 6: nothing the agent runs may import
+  `browser/press_submit.py`, and only `server/review.py` calls it). Next if
+  asked: the same button on the list row, and a re-press when a form comes
+  back with a validation error.
+- **One tab at a time, and a switch that holds the line** (2026-09-27,
+  asked for). Adding six jobs while scrolling a list started six fills, six
+  Chrome tabs in the one window the app owns, and nobody checks six forms at
+  once. `settings.hold_fills` (**on by default**) is a switch at the top of
+  the review page, worded from the person's side rather than the code's -
+  `Collecting jobs · N ready`, then `Starting applications…` for the few
+  seconds before the first tab, then `Applying · N more in queue`: held,
+  the pipeline runs in full - screen, tailor,
+  compile, cover letter, `auto_approve` - and every job stops at APPROVED;
+  let go, `runner.serial_tick` (a 3 s thread, `runner.start_serial`,
+  `AUTOPILOT_SERIAL=0` off) starts the oldest approved job when nothing is
+  filling, so each job gets one tab and the next begins when that process
+  ends, whether it reached checkpoint 2, failed, or stopped for the person.
+  `runner.start_fill` is the gate (`force=True` is a human pressing "Fill
+  the form" on one job, which is not the bulk the hold is for), and `/fill`
+  now refuses while *another* job is filling unless forced. Nothing about
+  never-submit changes: the line ends at the filled form.
+- **The banner says what is true, once, and gets out of the way**
+  (2026-09-27). Three things were wrong with the block on a posting already
+  in autopilot. It shouted `ALREADY APPLIED` over a `filled` job, which is
+  the tailored form waiting in a tab for the person's own Submit - the one
+  thing that had not happened - so the heading is now per status
+  (`ALREADY APPLIED` red for `submitted`, `ALREADY IN AUTOPILOT` and
+  `FILLING THIS NOW` amber for the other two, `.applied.pending`). It said
+  the same thing five ways (what, when, company, "Same posting.", an
+  underlined "Show me what I sent →") *and* the bar carried a second button
+  saying it again, in a boxed panel a third of the bar high: it is one flex
+  row now, heading plus one line, the block itself is the button, the
+  promise is in its `title`, and the bar's own open button is suppressed
+  while it shows. And **every banner folds into the badge after 3 s**
+  (`AUTO_COLLAPSE_MS`, was 5 s and gated to `seen`/`submitted` pages with
+  the applied block held open for good): the two that do not fold are a
+  screen still running and a countdown about to queue. That reverses the
+  2026-09-25 rule that the applied bar never collapses; the reason it was
+  written (a *line inside* a bar that folded away) no longer describes it.
+- **"Already applied" pointed at the wrong row, and dated it wrong**
+  (2026-09-27). Several of our rows match one posting - the Jobright page
+  and the employer page, an application sent last week and a duplicate
+  added this morning - and `seen.find` sorted by `(employer page,
+  not-rejected)`, so the two tied and the in-flight duplicate won. The
+  person is asking what happened with this job, and the answer is the row
+  that got furthest: `seen.APPLIED_FIRST` / `_best` rank submitted →
+  filled → filling → the rest, at both `high` and `confident` (the
+  confident branch used to return whichever row the loop reached first, not
+  the best). And `Match.at` was `added_at`, when the posting was *noticed*:
+  `store.reached_at(folder, status)` + `Known.decided_at` give the banner
+  the time it was actually submitted or rejected, which is also what a
+  rejection's 90-day TTL should age from. `/jobs` carries `decided_at` and
+  every row on the closed shelves shows it on the right, replacing a
+  "done" / "stop" label that only repeated the shelf's own name.
+- **"I submitted it" works before the fill ever ran** (2026-09-27). Someone
+  who opened the posting and applied on the employer's own site still had
+  the job sitting in flight here, and the button refused because the
+  pipeline had not reached FILLED. It records what the person did, so it is
+  accepted from any live status and refused only on a job already submitted
+  or rejected; it is on the reviewable fab as well as the filled one. The
+  automatic paths (`mark_seen`, the watch, `/submitted-seen`) still want
+  FILLED or FILLING, because there a stray "thank you" is the risk.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

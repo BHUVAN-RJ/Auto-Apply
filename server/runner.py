@@ -134,11 +134,117 @@ def stop_fill(job_id: str) -> Optional[int]:
     return pid
 
 
-def start_fill(job_id: str, log_dir: Optional[Path] = None) -> Optional[int]:
-    """Begin filling an approved application, if autofill is switched on."""
+def start_fill(job_id: str, log_dir: Optional[Path] = None, force: bool = False) -> Optional[int]:
+    """Begin filling an approved application, if autofill is switched on.
+
+    Held (`settings.hold_fills`, the switch at the top of the review page),
+    nothing starts by itself: the job stays APPROVED and `serial_tick` picks
+    it up, one at a time, once the person lets go. `force` is a human
+    pressing "Fill the form" on one job, which is a decision about that job
+    and not the bulk the hold exists to stop.
+    """
     if not AUTOFILL_ENABLED:
         return None
+    if not force and (held() or any_fill_running()):
+        return None
     return launch("apply.py", job_id, log_dir)
+
+
+# ---------------------------------------------------------------- the line --
+#
+# One tab at a time. A person scrolling a job list adds six jobs in a minute,
+# and six fills meant six Chrome tabs opening on top of each other in the one
+# window the app owns - and nobody can check six forms at once anyway. So the
+# fills queue: while the hold is on nothing starts, and when it comes off the
+# approved jobs go one by one. A fill that finishes, fails, or stops for the
+# person (a sign-in wall, a question Jobright could not answer) ends its
+# process either way, and the next job starts on the tick after that.
+
+SERIAL_ENV = "AUTOPILOT_SERIAL"
+TICK = 3.0
+
+_serial_thread = None
+_serial_stop = None
+
+
+def held() -> bool:
+    from server import settings
+    return settings.hold_fills()
+
+
+def any_fill_running() -> Optional[str]:
+    """The job id of the fill that is running, or None. Ours first, then any
+    `apply.py` this server did not start (an earlier server, or a terminal)."""
+    for job_id, (process, _) in list(_fills.items()):
+        if process.poll() is None:
+            return job_id
+        del _fills[job_id]
+    try:
+        out = subprocess.run(["pgrep", "-af", "apply.py"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        parts = line.split()
+        # "<pid> <python> /path/apply.py <job id>"; a bare `apply.py` with no
+        # id is the batch run and counts as a fill in progress too.
+        if len(parts) >= 3 and parts[-2].endswith("apply.py") and int(parts[0]) != os.getpid():
+            return parts[-1]
+        if parts and parts[-1].endswith("apply.py") and int(parts[0]) != os.getpid():
+            return "batch"
+    return None
+
+
+def waiting() -> list:
+    """Approved jobs with documents, oldest first: the line for the next tab."""
+    from server.models import Status
+    from server import queue
+
+    return [job for job in queue.all_jobs() if job.status is Status.APPROVED and job.app_dir]
+
+
+def serial_tick() -> Optional[str]:
+    """Start the next job in the line, if the hold is off and nothing is
+    filling. Returns the job id it started, or None. Safe to call as often
+    as you like; it is the whole scheduler."""
+    if not AUTOFILL_ENABLED or held():
+        return None
+    if any_fill_running():
+        return None
+    for job in waiting():
+        if launch("apply.py", job.id):
+            return job.id
+    return None
+
+
+def _serial_loop() -> None:
+    while _serial_stop is not None and not _serial_stop.is_set():
+        try:
+            started = serial_tick()
+            if started:
+                print(f"fill queue: started {started}")
+        except Exception as error:  # noqa: BLE001 - a bad tick never stops the line
+            print(f"fill queue: {error}")
+        if _serial_stop is not None:
+            _serial_stop.wait(TICK)
+
+
+def start_serial() -> bool:
+    """Start the one-at-a-time fill scheduler. Off with `AUTOPILOT_SERIAL=0`."""
+    global _serial_thread, _serial_stop
+    import threading
+
+    if os.environ.get(SERIAL_ENV, "1") == "0" or (_serial_thread and _serial_thread.is_alive()):
+        return False
+    _serial_stop = threading.Event()
+    _serial_thread = threading.Thread(target=_serial_loop, name="autopilot-fills", daemon=True)
+    _serial_thread.start()
+    return True
+
+
+def stop_serial() -> None:
+    if _serial_stop is not None:
+        _serial_stop.set()
 
 
 def start_pipeline(job_id: str, log_dir: Optional[Path] = None) -> Optional[int]:

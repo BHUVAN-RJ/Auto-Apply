@@ -258,21 +258,51 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
             model=job.tailor_model,
         )
     except tailor.Mismatch as exc:
-        # A poor-fit verdict is advice, not a decision. The job still stops at
-        # checkpoint 1 with the reasoning on show; only the human closes it.
+        # A poor-fit verdict is advice, not a decision, and the job is here
+        # because a human added it: "mid or bad fit" is a reason to read the
+        # resume before sending it, not a reason to have no resume. The note
+        # is kept and shown on the review page; the documents are written
+        # anyway on one more call, and the job travels the rest of the
+        # pipeline like any other. It used to return here, which also meant
+        # `auto_approve` never saw it, so `auto_fill` could not carry it and
+        # every poor fit cost a click before anything existed to look at.
+        print(f"  the model calls this a poor fit; tailoring anyway: {exc}")
+        tell_tab(job, "working", "Poor fit, says the model; tailoring anyway")
+        overrule = f"{extra_instruction}\n\n{tailor.OVERRULE_QUEUED}".strip() \
+            if extra_instruction else tailor.OVERRULE_QUEUED
+        try:
+            result = tailor.tailor(
+                posting,
+                page_check=make_page_check(base_tex),
+                target_pages=target,
+                extra_instruction=overrule,
+                profile=tailor.load_profile(stories=stories),
+                model=job.tailor_model,
+            )
+        except tailor.Mismatch as again:
+            # Twice is a refusal, not a verdict to argue with. The job stops
+            # at checkpoint 1 with the reasoning on show, as it always did;
+            # approving it there still overrules from the review page.
+            store.write(
+                app_dir,
+                "mismatch.md",
+                f"# The model thinks this is a poor fit\n\n{again}\n\n"
+                "It was asked a second time and refused again, so nothing was "
+                "tailored. Reject it if you agree, or approve it to overrule.\n",
+            )
+            store.set_status(app_dir, held or Status.AWAITING_REVIEW, f"poor fit: {again}")
+            if not keep_status or revive:
+                queue.update(job.id, status=Status.AWAITING_REVIEW)
+            print(f"  flagged as a poor fit, waiting on you: {again}")
+            tell_tab(job, "done", "Poor fit, says the model; decide on the review page")
+            return app_dir
         store.write(
             app_dir,
             "mismatch.md",
             f"# The model thinks this is a poor fit\n\n{exc}\n\n"
-            "Nothing was tailored. Reject it if you agree, or re-tailor with a "
-            "note if you think the model is wrong.\n",
+            "The resume and letter below were tailored anyway, because you "
+            "added this job. Read them before you send them.\n",
         )
-        store.set_status(app_dir, held or Status.AWAITING_REVIEW, f"poor fit: {exc}")
-        if not keep_status or revive:
-            queue.update(job.id, status=Status.AWAITING_REVIEW)
-        print(f"  flagged as a poor fit, waiting on you: {exc}")
-        tell_tab(job, "done", "Poor fit, says the model; decide on the review page")
-        return app_dir
 
     store.write(app_dir, "resume.tex", result.tex)
     store.write(app_dir, "resume.diff", result.diff or "(no changes)\n")
@@ -350,6 +380,11 @@ def auto_approve(app_dir: Path, job: Job) -> bool:
         store.set_status(app_dir, Status.APPROVED, f"filling started (pid {pid})")
         tell_tab(job, "working", "Tailored; the browser agent is taking over")
         print(f"  approved by autopilot, fill started (pid {pid})")
+    elif runner.held():
+        # The hold is the person's, and this job is exactly what it is for:
+        # they are still adding jobs, not checking forms. It waits in line.
+        tell_tab(job, "done", "Tailored and approved; waiting for you to let the fills run")
+        print("  approved by autopilot; fills are held, it is in line")
     else:
         tell_tab(job, "done", "Tailored; start the fill on the review page")
         print("  approved by autopilot; the fill did not start (autofill off or already running)")

@@ -26,15 +26,20 @@ resume yet? The app gives you a template to fill in. Then you do
 two things yourself, on the app's first screens: paste your
 [OpenRouter key](https://openrouter.ai/settings/keys) (it is checked with
 OpenRouter and kept on your Mac, nowhere else), and install Jobright's
-extension and sign in to Jobright in the app's Chrome. The profile
-interview is offered last and is optional; it makes the tailoring better.
+extension and sign in to Jobright in the app's Chrome. One screen after
+that shows what will stop a job — no sponsorship, a clearance, export
+control, too many years — as checkboxes to tick for your own situation.
+The profile interview is offered last and is optional; it makes the
+tailoring better. Onboarding is shown once and never again.
 [INSTALL.md](INSTALL.md) has every step.
 
 Your copy is yours to change. The **Prompts** tab shows every prompt the
 models are sent, editable; its **Workshop** takes a change in your own
 words ("shorter cover letters") and proposes the edit, and learns the
-things you keep asking for on every job. Anything else, ask Claude Code in
-the app's folder. Updates keep all of it: [UPDATING.md](UPDATING.md).
+things you keep asking for on every job. The **Screening** tab is what
+makes a posting a reject, as switches you can untick, and you can ask for
+a new rule in your own words. Anything else, ask Claude Code in the app's
+folder. Updates keep all of it: [UPDATING.md](UPDATING.md).
 
 Free, and you bring your own OpenRouter key; nothing is sent anywhere but
 OpenRouter. You use it at your own risk (see the [licence](LICENSE)): it
@@ -116,7 +121,7 @@ job you ever considered.
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
 | `browser/` | `browser-use` fill loop driving your real Chrome profile |
-| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, the Profile tab, and the Projects tab |
+| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, and the Profile, Projects, Scout, Screening and Prompts tabs |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
@@ -135,7 +140,9 @@ nothing.
 
 The full path works end to end: capture, scrape, tailor, compile, archive,
 checkpoint 1, browser fill, checkpoint 2. The on-page screen and the profile
-switch are built on top. The Profile tab holds the interviewer: it reads
+switch are built on top. The screen is code rather than a model call, and
+the Screening tab is where its rules live: twelve to tick, your own to
+add, and an assistant that writes one from a sentence. The Profile tab holds the interviewer: it reads
 your resume, asks about each role and project the way an interviewer would,
 and writes one story per experience that the tailor, the cover letter, and
 the form answers draw on, plus a STAR write-up for you. The Projects tab
@@ -255,6 +262,28 @@ Three ways out:
 - **Re-tailor with a note** — a second pass with your instruction appended to
   the prompt, landing in a new folder. The version you rejected is kept.
 
+There is also **I submitted it**, for a job you applied for yourself somewhere
+else. It records what you did, from wherever the job had got to.
+
+### Fills wait for you, and go one at a time
+
+A switch at the top of the page decides whether anything opens a browser tab.
+It starts on **Collecting jobs**, and it stays wherever you left it.
+
+While it is collecting, every job still runs the whole pipeline: screened,
+tailored, compiled, a cover letter written, approved. They stack up — *4 ready*
+— and wait. That is what you want while you are scrolling a list and adding six
+jobs in a minute.
+
+Click it and it says **Starting applications…**, then **Applying · 3 more in
+queue**. The approved jobs are filled **one at a time**: one tab, filled to your
+check, and only when that one has finished — filled, failed, or stopped because
+it needs you — does the next job open. You are never handed six tabs at once,
+and you are never asked to check six forms at once.
+
+Pressing **Fill the form** on one job still starts it immediately. The hold is
+for the bulk, not for a decision you just made.
+
 ## Every decision is yours
 
 The agent never closes a job. It can recommend: a poor-fit verdict flags the
@@ -262,6 +291,14 @@ posting, explains why, and tailors nothing — but the job still waits at
 checkpoint 1 for you to reject it or push back with a re-tailor note. The only
 states the agent sets are working states and `filled`. Approving, rejecting,
 and marking submitted are reachable only from the review page.
+
+A filled job's **Submit it** button presses Submit on the form for you, after
+one confirmation naming the job. That is the same decision you would make in
+the browser window, taken from the page instead — and it is the only place in
+the app where a Submit control is ever pressed. No model can reach it: the
+guard still refuses every submit control the agent sees, nothing the agent runs
+may even import the code that presses one, and the job is only marked submitted
+once the page turns into a real confirmation.
 
 Rejecting requires a reason — one of seven, plus an optional note — because a
 rejection with no reason tells you nothing three weeks later. Rejected jobs
@@ -374,6 +411,16 @@ The fill runs detached, so a browser crash cannot take the server down. Its log
 lands in `data/apply_<job>.log`, and the review page shows the tail of it under
 "Fill log" along with the failure reason, so a broken run can be diagnosed
 without leaving the page.
+
+**A form behind a sign-in is not a failure.** Workday, McKinsey and plenty
+of employer portals keep the application behind Apply and a login, and the
+fill never presses Apply. When it opens a page with no file input on it
+anywhere, that is not the form: the job goes back to checkpoint 1 with
+"this form is behind Apply and a sign-in" and its documents intact, rather
+than onto the failed shelf where a perfectly good application reads as
+lost. Sign in until the form is actually on the screen, press Approve, and
+the fill runs again — or use the banner's **put** chips and attach the two
+PDFs yourself.
 
 The browser model must accept images — browser-use sends a screenshot to the
 model on every step, and a text-only model returns 404 on all of them and fills
@@ -492,15 +539,28 @@ graduation window, a role outside the country, a required degree, a senior
 title, a PERM advertisement — and why it applies to the facts in
 `base/applicant.md`. Without that file the facts are derived from the
 resume once and the bar says so, since a resume knows nothing about visas
-or start dates. Location anywhere in the United States is always green.
-A graduation requirement is also green when the applicant graduates earlier
-than it, whether it is phrased as a cutoff (December 2026 satisfies "earned
-or expected by Summer 2027") or as a cohort window (it satisfies a
-"spring/summer of 2027 college graduates" programme too): an earlier graduate
-is available for everything a later one is. A posting that wants a graduation
-no earlier than a date, or the applicant still enrolled, is the exception and
-stays red. Those rules are enforced after the model response, not left to
-prompt wording.
+or start dates.
+
+**No model reads the posting.** The screen is a set of rules run in code,
+so it is instant, free, and says the same thing twice. It used to be a
+model call; measured over the 122 postings already on disk against the 199
+verdicts that model had cached, the rules won all thirteen disagreements —
+seven hard export-control blocks it had passed (ITAR, EAR, "U.S. Person
+Required") and six rejects it should never have raised (a form's own
+sponsorship question, and "100% onsite" in a US city). The rules are
+yours to change, on the Screening tab.
+
+A few things are policy, not phrases, and hold whatever the rules say.
+Location anywhere in the United States is always green. A graduation
+requirement is green when you graduate earlier than it, whether it is
+phrased as a cutoff (December 2026 satisfies "earned or expected by Summer
+2027") or as a cohort window (it satisfies a "spring/summer of 2027 college
+graduates" programme too): an earlier graduate is available for everything
+a later one is. A posting that wants a graduation no earlier than a date,
+or you still enrolled, is the exception and stays red. And a question is
+never a requirement: "Will you now or in the future require sponsorship?"
+is on half the application forms in the country and says nothing about the
+employer.
 
 Off Jobright, an OK or CAUTION verdict queues the job by itself after a
 three-second countdown drawn across the button; a click during it cancels.
@@ -512,7 +572,7 @@ the URL worth queueing. The verdict is cached per URL, reused by the
 pipeline, and shown again on the review page. It is advice; nothing is
 skipped by it. A bare ATS shell or corporate footer reuses the cached
 Jobright verdict; if no verdict exists yet, the saved Jobright description
-and employer text are screened together in one model call. Jobright's visible
+and the employer text are read together. Jobright's visible
 "Original Job Post" header supplies the role and company when its document
 title is the generic recommendations title. Any other page still queues by
 hand from the context menu.
@@ -520,16 +580,59 @@ hand from the context menu.
 Five seconds after a successful add, the bar minimizes to the assistant-circle
 badge in the top-left corner. The badge stays for the life of that page and is
 coloured for the cached verdict; clicking it restores the same banner without
-screening again or spending another model call. Failed and no-posting screens
+screening again. Failed and no-posting screens
 still offer both Again and Add.
 
 A posting already in autopilot is never queued again. Provably the same
 posting (same URL, same Jobright id, same job id at the tracking system)
 is refused by the server; the same employer and role or description is a
-"looks like" line with "Add anyway". Either way the bar shows the job's
-status and an "Open in autopilot" button; the countdown does not run.
+"looks like" line with "Add anyway". Either way the countdown does not run,
+and the bar answers the question you actually have: a job you finished with
+is described by its outcome, not by where it is kept — `APPLIED`,
+`REJECTED — visa` or `FAILED`, with the time to the minute — and that line
+is a button to the job, next to one that says what it will show you ("Show
+me what I sent", "Show me why I rejected it"). A job still in flight reads
+"In autopilot · Waiting for your review", because there the progress is the
+answer. An application already submitted gets the loudest block the bar
+has, in red, and that bar never folds itself away.
+
+When the job is one of yours, the bar also carries the tailored **resume**
+and **cover letter** as chips: drag one onto a file slot, click it to
+download, or press **put** and it goes into the form's own input. That is
+how a form no automation can reach — a Workday behind a sign-in, an
+employer portal with its own login — still gets the tailored documents.
 Successful Add and Add anyway actions carry the captured job id into that same
 tab-routing path, so they always leave the matching Autopilot job visible.
+
+## Screening
+
+The Screening tab is the whole auto-reject check, as switches. Twelve stock
+rules — sponsorship refused, US citizens only, a security clearance, export
+control (ITAR/EAR/"U.S. Person" hard, a bare mention soft), a PhD, a PERM
+advertisement, agency-only, too many years of experience, a senior title, a
+role outside the country, a graduation date you cannot meet — each with its
+severity and a note saying what it deliberately does *not* catch. Untick one
+and it stops flagging from the next posting onward; nothing is recomputed and
+no old verdict changes. The years threshold is a number you set.
+
+**Ask for a new rule.** Say what should be flagged — *"flag anything that
+wants a security clearance"*, *"warn me when it is contract only"* — and a
+rule is written for you: the phrases it fires on, the phrases that cancel it
+in the same sentence, its category and severity. That is one model call per
+*rule written*, not per job screened. Before you can add it, the rule is
+checked (its patterns must compile, and must not match ordinary prose) and
+run over every posting already in `applications/`: *"7 of your last 122
+postings would have carried this flag"*, with the sentences it matched, and a
+warning if it would have flagged more than a third of them. Nothing is saved
+until you press Add.
+
+The tab has the voice assistant on it, the same orb as the profile
+interview: opening it she asks what you would like to add, speaks, and
+listens. Your switches and your own rules live in
+`data/screening.json`; the stock catalogue is `tailor/screening.py`.
+
+Onboarding shows the same checkboxes once, between Jobright and the profile
+offer, so a new copy starts with rules that match its owner.
 
 ## Form details
 
