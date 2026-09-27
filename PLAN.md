@@ -465,8 +465,10 @@ grep. The first weeks of real screens showed the v1 table rejected
 stretches: another US city, a cohort one year off, 1.5 years against
 "0-1", a skill the resume did not list. A screen exists to catch the
 handful of postings that are certain to be thrown out, so each category in
-`screen_rules.md` now lists three things: what is `hard` (certain), what
-is one `soft` line (apply anyway, but know), and what is never a flag.
+each category lists three things: what is `hard` (certain), what is one
+`soft` line (apply anyway, but know), and what is never a flag. Since
+2026-09-26 this table is the rule catalogue in `tailor/screening.py`, not
+a prompt.
 
 | Category | Hard | Never |
 |---|---|---|
@@ -498,8 +500,9 @@ depend on the model's prose reasoning.
 | Path | What |
 |---|---|
 | `base/applicant.md` | The applicant's hard facts, one `## Facts` section the screen prompt reads verbatim. Gitignored; `base/applicant.example.md` is the template. Already read by `browser/fill.py` for form details. Phase 7 grows this file |
-| `tailor/screen.py` | `screen(posting_text, applicant) -> Screen`; JSON reply parsed and validated against the category enum, never trusted raw |
-| `tailor/screen_rules.md` | The prompt, sent verbatim, same convention as the other rules files |
+| `tailor/screen.py` | `screen(posting_text, applicant) -> Screen`: the rules run over the posting, the two policies applied to what they raise, the verdict computed from the flags |
+| `tailor/screening.py` | The rules themselves (v3, 2026-09-26): a `Rule` is a category, a severity, and either `patterns` or a named `check`. `STOCK` is the catalogue; `data/screening.json` holds the person's switches, thresholds and own rules |
+| `server/screening.py` | The Screening tab: list, switch, add, delete, preview a rule against the postings already on disk, and one model call per *rule written* to draft one from a sentence |
 | `server/screen.py` | `POST /screen` and the URL-keyed cache in `data/screens.json`; employer pages reuse the Jobright URL's cached verdict, or combine saved Jobright text with a weak employer page in one call |
 | `capture/content.js` | Text extraction, banner, persistent badge, posts to the server, and Add/Open routing to the matching review job. Runs on `jobright.ai/jobs/info/*` (verdict only) and, via `background.js`, in any tab opened from or navigated away from Jobright, wherever Apply lands (verdict, then a three-second countdown into `/capture` for `ok` and `caution`, with auto-approve and "Use Opus" decided inside it) |
 | `applications/<job>/screen.json` | The verdict the pipeline archived |
@@ -507,17 +510,36 @@ depend on the model's prose reasoning.
 | `server/settings.py` | `data/settings.json`, read by the server and the scripts it launched. `use_profile` is pinned on by the page; the models fall back to the resume on their own |
 | `tailor/profile.py` | What the models know about the applicant: profile.md, plus applicant facts and story documents when the switch is on; derived facts for the screen otherwise |
 
-Model: `OPENROUTER_SCREEN_MODEL` in `.env`, defaulting to a small fast model.
-This is a classification over a few thousand tokens; the tailor model is
-overkill and too slow for a banner.
+### v3: no model at all (2026-09-26)
+
+The screen stopped being a model call. It was measured first: every one of
+the 122 postings on disk replayed through the rules and compared to the 199
+verdicts the model had cached. All thirteen disagreements went to the rules
+— seven hard export-control blocks the model had passed (ITAR, EAR, "U.S.
+Person Required") and six rejects it should never have raised (a form's own
+sponsorship question three times, "100% onsite" in a US city three times).
+Its wider cache held `Will sponsor`, `United States (remote)`, `$30/hr`,
+`NO RECRUITERS, PLEASE.`, `E-Verify` and `0-1 years of experience` as hard
+flags.
+
+The reason it works is that the applicant's facts are few and stable and
+every category that legitimately rejects them is phrase detection. Two
+guards earn most of the accuracy: `unless`, which cancels a match whose own
+sentence also offers the thing ("we cannot guarantee sponsorship" is not a
+refusal), and passing over a match whose sentence is a question.
+
+The table above is now the rule catalogue rather than prompt text, and the
+switches are the person's: `OPENROUTER_SCREEN_MODEL` is retired. The
+Screening tab's assistant is the only model left anywhere near screening,
+and it writes *rules*, once, on request — never a verdict.
 
 ### Not built, on purpose
 
 Per-site selector profiles, with browser-use grabbing the description on an
 unknown site, were considered and dropped. The content script reads the
 rendered page in the user's own Chrome, so layout never matters: whatever
-the employer's ATS, `innerText` is the posting, and the model answers
-`not_a_job` when it is not. A selector per domain would be work that buys
+the employer's ATS, `innerText` is the posting, and a page with nothing on
+it answers `not_a_job`. A selector per domain would be work that buys
 nothing until a site hides its text (Workday's iframes are the likely first
 case); add a rule for that site then.
 
@@ -1724,3 +1746,101 @@ an impression of them:
   shape as the change floor, for the same reason. A story without a `Link:`
   is never demanded: the rules forbid swapping it in, and a rejection nothing
   can satisfy is worse than no rejection.
+
+## Phase 21 — screening in code, and a tab to own it (2026-09-26)
+
+The screen was the last per-job model call that read the posting, and it
+was the one doing the least good. Measured before anything changed: the
+122 postings on disk replayed through a rule engine and compared to the
+199 verdicts the model had cached. Thirteen disagreements, all thirteen to
+the rules.
+
+| | postings | what they were |
+|---|---|---|
+| rules reject, model passed | 7 | ITAR, EAR, "U.S. Person Required" — the export-control gap raised 2026-09-21 |
+| model rejected, rules pass | 6 | a form's own sponsorship question ×3; "100% onsite" in a US city ×3 |
+
+The model's wider cache was worse than that sample: among the 24 hard flags
+it had ever raised were `Will sponsor`, `United States (remote)`, `$30/hr`,
+`NO RECRUITERS, PLEASE.`, `E-Verify` and `0-1 years of experience` — the
+last one rejecting the applicant for matching.
+
+**Why code wins here.** The applicant's facts are few and stable, and every
+category that legitimately rejects them is phrase detection. Half the
+machinery already existed in code for exactly that reason:
+`quote_names_us_location`, `graduation_window`, `verdict_for`,
+`scout.filter.prescreen`. The model was being asked to do string matching
+and was doing it worse, at a cost and a latency, per job.
+
+### The shape
+
+A `Rule` (`tailor/screening.py`) is a category, a severity, and either
+
+- `patterns`, regexes over the posting, any one of which fires it, with
+  `unless` cancelling a match whose own sentence also says one of these; or
+- `check`, a named function for the four that need more than a phrase:
+  `experience_years` (the floor of every "N years", against the rule's own
+  number), `seniority_title` (the title only, and never when it also reads
+  Member of Technical Staff / Associate / new grad), `location_foreign`
+  (reusing `scout.filter`'s country lists), `graduation_window` (handing
+  the sentence to `screen.py`'s date reading).
+
+Two guards earn most of the accuracy. `unless` is why "we cannot guarantee
+sponsorship for every role" is not a refusal. And a match whose sentence is
+a question is passed over rather than accepted — which needed
+`sentence_around` to keep `i.e.` and `U.S.` inside the sentence, since
+splitting on every full stop cut "require sponsorship (i.e." off from its
+own question mark.
+
+The two policies from Phase 11 still run **after** the rules and before
+`verdict_for`, so a rule someone writes cannot undo them: every US location
+is green, and a graduation earlier than a posting's window is a match.
+
+### The tab
+
+Twelve stock rules, each a checkbox with its severity and a note saying
+what it deliberately does not catch. The person's switches, thresholds and
+own rules live in `data/screening.json`, read at call time; the catalogue
+stays in code, so an update ships new rules without touching their file.
+Onboarding shows the same checkboxes once, between Jobright and the profile
+offer.
+
+Its assistant writes a **rule** from a sentence — one model call per rule
+written, never per job screened. What she returns is checked the way a
+hand-written rule is (the patterns must compile, and must not match
+ordinary prose) and then run over every posting in `applications/`: *"7 of
+your last 122 postings would have carried this flag"*, with the sentences,
+and a warning past a third of the corpus. Nothing is saved without a click.
+The tab carries the voice orb, the same one as the profile interview, which
+is what `Voice.setHost` exists for: two chats, one bubble, one at a time.
+
+`OPENROUTER_SCREEN_MODEL` is retired. The verdicts already cached were left
+alone by decision — rules from now on.
+
+## Phase 21b — a form behind a sign-in is not a failed job (2026-09-26)
+
+Workday, McKinsey, CVS and eleven others keep the application behind Apply
+and a login, and the fill never presses Apply. It marked the job `failed`,
+and a failed job sits in a collapsed shelf, so **fourteen** applications
+with perfectly good tailored resumes read as gone. `FillResult.no_form`
+takes the job back to `awaiting_review` with `needs_sign_in.txt` and a
+banner saying what to do.
+
+The gate that recognises it was wrong as well. It required fewer than five
+fields, and Workday's sign-in page has six (email, password, verify, a
+checkbox, a button, a country box), so the fill treated a login screen as
+the application, found no resume slot, and wrote a tailored sentence into a
+hidden box labelled "This input is for robots only" — a spam trap, on a
+real application. No file input anywhere is now enough (`NOT_A_FORM`), and
+`engine.HONEYPOT` skips such a box in both the answerer and the generic
+label matcher.
+
+The same tab had lost its banner for an unrelated reason:
+`submissionWatched` is restored from `sessionStorage` on every page of a
+tab that once held a fill, and it silenced the screen for good. It now
+lasts only while the page in front of it reads as a confirmation
+(`notTheConfirmation`); the stored job id and the poll stay, and `/screen`
+answering `submitted` for a confirmation in string work is the second
+guard. That is what put the resume and cover letter chips back on the
+Workday form, which is how a form no automation can reach still gets the
+tailored documents.

@@ -74,8 +74,9 @@ def _write_atomic(path: Path, text: str) -> None:
 
 
 def interview_model() -> str:
-    return os.environ.get("OPENROUTER_INTERVIEW_MODEL",
-                          os.environ.get("OPENROUTER_SCREEN_MODEL", "deepseek/deepseek-v4-flash"))
+    # It used to fall back to the screen's model; screening asks no model
+    # any more (2026-09-26), so the cheap default is named here.
+    return os.environ.get("OPENROUTER_INTERVIEW_MODEL", "deepseek/deepseek-v4-flash")
 
 
 def stories_dir() -> Path:

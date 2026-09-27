@@ -1,6 +1,10 @@
-"""On-page screening: the parser, the facts loader, and the cached endpoint."""
+"""On-page screening: the rules, the facts loader, and the cached endpoint.
 
-import json
+No model is asked here, and none is stubbed: a screen is `tailor.screening`
+read over the posting's own words. `tests/test_screening.py` covers the
+rules themselves; this file covers the verdict, the policies that correct a
+flag after it is raised, and the endpoint's cache.
+"""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +12,7 @@ from fastapi.testclient import TestClient
 from server import postings, screen as server_screen
 from server import settings
 from server.app import app
-from tailor import profile, screen
+from tailor import profile, screen, screening
 
 
 FACTS = """# Applicant
@@ -36,8 +40,14 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(profile, "DERIVED_FACTS", tmp_path / "derived_facts.md")
 
 
-def reply(verdict="reject", flags=None, summary="visa"):
-    return "```json\n" + json.dumps({"verdict": verdict, "flags": flags or [], "summary": summary}) + "\n```"
+# Postings that trip exactly one stock rule each, used wherever a test
+# needs a verdict rather than a particular rule.
+NO_SPONSORSHIP = "About the role. We are unable to sponsor or take over sponsorship of an employment visa."
+CLEAN = "About the role. You will build services in Python and Go with a small team in Chicago."
+
+
+def flag(category, severity, quote, reason="r"):
+    return screen.Flag(category, severity, quote, reason)
 
 
 # --- facts -----------------------------------------------------------------
@@ -92,67 +102,34 @@ def test_no_resume_and_no_applicant_is_loud(tmp_path, monkeypatch):
         screen.load_facts()
 
 
-def test_facts_reach_the_prompt():
-    message = screen.build_user_message("posting text", "FACT LINE", title="T", url="U")
-    assert "FACT LINE" in message
-    assert message.index("FACT LINE") < message.index("posting text")
-    assert "Title: T" in message
+# --- verdict and policies --------------------------------------------------
 
-
-# --- parser ----------------------------------------------------------------
-
-def test_parse_keeps_valid_flags():
-    result = screen.parse_reply(reply(flags=[{
-        "category": "visa", "severity": "hard",
-        "quote": "unable to sponsor", "reason": "needs sponsorship"}]), model="m")
+def test_a_posting_that_refuses_sponsorship_is_a_reject():
+    result = screen.screen(NO_SPONSORSHIP, facts=FACTS)
     assert result.verdict == "reject"
-    assert result.flags[0].category == "visa"
-    assert result.model == "m"
+    assert [f.category for f in result.flags] == ["visa"]
+    assert "unable to sponsor" in result.flags[0].quote
+    assert result.model == "rules"
 
 
-def test_unknown_category_becomes_other():
-    result = screen.parse_reply(reply(flags=[{
-        "category": "astrology", "severity": "soft", "quote": "q", "reason": "r"}]))
-    assert result.flags[0].category == "other"
+def test_a_clean_posting_is_ok():
+    assert screen.screen(CLEAN, facts=FACTS).verdict == "ok"
 
 
-def test_flag_without_quote_is_dropped():
-    result = screen.parse_reply(reply(flags=[{
-        "category": "visa", "severity": "hard", "quote": "", "reason": "r"}]))
-    assert result.flags == []
-    assert result.verdict == "ok"
+def test_the_verdict_follows_the_flags():
+    assert screen.verdict_for([flag("experience", "hard", "5+ years")]) == "reject"
+    assert screen.verdict_for([flag("degree", "soft", "PhD preferred")]) == "caution"
+    assert screen.verdict_for([]) == "ok"
 
 
-def test_verdict_follows_flags_not_the_model():
-    hard = [{"category": "experience", "severity": "hard", "quote": "5+ years", "reason": "r"}]
-    assert screen.parse_reply(reply(verdict="ok", flags=hard)).verdict == "reject"
-    soft = [{"category": "degree", "severity": "soft", "quote": "PhD preferred", "reason": "r"}]
-    assert screen.parse_reply(reply(verdict="reject", flags=soft)).verdict == "caution"
-    assert screen.parse_reply(reply(verdict="reject", flags=[])).verdict == "ok"
-
-
-def test_us_location_is_green_even_when_model_calls_it_soft():
-    posting = "San Jose, California, United States of America"
-    result = screen.parse_reply(reply(verdict="caution", flags=[{
-        "category": "location",
-        "severity": "soft",
-        "quote": posting,
-        "reason": "Onsite in San Jose; applicant is in Los Angeles and relocation is acceptable.",
-    }]), text=posting)
-
-    assert result.flags == []
-    assert result.verdict == "ok"
-
-
-def test_us_location_is_green_even_when_model_calls_it_hard():
-    posting = "This position is based in New York, New York."
-    result = screen.parse_reply(reply(flags=[{
-        "category": "location", "severity": "hard",
-        "quote": "New York, New York", "reason": "Applicant is in Los Angeles.",
-    }]), text=posting)
-
-    assert result.flags == []
-    assert result.verdict == "ok"
+def test_us_location_is_green_however_a_rule_reads_it():
+    """Under the policy a US location is never a flag: relocation is open,
+    so onsite in San Jose is the same as onsite in Los Angeles. The policy
+    runs after the rules, so a rule someone writes cannot undo it."""
+    for quote in ("San Jose, California, United States of America",
+                  "This position is based in New York, New York."):
+        assert screen.enforce_location_policy([flag("location", "hard", quote)]) == []
+    assert screen.enforce_location_policy([flag("location", "soft", "anywhere")]) == []
 
 
 def test_a_us_metro_named_without_its_state_is_still_green():
@@ -160,92 +137,56 @@ def test_a_us_metro_named_without_its_state_is_still_green():
     in Los Angeles. The quote names no state, no state code and no country,
     so the hard flag survived and the job was rejected for a US-to-US
     distance, which the policy says is never a flag."""
-    posting = "Based in the NYC tri-state area and in the office three days a week."
-    result = screen.parse_reply(reply(flags=[{
-        "category": "location", "severity": "hard",
-        "quote": "Based in the NYC tri-state area",
-        "reason": "Applicant is in Los Angeles and the role requires NYC tri-state presence.",
-    }]), text=posting)
-
-    assert result.flags == []
-    assert result.verdict == "ok"
+    assert screen.enforce_location_policy(
+        [flag("location", "hard", "Based in the NYC tri-state area")]) == []
     assert screen.quote_names_us_location("Greater Boston area")
     assert screen.quote_names_us_location("hybrid in the Bay Area")
     assert not screen.quote_names_us_location("Based in the Greater Toronto Area")
 
 
 def test_non_us_location_flag_is_preserved():
-    posting = "This position is based in Toronto, Ontario, Canada."
-    result = screen.parse_reply(reply(flags=[{
-        "category": "location", "severity": "hard",
-        "quote": "Toronto, Ontario, Canada", "reason": "Role is restricted to Canada.",
-    }]), text=posting)
-
-    assert [(flag.category, flag.severity) for flag in result.flags] == [("location", "hard")]
-    assert result.verdict == "reject"
+    kept = screen.enforce_location_policy(
+        [flag("location", "hard", "Toronto, Ontario, Canada")])
+    assert [(f.category, f.severity) for f in kept] == [("location", "hard")]
 
 
-def test_graduating_before_latest_date_is_green(monkeypatch):
-    posting = "Bachelor's or Master's degree earned or expected by Summer 2027"
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: reply(
-        verdict="caution",
-        flags=[{
-            "category": "timeline",
-            "severity": "soft",
-            "quote": "earned or expected by Summer 2027",
-            "reason": "Applicant expects to graduate in December 2026.",
-        }],
-    ))
-
-    result = screen.screen(
-        posting,
-        facts="- Degrees held: MS Computer Science (expected December 2026)",
-    )
-
+def test_graduating_before_latest_date_is_green():
+    posting = "Requirements. Bachelor's or Master's degree earned or expected by Summer 2027."
+    result = screen.screen(posting, facts="- Degrees held: MS Computer Science (expected December 2026)")
     assert result.flags == []
     assert result.verdict == "ok"
 
 
 def test_graduating_after_latest_date_keeps_timeline_flag():
-    posting = "Bachelor's or Master's degree earned or expected by Summer 2027"
-    result = screen.parse_reply(reply(verdict="caution", flags=[{
-        "category": "timeline",
-        "severity": "soft",
-        "quote": "earned or expected by Summer 2027",
-        "reason": "Applicant expects to graduate in December 2027.",
-    }]), text=posting, facts="- Graduation: expected December 2027")
-
-    assert [(flag.category, flag.severity) for flag in result.flags] == [("timeline", "soft")]
-    assert result.verdict == "caution"
+    posting = "Requirements. Bachelor's or Master's degree earned or expected by Summer 2027."
+    result = screen.screen(posting, facts="- Graduation: expected December 2027")
+    assert [(f.category, f.severity) for f in result.flags] == [("timeline", "hard")]
+    assert result.verdict == "reject"
 
 
-def test_not_a_job_survives():
-    assert screen.parse_reply(reply(verdict="not_a_job")).verdict == "not_a_job"
-
-
-def test_garbage_reply_is_an_error():
-    with pytest.raises(screen.ScreenError):
-        screen.parse_reply("I cannot help with that")
-
-
-def test_empty_text_never_calls_the_model(monkeypatch):
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("called"))
+def test_empty_text_is_not_a_job():
     assert screen.screen("   ").verdict == "not_a_job"
 
 
-def test_screen_uses_the_screen_model(monkeypatch):
-    seen = {}
+def test_screening_asks_no_model(monkeypatch):
+    """The whole point of the rules. Anything that reaches a model here is a
+    regression, whatever it is asking."""
+    from tailor import llm
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: pytest.fail("the screen called a model"))
+    assert screen.screen(NO_SPONSORSHIP, facts=FACTS).verdict == "reject"
 
-    def fake(system, user, model=None, **kw):
-        seen["model"] = model
-        seen["system"] = system
-        return reply(verdict="ok")
 
-    monkeypatch.setattr(screen.llm, "complete", fake)
-    monkeypatch.setenv("OPENROUTER_SCREEN_MODEL", "fast/model")
-    screen.screen("a posting")
-    assert seen["model"] == "fast/model"
-    assert "export_control" in seen["system"]
+def test_a_form_question_is_never_a_flag():
+    """Every second application form asks it, and it says nothing about the
+    employer's policy. The model made this mistake four times."""
+    posting = ("Application questions. Will you now or in the future require sponsorship "
+               "for employment visa status (e.g. H-1B)? Please answer honestly.")
+    assert screen.screen(posting, facts=FACTS).verdict == "ok"
+
+
+def test_a_sentence_that_offers_sponsorship_never_reads_as_refusing_it():
+    posting = "Visas. We will sponsor candidates who need it; we cannot guarantee sponsorship for every role."
+    assert screen.screen(posting, facts=FACTS).verdict == "ok"
 
 
 # --- endpoint and cache ----------------------------------------------------
@@ -257,25 +198,16 @@ def test_cache_key_strips_tracking():
     assert k("https://x.com/j/1?gh_jid=5") == "https://x.com/j/1?gh_jid=5"
 
 
-def test_endpoint_caches_by_url(monkeypatch):
-    calls = []
-
-    def fake(*a, **k):
-        calls.append(1)
-        return reply(flags=[{"category": "visa", "severity": "hard",
-                             "quote": "no sponsorship", "reason": "r"}])
-
-    monkeypatch.setattr(screen.llm, "complete", fake)
+def test_endpoint_caches_by_url():
     client = TestClient(app)
-    body = {"url": "https://x.com/j/1?ref=jobright", "text": "posting, no sponsorship", "title": "T"}
+    body = {"url": "https://x.com/j/1?ref=jobright", "text": NO_SPONSORSHIP, "title": "T"}
     first = client.post("/screen", json=body).json()
     second = client.post("/screen", json=body | {"url": "https://x.com/j/1"}).json()
     assert first["verdict"] == "reject" and first["cached"] is False
     assert second["cached"] is True and second["flags"] == first["flags"]
-    assert len(calls) == 1
 
 
-def test_cached_us_location_caution_is_normalized_without_model_call(monkeypatch):
+def test_a_cached_us_location_caution_is_normalized_on_read():
     url = "https://jobs.example.com/san-jose-role"
     server_screen.remember(url, screen.Screen(verdict="caution", flags=[
         screen.Flag(
@@ -283,8 +215,6 @@ def test_cached_us_location_caution_is_normalized_without_model_call(monkeypatch
             "Applicant is in Los Angeles and relocation is acceptable.",
         )
     ]))
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("called"))
-
     data = TestClient(app).post("/screen", json={
         "url": url,
         "title": "Engineer",
@@ -296,7 +226,7 @@ def test_cached_us_location_caution_is_normalized_without_model_call(monkeypatch
     assert data["verdict"] == "ok"
 
 
-def test_employer_page_reuses_jobright_verdict_without_a_model_call(monkeypatch):
+def test_employer_page_reuses_the_jobright_verdict():
     source_url = "https://jobright.ai/jobs/info/abc123"
     employer_url = "https://jobs.example.com/apply?jr_id=abc123"
     postings.save_source("abc123", postings.Saved(
@@ -304,7 +234,6 @@ def test_employer_page_reuses_jobright_verdict_without_a_model_call(monkeypatch)
         text="Responsibilities\nBuild distributed systems. " * 30,
     ))
     server_screen.remember(source_url, screen.Screen(verdict="ok", summary="Good fit"))
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("called"))
 
     data = TestClient(app).post("/screen", json={
         "url": employer_url, "title": "Careers", "text": "Corporate footer and privacy links",
@@ -314,48 +243,38 @@ def test_employer_page_reuses_jobright_verdict_without_a_model_call(monkeypatch)
     assert server_screen.cached(employer_url).summary == "Good fit"
 
 
-def test_bare_employer_page_is_screened_with_saved_posting_in_one_call(monkeypatch):
+def test_a_bare_employer_page_is_read_against_the_saved_posting():
+    """The form the Apply lands on carries a footer, not a description. The
+    rules read Jobright's copy of the posting instead, so a refusal written
+    only there is still caught."""
     employer_url = "https://jobs.example.com/apply?jr_id=abc123"
-    description = "Responsibilities\nBuild distributed systems in Python and Go. " * 30
     postings.save_source("abc123", postings.Saved(
         url="https://jobright.ai/jobs/info/abc123", title="Engineer @ Acme | Jobright.ai",
-        text=description,
+        text="Responsibilities. Build distributed systems in Python and Go. " * 20 + NO_SPONSORSHIP,
     ))
-    messages = []
 
-    def fake(system, user, **kwargs):
-        messages.append(user)
-        return reply(verdict="ok")
-
-    monkeypatch.setattr(screen.llm, "complete", fake)
     data = TestClient(app).post("/screen", json={
         "url": employer_url, "title": "Careers", "text": "Corporate footer and privacy links",
     }).json()
 
-    assert data["verdict"] == "ok"
-    assert len(messages) == 1
-    assert "## Jobright posting copy" in messages[0]
-    assert "Build distributed systems in Python and Go." in messages[0]
-    assert "Corporate footer" in messages[0]
+    assert data["verdict"] == "reject"
+    assert [f["category"] for f in data["flags"]] == ["visa"]
 
 
-def test_not_a_job_is_not_cached(monkeypatch):
-    replies = iter([reply(verdict="not_a_job"), reply(verdict="ok")])
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: next(replies))
+def test_not_a_job_is_not_cached():
+    """A page that had not rendered yet must be screened again when it has."""
     client = TestClient(app)
-    body = {"url": "https://x.com/j/2", "text": "loading"}
-    assert client.post("/screen", json=body).json()["verdict"] == "not_a_job"
-    assert client.post("/screen", json=body).json()["verdict"] == "ok"
+    url = "https://x.com/j/2"
+    assert client.post("/screen", json={"url": url, "text": "  "}).json()["verdict"] == "not_a_job"
+    assert client.post("/screen", json={"url": url, "text": CLEAN}).json()["verdict"] == "ok"
 
 
-def test_force_bypasses_cache(monkeypatch):
-    replies = iter([reply(verdict="ok"), reply(verdict="reject", flags=[
-        {"category": "visa", "severity": "hard", "quote": "no visas", "reason": "r"}])])
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: next(replies))
+def test_force_bypasses_cache():
     client = TestClient(app)
-    body = {"url": "https://x.com/j/3", "text": "posting, no visas"}
-    client.post("/screen", json=body)
-    assert client.post("/screen", json=body | {"force": True}).json()["verdict"] == "reject"
+    url = "https://x.com/j/3"
+    assert client.post("/screen", json={"url": url, "text": CLEAN}).json()["verdict"] == "ok"
+    again = client.post("/screen", json={"url": url, "text": NO_SPONSORSHIP, "force": True}).json()
+    assert again["verdict"] == "reject"
 
 
 def test_nothing_to_screen_against_is_an_error(monkeypatch, tmp_path):
@@ -366,45 +285,13 @@ def test_nothing_to_screen_against_is_an_error(monkeypatch, tmp_path):
     assert "resume.tex" in res.json()["detail"]
 
 
-def test_endpoint_reports_the_facts_source(monkeypatch):
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: reply(verdict="ok"))
+def test_endpoint_reports_the_facts_source():
     client = TestClient(app)
-    res = client.post("/screen", json={"url": "https://x.com/j/5", "text": "posting"}).json()
+    res = client.post("/screen", json={"url": "https://x.com/j/5", "text": CLEAN}).json()
     assert res["facts_source"] == "applicant.md"
 
 
-# --- quote check -----------------------------------------------------------
-
-POSTING = "We are unable to sponsor visas.\nWill you now or in the future require sponsorship?\nMust hold a PhD."
-
-
-def test_invented_quote_is_dropped():
-    result = screen.parse_reply(reply(flags=[{
-        "category": "clearance", "severity": "hard",
-        "quote": "no statement about clearance", "reason": "r"}]), text=POSTING)
-    assert result.flags == [] and result.verdict == "ok"
-
-
-def test_form_question_is_never_a_flag():
-    result = screen.parse_reply(reply(flags=[{
-        "category": "visa", "severity": "hard",
-        "quote": "Will you now or in the future require sponsorship?", "reason": "r"}]), text=POSTING)
-    assert result.flags == []
-
-
-def test_real_quote_survives_punctuation_and_case():
-    result = screen.parse_reply(reply(flags=[{
-        "category": "visa", "severity": "hard",
-        "quote": "unable to sponsor visas", "reason": "r"}]), text=POSTING)
-    assert [f.category for f in result.flags] == ["visa"]
-
-
-def test_quote_check_needs_the_text():
-    # Without the posting there is nothing to check against; keep the flag.
-    result = screen.parse_reply(reply(flags=[{
-        "category": "visa", "severity": "hard", "quote": "anything", "reason": "r"}]))
-    assert len(result.flags) == 1
-
+# --- facts the resume cannot supply ----------------------------------------
 
 def test_resume_derived_facts_soften_visa_flags():
     result = screen.Screen(verdict="reject", facts_source="resume", flags=[
@@ -427,19 +314,16 @@ def test_applicant_facts_are_not_softened():
     assert screen.soften_unknowns(result).verdict == "reject"
 
 
-def test_a_confirmation_page_is_answered_locally_and_never_reaches_the_model(monkeypatch):
+def test_a_confirmation_page_is_answered_before_any_rule_runs(monkeypatch):
     """After the person submits, the tab shows a thank-you page and the
     script in it screens it like any page. That is a string check on the
     server, not a model call, and it marks the job when it is ours."""
-    calls = []
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: calls.append(1) or "")
     from server import seen as server_seen
     monkeypatch.setattr(server_seen, "find", lambda *a, **k: None)
     data = TestClient(app).post("/screen", json={
         "url": "https://jobs.lever.co/acme/1/thanks", "title": "Acme",
         "text": "Acme\nApplication submitted\nThank you for applying. We will be in touch."}).json()
     assert data["verdict"] == "submitted" and "Confirmation page" in data["summary"]
-    assert calls == []
 
     # A posting that thanks the reader deep in a long description is a posting.
     quote = server_screen.confirmation_quote("Software Engineer\n" + "Requirements. " * 400
@@ -459,7 +343,6 @@ def test_a_confirmation_on_a_filled_job_marks_it_submitted(monkeypatch, tmp_path
     monkeypatch.setattr(queue, "get", lambda job_id: job if job_id == job.id else None)
     marked = []
     monkeypatch.setattr(review, "mark_seen", lambda j, d, url, quote, by: marked.append((j.id, url, quote)) or {"marked": True})
-    monkeypatch.setattr(screen.llm, "complete", lambda *a, **k: pytest.fail("model called"))
     data = TestClient(app).post("/screen", json={
         "url": "https://jobs.lever.co/acme/1/thanks", "title": "", "text": "Thank you for applying to Acme."}).json()
     assert data["verdict"] == "submitted" and "marked in autopilot" in data["summary"]
@@ -467,41 +350,23 @@ def test_a_confirmation_on_a_filled_job_marks_it_submitted(monkeypatch, tmp_path
 
 
 def test_graduating_before_a_cohort_window_is_green():
-    posting = (
-        "Our new grad programme is open to spring/summer of 2027 college "
-        "graduates."
-    )
-    result = screen.parse_reply(reply(verdict="reject", flags=[{
-        "category": "timeline",
-        "severity": "hard",
-        "quote": "spring/summer of 2027 college graduates",
-        "reason": "Applicant graduates December 2026, not spring/summer 2027.",
-    }]), text=posting, facts="- Graduation: expected December 2026")
-
+    """SeatGeek's "spring/summer of 2027 college graduates" rejected a
+    December 2026 graduate. Graduating early only widens what fits."""
+    posting = "Our new grad programme is open to spring/summer of 2027 college graduates."
+    result = screen.screen(posting, facts="- Graduation: expected December 2026")
     assert result.flags == []
     assert result.verdict == "ok"
 
 
 def test_graduating_after_a_cohort_window_keeps_the_flag():
     posting = "Open to spring/summer of 2027 college graduates."
-    result = screen.parse_reply(reply(verdict="caution", flags=[{
-        "category": "timeline",
-        "severity": "soft",
-        "quote": "spring/summer of 2027 college graduates",
-        "reason": "Applicant graduates December 2028.",
-    }]), text=posting, facts="- Graduation: expected December 2028")
-
-    assert [(flag.category, flag.severity) for flag in result.flags] == [("timeline", "soft")]
+    result = screen.screen(posting, facts="- Graduation: expected December 2028")
+    assert [f.category for f in result.flags] == ["timeline"]
 
 
 def test_a_posting_that_needs_the_applicant_still_enrolled_keeps_the_flag():
+    """The one timeline case an early graduate genuinely fails."""
     posting = "Requires an expected graduation of December 2027 or later."
-    result = screen.parse_reply(reply(verdict="reject", flags=[{
-        "category": "timeline",
-        "severity": "hard",
-        "quote": "expected graduation of December 2027 or later",
-        "reason": "Applicant graduates December 2026; this is an internship.",
-    }]), text=posting, facts="- Graduation: expected December 2026")
-
-    assert [(flag.category, flag.severity) for flag in result.flags] == [("timeline", "hard")]
+    result = screen.screen(posting, facts="- Graduation: expected December 2026")
+    assert [(f.category, f.severity) for f in result.flags] == [("timeline", "hard")]
     assert result.verdict == "reject"

@@ -14,7 +14,20 @@
 
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-export AUTOPILOT_HOME="${AUTOPILOT_HOME:-$HOME/Library/Application Support/Autopilot}"
+# The installed app keeps everything in Application Support. A development
+# checkout has always kept its data inside the clone, and pointing that one
+# at Application Support does not move the data: it hides it, and the queue
+# reads empty with 123 applications still on disk. So the clone's own data
+# wins when it exists and the app folder has none.
+if [ -z "${AUTOPILOT_HOME:-}" ]; then
+  APP_HOME="$HOME/Library/Application Support/Autopilot"
+  if [ -e "$REPO/data/queue.json" ] && [ ! -e "$APP_HOME/data/queue.json" ]; then
+    AUTOPILOT_HOME="$REPO"
+  else
+    AUTOPILOT_HOME="$APP_HOME"
+  fi
+fi
+export AUTOPILOT_HOME
 RUN="$AUTOPILOT_HOME/run"
 LOGS="$AUTOPILOT_HOME/logs"
 PY="$REPO/.venv/bin/python"

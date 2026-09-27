@@ -8,7 +8,8 @@ changed. This file is how, written for the Claude Code doing either.
 
 | What | Where it lives | Survives an update because |
 |---|---|---|
-| **Prompts** (how the resume, letter, answers, screen and interview are written) | the data folder, `data/prompts/` | it is outside the clone; the app three-way merges each edit onto the new stock text on its next start |
+| **Prompts** (how the resume, letter, answers and interview are written) | the data folder, `data/prompts/` | it is outside the clone; the app three-way merges each edit onto the new stock text on its next start |
+| **Screening rules** (what makes a posting a reject) | the data folder, `data/screening.json` | only the switches, thresholds and their own rules are stored; the stock catalogue is code, so an update ships new rules without touching their file |
 | **Settings and data** (key, file names, switches, resume, profile, stories) | the data folder | it is outside the clone; updates never touch it |
 | **Code** | the clone, branch `mine` | it is merged, not replaced: `scripts/update.sh` |
 
@@ -19,6 +20,13 @@ the person keeps asking for the same thing in the job threads' re-tailor
 box ("the summary is too long", on three jobs), it proposes that as a
 standing prompt edit. A request that no prompt can satisfy (a new button,
 a new job site) is a code change, and comes to you.
+
+A request about **what gets rejected** is neither: it is a screening rule,
+and the Screening tab writes those. "Flag anything that wants a security
+clearance" is a sentence typed there, checked, previewed against the
+postings they have already applied to, and added with a click — no prompt,
+no code, no update to survive. Point them at the tab rather than editing
+`tailor/screening.py` in their clone, which conflicts on every release.
 
 ## Changing the code
 

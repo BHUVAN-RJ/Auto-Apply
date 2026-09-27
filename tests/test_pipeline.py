@@ -157,7 +157,8 @@ def test_auto_fill_leaves_a_rejected_screen_at_checkpoint_one(monkeypatch):
     assert not started and queue.get(job.id).status == Status.AWAITING_REVIEW
 
 
-def test_auto_fill_leaves_a_poor_fit_at_checkpoint_one(monkeypatch):
+def test_auto_fill_leaves_a_twice_refused_poor_fit_at_checkpoint_one(monkeypatch):
+    """Refused on the overrule too: no documents, so nothing to fill with."""
     stub_success(monkeypatch)
     settings.save(auto_fill=True)
     monkeypatch.setattr(pipeline.tailor, "tailor",
@@ -205,7 +206,58 @@ def test_one_failure_does_not_stop_the_batch(monkeypatch, capsys):
     assert statuses["https://example.com/jobs/2"] == Status.AWAITING_REVIEW
 
 
-def test_a_mismatch_waits_for_the_human_rather_than_closing_itself(monkeypatch):
+def test_a_poor_fit_is_tailored_anyway_and_goes_on(monkeypatch):
+    """The human added the job; "mid or bad fit" is a reason to read the
+    resume before sending it, not a reason to have no resume. The verdict is
+    kept and shown; the second call writes the documents."""
+    stub_success(monkeypatch)
+    real = pipeline.tailor.tailor
+    seen = []
+
+    def once(posting, **kwargs):
+        seen.append(kwargs.get("extra_instruction") or "")
+        if len(seen) == 1:
+            raise pipeline.tailor.Mismatch("MISMATCH: requires a security clearance.")
+        return real(posting, **kwargs)
+
+    monkeypatch.setattr(pipeline.tailor, "tailor", once)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1"))
+
+    app_dir = pipeline.process(job)
+
+    assert len(seen) == 2 and "not yours to reopen" in seen[1]
+    assert "clearance" in (app_dir / "mismatch.md").read_text()
+    assert "tailored anyway" in (app_dir / "mismatch.md").read_text()
+    assert (app_dir / "resume.tex").exists(), "the documents are written on the second pass"
+    assert queue.get(job.id).status == Status.AWAITING_REVIEW
+
+
+def test_auto_fill_carries_an_overruled_poor_fit(monkeypatch):
+    """The early return used to skip `auto_approve` entirely, so a poor fit
+    could never be carried by the switch however it was set."""
+    stub_success(monkeypatch)
+    settings.save(auto_fill=True)
+    real = pipeline.tailor.tailor
+    calls = []
+
+    def once(posting, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise pipeline.tailor.Mismatch("MISMATCH: wrong field.")
+        return real(posting, **kwargs)
+
+    monkeypatch.setattr(pipeline.tailor, "tailor", once)
+    started = []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: started.append(job_id) or 1)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1"))
+
+    pipeline.process(job)
+
+    assert started == [job.id]
+    assert queue.get(job.id).status == Status.APPROVED
+
+
+def test_a_mismatch_twice_waits_for_the_human_rather_than_closing_itself(monkeypatch):
     """The agent may recommend dropping a job; only the human decides."""
     stub_success(monkeypatch)
 

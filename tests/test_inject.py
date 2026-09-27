@@ -81,8 +81,11 @@ def signalled(injector, session):
 
 
 def injected(injector):
+    # The script is prefixed with `__autopilotHandOpened`, which tells the
+    # banner whether the tab was opened by an Apply button or by the person.
     return [session for method, params, session in injector.calls
-            if method == "Runtime.evaluate" and params.get("expression") == "SCRIPT"]
+            if method == "Runtime.evaluate"
+            and params.get("expression", "").endswith("SCRIPT")]
 
 
 def test_source_hosts_and_tags():
@@ -99,6 +102,42 @@ def test_a_jobright_tab_gets_the_script_on_attach_and_on_load():
     run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"), loaded("s1"))
     assert injected(r) == ["s1", "s1"]
     assert ("Runtime.addBinding", {"name": inject.BINDING}, "s1") in r.calls
+
+
+def hand_flags(injector):
+    """What each injection told the page about how its tab was opened."""
+    return [("__autopilotHandOpened=true" in params["expression"])
+            for method, params, _ in injector.calls
+            if method == "Runtime.evaluate" and params.get("expression", "").endswith("SCRIPT")]
+
+
+def test_ats_hosts_are_recognised_by_host_alone():
+    assert inject.is_ats("https://jobs.ashbyhq.com/acme/1")
+    assert inject.is_ats("https://acme.wd1.myworkdayjobs.com/en-US/careers/job/x")
+    assert inject.is_ats("https://boards.greenhouse.io/acme/jobs/1")
+    assert not inject.is_ats(ELSEWHERE)
+    assert not inject.is_ats("https://ashbyhq.com.example.com/x")
+
+
+def test_an_ats_form_opened_by_hand_is_screened_but_never_marked():
+    """No opener and no jr_id: a Workday portal reached from the company's
+    own careers page. It gets the banner; it does not get the countdown,
+    the Autofill press, or the right to close itself."""
+    r = Recorder()
+    url = "https://acme.wd1.myworkdayjobs.com/en-US/careers/job/1"
+    run(r, created("t1", url), attached("t1", url, "s1"), loaded("s1"))
+    assert injected(r) == ["s1", "s1"]
+    assert hand_flags(r) == [True, True]
+    assert "t1" not in r.marked
+    assert r.closable("s1")[1] == 403
+
+
+def test_an_ats_form_opened_by_apply_is_not_hand_opened():
+    r = Recorder()
+    url = "https://jobs.ashbyhq.com/acme/1?jr_id=abc123"
+    run(r, created("t1", url), attached("t1", url, "s1"), loaded("s1"))
+    assert hand_flags(r) == [False, False]
+    assert "t1" in r.marked
 
 
 def test_an_unrelated_tab_gets_nothing():

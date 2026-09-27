@@ -121,16 +121,34 @@ function notify(title, message) {
 // Nothing else is screened: the screen is for the Jobright flow, and the
 // context menu still queues any page by hand.
 const SOURCE_HOSTS = ["jobright.ai"];
+// An application form opened by hand is still a form. These hosts are
+// screened wherever they came from, but never marked: the banner offers,
+// and the countdown that queues a job by itself stays off (the content
+// script reads `__autopilotHandOpened`).
+const ATS_HOSTS = [
+  "myworkdayjobs.com", "myworkdaysite.com", "greenhouse.io", "ashbyhq.com",
+  "lever.co", "smartrecruiters.com", "bamboohr.com", "workable.com",
+  "icims.com", "jobvite.com", "taleo.net", "successfactors.com",
+  "oraclecloud.com", "eightfold.ai", "dover.com",
+];
 const marked = new Set();
 const lastUrl = new Map();
 
-function fromSource(url) {
+function onHosts(url, hosts) {
   try {
     const host = new URL(url).hostname;
-    return SOURCE_HOSTS.some((h) => host === h || host.endsWith("." + h));
+    return hosts.some((h) => host === h || host.endsWith("." + h));
   } catch {
     return false;
   }
+}
+
+function fromSource(url) {
+  return onHosts(url, SOURCE_HOSTS);
+}
+
+function isAts(url) {
+  return onHosts(url, ATS_HOSTS);
 }
 
 chrome.tabs.onCreated.addListener(async (tab) => {
@@ -151,10 +169,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     if (fromSource(previous) && !fromSource(info.url)) marked.add(tabId);
     lastUrl.set(tabId, info.url);
   }
-  if (info.status !== "complete" || !marked.has(tabId)) return;
   const url = tab.url || "";
+  if (info.status !== "complete" || !(marked.has(tabId) || isAts(url))) return;
   if (!/^https?:/.test(url) || fromSource(url)) return;
+  const hand = !marked.has(tabId);
   try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (value) => { window.__autopilotHandOpened = value; },
+      args: [hand],
+    });
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
   } catch {
     // Restricted page (PDF viewer, chrome://), or the script is already there.

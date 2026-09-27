@@ -190,6 +190,12 @@ class FillResult:
     done: bool = False
     resume_uploaded: bool = False
     cover_letter_uploaded: bool = False
+    # The page had no application form on it: Workday, McKinsey and the
+    # rest put the form behind Apply and a sign-in, and we never press
+    # Apply. Nothing is wrong with the job or its documents, so this is not
+    # a failure of the run - it is the run asking the person to open the
+    # form. `apply.py` keeps the job in flight when this is set.
+    no_form: bool = False
 
     def summary(self) -> str:
         parts = [f"{self.steps} step(s)"]
@@ -743,6 +749,7 @@ async def _finish_without_agent(cdp_url: str, url: str, target_id: str, filled: 
         done=True,
         resume_uploaded=filled.resume_uploaded,
         cover_letter_uploaded=filled.cover_letter_uploaded,
+        no_form=forms.NOT_A_FORM in filled.errors,
     )
 
 

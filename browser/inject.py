@@ -62,6 +62,19 @@ SOURCE_HOSTS = ("jobright.ai",)
 # itself, so there is no opener and no Page.windowOpen to tie it to the
 # posting; the URL it opens is tagged with the posting id instead.
 SOURCE_MARKS = ("jr_id=",)
+# An application form opened by hand is still a form: an Ashby posting found
+# through a friend, a Workday portal reached from a company's own careers
+# page. Those tabs have no opener and no `jr_id`, so nothing marked them and
+# the banner never appeared - no verdict, and no way to put the tailored
+# resume on the slot. They get the script on their host alone. They are not
+# `marked`: nothing auto-queues them, presses Autofill in them, or closes
+# them; the person clicks.
+ATS_HOSTS = (
+    "myworkdayjobs.com", "myworkdaysite.com", "wd1.myworkdayjobs.com",
+    "greenhouse.io", "ashbyhq.com", "lever.co", "smartrecruiters.com",
+    "bamboohr.com", "workable.com", "icims.com", "jobvite.com", "taleo.net",
+    "successfactors.com", "oraclecloud.com", "eightfold.ai", "dover.com",
+)
 # Jobright's Autofill is pressed the moment an employer tab has loaded, by
 # code, before any job is queued or approved: the human opened the form to
 # apply, and waiting for the pipeline to press it was the delay they saw.
@@ -75,6 +88,18 @@ def from_source(url: str) -> bool:
     except IndexError:
         return False
     return any(host == h or host.endswith("." + h) for h in SOURCE_HOSTS)
+
+
+def is_ats(url: str) -> bool:
+    """Whether a URL is an application form on a known ATS, however it was
+    opened. `ats.detect` is the browser model's note picker and deliberately
+    narrower (it matches Oracle's candidate-experience path only); this is
+    the banner's question, which is only ever about the host."""
+    try:
+        host = url.split("://", 1)[1].split("/", 1)[0].split("@")[-1].split(":")[0].lower()
+    except IndexError:
+        return False
+    return any(host == h or host.endswith("." + h) for h in ATS_HOSTS)
 
 
 def tagged(url: str) -> bool:
@@ -143,16 +168,22 @@ class Injector:
         return await future
 
     def wanted(self, target_id: str, url: str) -> bool:
-        return is_web(url) and (from_source(url) or target_id in self.marked)
+        return is_web(url) and (
+            from_source(url) or target_id in self.marked or is_ats(url)
+        )
 
     async def inject(self, session: str, target_id: str, why: str) -> None:
         url = self.urls.get(target_id, "")
         if not self.wanted(target_id, url):
             return
+        # A tab nothing marked was opened by the person, not by an Apply
+        # button: the banner screens and offers, but never counts down.
+        hand = target_id not in self.marked and not from_source(url)
+        script = f"window.__autopilotHandOpened={'true' if hand else 'false'};\n{self.script}"
         try:
             result = await self.send(
                 "Runtime.evaluate",
-                {"expression": self.script, "awaitPromise": False, "returnByValue": True},
+                {"expression": script, "awaitPromise": False, "returnByValue": True},
                 session,
             )
         except Exception as error:  # noqa: BLE001 - a tab mid-navigation is not fatal

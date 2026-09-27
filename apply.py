@@ -136,6 +136,21 @@ def fill_one(job: Job) -> bool:
     body.append(f"\nFull log: `data/apply_{job.id}.log`\n")
     store.write_or_append(app_dir, "fill_notes.md", "".join(body))
 
+    if not result.ok and result.no_form:
+        # The page had no form on it: Workday, McKinsey and the rest keep
+        # it behind Apply and a sign-in, and the fill never presses Apply.
+        # Nothing is wrong with this job - the resume and the letter are
+        # written and waiting - so it goes back to checkpoint 1 rather than
+        # onto the failed shelf, where a perfectly good application reads
+        # as gone (Morgan Stanley, McKinsey and CVS all landed there).
+        detail = ("the form is behind Apply and a sign-in: open the posting, sign in "
+                  "until you can see the application form, then press Fill the form again")
+        store.set_status(app_dir, Status.AWAITING_REVIEW, detail)
+        queue.update(job.id, status=Status.AWAITING_REVIEW, error=None)
+        store.write(app_dir, "needs_sign_in.txt", detail + "\n")
+        print(f"  no form yet: {detail}")
+        return False
+
     if not result.ok:
         # The browser ran but the form was not filled. Saying "filled" here
         # would send the reviewer to check a screenshot of nothing.
@@ -148,6 +163,7 @@ def fill_one(job: Job) -> bool:
         return False
 
     # FILLED is terminal for the agent. Only a human moves it to SUBMITTED.
+    (app_dir / "needs_sign_in.txt").unlink(missing_ok=True)
     store.set_status(app_dir, Status.FILLED, note)
     queue.update(job.id, status=Status.FILLED)
     print(f"  filled, {note}")

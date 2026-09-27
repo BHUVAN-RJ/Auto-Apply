@@ -1,26 +1,24 @@
 """On-page screening: is this posting an auto-reject for this applicant?
 
-Reads the posting text and the applicant's Facts section, asks a fast model
-for a JSON verdict, and validates it against a fixed category set. The model's
-reply is never trusted raw: an unknown category, a missing quote, or a verdict
-that disagrees with its own flags is corrected here, not displayed.
+Reads the posting text against the applicant's Facts section and a set of
+rules, and returns a verdict. No model is asked (2026-09-26): measured over
+the 122 postings on disk against the 199 verdicts the model had cached, the
+rules won every disagreement - seven export-control blocks it had passed,
+six rejects it should never have raised. `tailor/screening.py` holds the
+rules and the person's own edits to them; this module holds the policies
+that correct a flag after it is raised, the date reading, and the shape of
+a verdict.
 
 The verdict is advice. Nothing in the pipeline changes status because of it.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import re
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Optional
 
-from . import llm, profile, prompts
-
-ROOT = Path(__file__).resolve().parent.parent
-RULES = Path(__file__).resolve().parent / "screen_rules.md"
+from . import profile, screening
 
 CATEGORIES = (
     "experience", "visa", "export_control", "clearance", "timeline",
@@ -32,25 +30,6 @@ VERDICTS = ("reject", "caution", "ok", "not_a_job")
 # Postings run a few thousand tokens; beyond this the text is a careers index
 # or boilerplate, and the model has enough to judge either way.
 MAX_TEXT_CHARS = 20_000
-
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
-
-REPLY_FORMAT = """
-Reply with one fenced json block and nothing else:
-
-```json
-{
-  "verdict": "reject | caution | ok | not_a_job",
-  "flags": [
-    {"category": "<one of the category names>",
-     "severity": "hard | soft",
-     "quote": "<the posting's own words, at most twenty>",
-     "reason": "<why it applies to this applicant, one short sentence>"}
-  ],
-  "summary": "<one line, ten words at most>"
-}
-```
-"""
 
 
 class ScreenError(RuntimeError):
@@ -94,47 +73,10 @@ class Screen:
         )
 
 
-def screen_model() -> str:
-    return os.environ.get("OPENROUTER_SCREEN_MODEL", DEFAULT_MODEL)
-
-
 def load_facts() -> tuple[str, str]:
     """(facts, source). applicant.md's Facts when the profile switch is on
     and the file exists; otherwise facts derived once from the resume."""
     return profile.screen_facts()
-
-
-def system_prompt() -> str:
-    return prompts.text("screen") + "\n" + prompts.text("screen.format")
-
-
-def build_user_message(text: str, facts: str, title: str = "", url: str = "") -> str:
-    head = "\n".join(line for line in (f"Title: {title}" if title else "",
-                                       f"URL: {url}" if url else "") if line)
-    return (
-        f"## Applicant facts\n\n{facts}\n\n"
-        f"## Posting\n\n{head}\n\n{text[:MAX_TEXT_CHARS]}"
-    )
-
-
-def _squash(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-
-
-def quote_is_real(quote: str, text: str) -> bool:
-    """The quote must be in the posting and must not be a question.
-
-    Both rules are in the prompt too, and both were broken on the first run:
-    the model invented "no statement about clearance" as a quote, and
-    flagged "Will you now or in the future require sponsorship?", which
-    every form asks. A flag the reader cannot find in the page is dropped.
-    """
-    if quote.rstrip().endswith("?"):
-        return False
-    squashed = _squash(quote)
-    if len(squashed) < 4:
-        return False
-    return squashed in _squash(text)
 
 
 def verdict_for(flags: list[Flag]) -> str:
@@ -343,69 +285,48 @@ def soften_unknowns(result: "Screen") -> "Screen":
     return result
 
 
-def parse_reply(reply: str, model: str = "", text: Optional[str] = None,
-                facts: Optional[str] = None) -> Screen:
-    """Validate the model's JSON into a Screen. Bad flags are dropped, not shown.
-
-    With `text`, every flag's quote is checked against the posting.
-    """
-    match = re.search(r"```json[^\n]*\n(.*?)```", reply, re.S)
-    raw = match.group(1) if match else reply
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ScreenError(f"screen reply is not JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ScreenError("screen reply is not an object")
-
-    flags: list[Flag] = []
-    for item in data.get("flags") or []:
-        if not isinstance(item, dict):
-            continue
-        category = str(item.get("category", "")).strip().lower()
-        severity = str(item.get("severity", "hard")).strip().lower()
-        quote = str(item.get("quote", "")).strip()
-        reason = str(item.get("reason", "")).strip()
-        if category not in CATEGORIES:
-            category = "other"
-        if severity not in SEVERITIES:
-            severity = "hard"
-        if not quote or (text is not None and not quote_is_real(quote, text)):
-            # The rules say no quote, no flag. A flag without the posting's
-            # words cannot be checked by the reader and is dropped.
-            continue
-        flags.append(Flag(category, severity, quote, reason))
-
-    flags = enforce_location_policy(flags)
-    flags = enforce_timeline_policy(flags, facts or "")
-
-    verdict = str(data.get("verdict", "")).strip().lower()
-    if verdict != "not_a_job":
-        verdict = verdict_for(flags)
-
-    summary = str(data.get("summary", "")).strip()
-    return Screen(verdict=verdict, flags=flags, summary=summary, model=model)
+def summarise(flags: list["Flag"]) -> str:
+    """One line, the way the banner wants it: what fired, worst first."""
+    if not flags:
+        return "No hard or soft flags found."
+    hard = [f.category.replace("_", " ") for f in flags if f.severity == "hard"]
+    soft = [f.category.replace("_", " ") for f in flags if f.severity == "soft"]
+    parts = []
+    if hard:
+        parts.append("blocked on " + ", ".join(dict.fromkeys(hard)))
+    if soft:
+        parts.append("worth a look: " + ", ".join(dict.fromkeys(soft)))
+    return "; ".join(parts) + "."
 
 
 def screen(text: str, title: str = "", url: str = "", facts: Optional[str] = None,
            model: Optional[str] = None) -> Screen:
-    """Judge one posting. `facts` defaults to base/applicant.md's Facts section."""
+    """Judge one posting. `facts` defaults to base/applicant.md's Facts section.
+
+    `model` is accepted and ignored: callers and the cache predate the rules
+    and there is nothing to gain from making them all change at once.
+    """
     if not text or not text.strip():
         return Screen(verdict="not_a_job", summary="empty page")
     source = "given"
     if facts is None:
         facts, source = load_facts()
-    model = model or screen_model()
-    reply = llm.complete(
-        system_prompt(),
-        build_user_message(text, facts, title=title, url=url),
-        model=model,
-        temperature=0.0,
-        max_tokens=4000,
-        # A classification over a short text. Thinking here roughly triples
-        # the latency of a banner that is meant to appear as the page opens.
-        reasoning={"enabled": False},
+
+    flags = [
+        Flag(category=rule.category, severity=rule.severity, quote=quote, reason=rule.label)
+        for rule, quote in screening.fired(text[:MAX_TEXT_CHARS], title=title, facts=facts)
+    ]
+    # The rules raise the flags; these two correct them, as they always have.
+    # A US place is never a location block however a rule read it, and a
+    # graduation earlier than a posting's window is a match, not a caution.
+    flags = enforce_location_policy(flags)
+    flags = enforce_timeline_policy(flags, facts)
+
+    result = Screen(
+        verdict=verdict_for(flags),
+        flags=flags,
+        summary=summarise(flags),
+        model="rules",
+        facts_source=source,
     )
-    result = parse_reply(reply, model=model, text=text, facts=facts)
-    result.facts_source = source
     return soften_unknowns(result)

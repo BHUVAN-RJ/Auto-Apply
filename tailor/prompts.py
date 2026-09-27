@@ -83,12 +83,15 @@ CATALOG: tuple[Prompt, ...] = (
            _file("tailor.answers", "RULES")),
     Prompt("answers.format", "Form answer reply format", "Tailoring", FORMAT_NOTE,
            _const("tailor.answers", "REPLY_FORMAT")),
-    Prompt("screen", "Posting screen", "Screening",
-           "What counts as a reject, a caution or fine when a posting opens. The US "
-           "location and graduation rules are also enforced in code.",
-           _file("tailor.screen", "RULES")),
-    Prompt("screen.format", "Screen reply format", "Screening", FORMAT_NOTE,
-           _const("tailor.screen", "REPLY_FORMAT")),
+    # Screening itself asks no model (2026-09-26): the rules are code and the
+    # person's switches live in data/screening.json. What is left to prompt
+    # is the assistant that writes a rule when they ask for one.
+    Prompt("screening.author", "Screening rule author", "Screening",
+           "How the Screening tab's assistant turns \"flag anything that wants a "
+           "clearance\" into a rule. It never sees a posting and never judges one.",
+           _const("tailor.screening", "AUTHOR_PROMPT")),
+    Prompt("screening.author.format", "Screening rule reply format", "Screening",
+           FORMAT_NOTE, _const("tailor.screening", "AUTHOR_FORMAT")),
     Prompt("ats", "Application systems", "Form",
            "Notes per application system (Oracle, Greenhouse, Ashby, Workday, Lever).",
            _file("browser.ats", "RULES")),

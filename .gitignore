@@ -17,3 +17,5 @@ base/stories*/
 .DS_Store
 base/form.json
 :memory:.ses
+run/
+logs/

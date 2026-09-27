@@ -209,3 +209,35 @@ def test_answers_are_archived_and_counted(monkeypatch):
     apply.fill_one(job)
     assert "**Why here?**" in (app_dir / "answers.md").read_text()
     assert "1 question(s) answered" in (app_dir / "fill_notes.md").read_text()
+
+
+def test_a_page_with_no_form_keeps_the_job_in_flight(monkeypatch):
+    """Workday, McKinsey and CVS put the application behind Apply and a
+    sign-in, and the fill never presses Apply. The documents are written
+    and perfectly good, so the job goes back to checkpoint 1 rather than
+    onto the failed shelf - fourteen applications read as lost that way."""
+    job, app_dir = approved_job()
+
+    def fake(url, resume, screenshot, **kwargs):
+        screenshot.write_bytes(b"\x89PNG fake")
+        return FillResult(ok=False, steps=0, screenshot=screenshot, notes="",
+                          done=True, no_form=True,
+                          errors=["no application form on this page: press Apply and sign in, "
+                                  "then fill it again"])
+
+    monkeypatch.setattr(apply.filler, "fill", fake)
+
+    assert apply.fill_one(job) is False
+    stored = queue.get(job.id)
+    assert stored.status == Status.AWAITING_REVIEW, "not failed: nothing is wrong with this job"
+    assert stored.error is None, "and it must not show as an error on the list"
+    assert "sign in" in (app_dir / "needs_sign_in.txt").read_text()
+
+
+def test_a_later_successful_fill_clears_the_sign_in_note(monkeypatch):
+    job, app_dir = approved_job()
+    (app_dir / "needs_sign_in.txt").write_text("stale\n")
+    stub_fill(monkeypatch)
+
+    assert apply.fill_one(job) is True
+    assert not (app_dir / "needs_sign_in.txt").exists()

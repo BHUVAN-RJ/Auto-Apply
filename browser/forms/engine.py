@@ -54,6 +54,13 @@ POLL = 0.25
 # your most recent position?"), not a field name, and the generic patterns
 # would match a word in it. Real Ashby run: that question got a job title.
 GENERIC_LABEL_MAX = 60
+
+# A box that exists to catch robots: hidden from a person, and anything
+# written into it marks the application as spam. Morgan Stanley's said
+# "This input is for robots only, do not enter it" and the fill wrote a
+# tailored sentence into it. Skipped before anything else looks at it.
+HONEYPOT = re.compile(r"robots?\s+only|do\s+not\s+(?:fill|enter)|leave\s+(?:this|it)\s+blank|"
+                      r"\bhoney\s?pot\b|\bbot[- ]field\b", re.I)
 # A short question that asks for a fact, not for prose. Jobright's autofill
 # and `base/form.json` own these; the tailor model writing them produced
 # "I use he/him pronouns. Happy to share this on the form, and I appreciate
@@ -695,6 +702,8 @@ def match_key(f: Field, adapter: Adapter) -> str:
     # A radio's own label is its option ("Other", "Yes"); the question is
     # the group's.
     texts = (f.group,) if f.kind in ("radio", "checkbox") else (f.label, f.group, f.placeholder, f.autocomplete)
+    if any(t and HONEYPOT.search(t) for t in texts):
+        return ""
     for text in texts:
         if not text or len(text) > GENERIC_LABEL_MAX:
             continue
@@ -961,6 +970,8 @@ class Engine:
                 continue
             q = " ".join(f.question.split())
             if not q or describes_fact(q):
+                continue
+            if HONEYPOT.search(q):
                 continue
             if f.kind == "textarea" or "?" in q or len(q) > GENERIC_LABEL_MAX:
                 found.append(f)
@@ -1333,12 +1344,22 @@ async def fill(cdp_url: str, url: str, adapter: Adapter, profile: Profile,
         return await run(page, adapter, profile, target_id, resume, cover_letter)
 
 
-# What a page must have before the fill treats it as an application form: a
-# file input to attach the resume to, or more controls than a search box and a
-# sign-in link. Under this, the form is behind an Apply button we do not press.
+# What a page must have before the fill treats it as an application form:
+# somewhere to attach the resume. Everything this fill does is built around
+# putting the tailored resume on the form, so a page with no file input on
+# it anywhere is not that form, however many boxes it has.
+#
+# It used to also require fewer than five fields, and Workday's sign-in
+# page has more than five (email, password, verify, a checkbox, a button).
+# So the fill treated a login screen as the application, found no slot, and
+# typed a tailored sentence into a hidden box labelled "This input is for
+# robots only" - a spam trap - before reporting failure. Morgan Stanley,
+# McKinsey and CVS all landed on the failed shelf that way with perfectly
+# good documents beside them.
 MIN_FORM_FIELDS = 5
 NOT_A_FORM = ("no application form on this page: press Apply and sign in, "
               "then fill it again")
+
 
 
 async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
@@ -1373,7 +1394,7 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     # "no resume file input found", which read as "approve did nothing".
     # Nowhere to attach a resume and almost no fields means the form is not
     # here yet, and nothing on the page is ours to touch.
-    if resume is not None and resume_input is None and cover_input is None and len(fields) < MIN_FORM_FIELDS:
+    if resume is not None and resume_input is None and cover_input is None:
         report.errors.append(NOT_A_FORM)
         return report
     for wanted, have, pattern, exclude, what in (

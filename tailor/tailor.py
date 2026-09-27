@@ -102,6 +102,26 @@ class Mismatch(TailorError):
     """The model judged this posting a poor fit. Nothing was tailored."""
 
 
+# What the tailor is told on the second pass, when the fit question has
+# already been answered by a human and is not the model's to reopen. The
+# pipeline sends OVERRULE_QUEUED by itself (the job was added on purpose);
+# the review page sends OVERRULE when the reviewer approves anyway.
+OVERRULE = (
+    "You judged this posting a poor fit and tailored nothing. The reviewer has "
+    "read that and is applying anyway, so the fit question is settled and is "
+    "not yours to reopen: tailor the resume for this posting under every rule "
+    "above, and do not reply with MISMATCH."
+)
+OVERRULE_QUEUED = (
+    "You judged this posting a poor fit and tailored nothing. The candidate "
+    "chose this posting themselves and wants the documents either way, so the "
+    "fit question is settled and is not yours to reopen: tailor the resume for "
+    "this posting under every rule above, and do not reply with MISMATCH. "
+    "Where the posting asks for something they do not have, lead with what "
+    "they do; never invent the thing they lack."
+)
+
+
 def system_prompt() -> str:
     return prompts.text("tailor") + "\n" + prompts.text("tailor.format")
 

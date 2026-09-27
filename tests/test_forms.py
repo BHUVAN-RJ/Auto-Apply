@@ -498,3 +498,48 @@ def test_a_posting_page_is_not_filled_at_all(tmp_path):
     assert asked == [] and page.fields["2"]["value"] == ""
     assert not report.resume_uploaded and not page.marked
     assert any("no application form on this page" in e for e in report.errors)
+
+
+def test_a_sign_in_page_is_not_an_application_form(tmp_path):
+    """Workday's sign-in page has more than five controls (email, password,
+    verify, a checkbox, a button), so the old field-count gate let it
+    through: the fill found no resume slot, typed a tailored sentence into
+    a hidden box labelled "This input is for robots only", and reported
+    failure. Everything this fill does is putting the resume on the form,
+    so no file input anywhere means the form is not here yet."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4")
+    page = FakePage([
+        gh_field("1", kind="text", label="Email Address"),
+        gh_field("2", type="password", kind="text", label="Password"),
+        gh_field("3", type="password", kind="text", label="Verify New Password"),
+        gh_field("4", kind="checkbox", label="I agree to the Terms"),
+        gh_field("5", kind="text", label="Phone"),
+        gh_field("6", kind="text", label="Country"),
+    ])
+    report = run_documents(page, resume=resume)
+    assert engine.NOT_A_FORM in report.errors
+    assert not report.resume_uploaded
+    assert page.fields["1"]["value"] == "", "nothing on a sign-in page is ours to touch"
+
+
+def test_a_honeypot_is_never_written_into(tmp_path):
+    """Anything written into one marks the application as spam. Morgan
+    Stanley's said "This input is for robots only, do not enter it" and the
+    fill tried to answer it with a tailored sentence."""
+    assert engine.HONEYPOT.search("This input is for robots only, do not enter it")
+    assert engine.HONEYPOT.search("Leave this blank")
+    assert not engine.HONEYPOT.search("Why do you want to work here?")
+    assert not engine.HONEYPOT.search("Enter your website")
+
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4")
+    page = FakePage([
+        gh_field("1", id="resume", type="file", kind="file", name="resume", label="Resume/CV *"),
+        gh_field("2", tag="textarea", kind="textarea",
+                 label="Enter website. This input is for robots only, do not enter it"),
+        gh_field("3", tag="textarea", kind="textarea", label="Why do you want to work here?"),
+    ])
+    report = run_documents(page, resume=resume, answerer=lambda q: f"Answer to: {q}")
+    assert report.answered == ["Why do you want to work here?"]
+    assert page.fields["2"]["value"] == ""

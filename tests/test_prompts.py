@@ -39,10 +39,10 @@ def test_saving_the_stock_text_is_a_reset_and_history_keeps_the_edit():
 
 
 def test_reset_keeps_the_edit_in_history():
-    prompts.save("screen", "short rules")
-    prompts.reset("screen")
-    assert prompts.text("screen") == prompts.stock("screen")
-    assert prompts.history("screen")[0]["why"] == "reset"
+    prompts.save("screening.author", "short rules")
+    prompts.reset("screening.author")
+    assert prompts.text("screening.author") == prompts.stock("screening.author")
+    assert prompts.history("screening.author")[0]["why"] == "reset"
 
 
 def test_unknown_prompt():
@@ -212,7 +212,14 @@ def test_onboarding_until_done_or_a_job_exists(tmp_path, monkeypatch):
     client = TestClient(app)
     assert client.get("/setup").json()["onboarded"] is False
     assert client.post("/setup/done").json()["onboarded"] is True
-    settings.save(onboarded=False)
+    # One-way: finishing onboarding cannot be undone, by the page or by a
+    # settings file someone edits.
+    assert settings.save(onboarded=False)["onboarded"] is True
+    assert client.get("/setup").json()["onboarded"] is True
+    # And a copy in use before onboarding existed is past it by its jobs.
+    (tmp_path / settings.MARK_NAME).unlink()
+    (tmp_path / "settings.json").write_text("{}")
+    assert client.get("/setup").json()["onboarded"] is False
     monkeypatch.setattr(queue, "all_jobs", lambda: ["a job"])
     assert client.get("/setup").json()["onboarded"] is True
 

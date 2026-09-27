@@ -10,7 +10,7 @@ from typing import Optional
 
 from .. import ats
 from .ashby import Ashby
-from .engine import Adapter, Report, fill, find_target, same_site, snapshot, upload_documents
+from .engine import NOT_A_FORM, Adapter, Report, fill, find_target, same_site, snapshot, upload_documents
 from .greenhouse import Greenhouse
 from .lever import Lever
 from .profile import Profile, load, load_corrections

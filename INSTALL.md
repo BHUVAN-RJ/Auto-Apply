@@ -158,13 +158,23 @@ there and let them go through it:
    extension and jobright.ai, as tabs in the Autopilot Chrome (the one the
    forms are filled in; their everyday Chrome does not count). It notices
    the extension by itself; they tick "I'm signed in" once signed in.
-4. **The profile interview**, offered on the last screen, is optional. It
+4. **Screening.** One screen of checkboxes: what should stop a job — no
+   sponsorship, US citizens only, a clearance, export control, a PhD, too
+   many years, a role outside the country. They are read in code against
+   the facts, no model, so this costs nothing and is theirs to change
+   later on the Screening tab. Untick whatever does not apply to them: a
+   US citizen has no use for the sponsorship rule, and someone with a
+   clearance has no use for that one.
+5. **The profile interview**, offered on the last screen, is optional. It
    makes the tailoring better (the tailor uses what they did in each role
    in their own words); they can start it then or any time from the
    Profile tab.
 
 If they skip a step, the app shows what is still missing in a bar at the
-top until it is done.
+top until it is done. Onboarding is finished once and for good: the flag
+is written both to `data/settings.json` and to a `.onboarded` file beside
+it, and nothing ever unsets it, so a person weeks into the app is never
+shown the first screen again.
 
 ## 7. Check
 
