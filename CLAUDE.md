@@ -875,9 +875,14 @@ invariants first.
   the review page, worded from the person's side rather than the code's -
   `Collecting jobs · N ready`, then `Starting applications…` for the few
   seconds before the first tab, then `Applying · N more in queue`: held,
-  the pipeline runs in full - screen, tailor,
-  compile, cover letter, `auto_approve` - and every job stops at APPROVED;
-  let go, `runner.serial_tick` (a 3 s thread, `runner.start_serial`,
+  the pipeline runs in full - screen, tailor, compile, cover letter,
+  `auto_approve` - and every job stops at APPROVED. Letting go plays one
+  beat (`liftoff` in `review/index.html`, 1.5 s, "Taking flight" over the
+  assistant's own ring rising, a green track filling,
+  `prefers-reduced-motion` honoured): the click changes what the machine is
+  *for*, from gathering jobs to applying for them, which is more than a
+  label quietly changing in a corner. Going back to collecting is silent.
+  Let go, `runner.serial_tick` (a 3 s thread, `runner.start_serial`,
   `AUTOPILOT_SERIAL=0` off) starts the oldest approved job when nothing is
   filling, so each job gets one tab and the next begins when that process
   ends, whether it reached checkpoint 2, failed, or stopped for the person.

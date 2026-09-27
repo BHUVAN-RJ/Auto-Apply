@@ -450,9 +450,37 @@
   header .hold::before { content: ""; width: 8px; height: 8px; background: currentColor; }
   header .hold[aria-pressed="true"] { border-color: var(--warn); color: var(--warn); }
   header .hold[aria-pressed="false"] { border-color: var(--green); color: var(--green); }
-  header .hold[aria-pressed="false"][data-busy="1"]::before { animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .25; } }
+  header .hold[aria-pressed="false"][data-busy="1"]::before { animation: holdbeat 1.2s ease-in-out infinite; }
+  @keyframes holdbeat { 50% { opacity: .25; } }
   @media (prefers-reduced-motion: reduce) { header .hold::before { animation: none !important; } }
+
+  /* Taking flight. The one moment in the app where a click changes what the
+     machine is for - from gathering jobs to applying for them - so it gets a
+     beat of its own instead of a label quietly changing in a corner. Same
+     terminal furniture as everything else: square, mono, ink border, hard
+     offset shadow, the assistant's own ring rising through it. */
+  .liftoff { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+             background: color-mix(in srgb, var(--bg) 82%, transparent);
+             animation: liftfade .25s ease-out; }
+  .liftoff.going { animation: liftfade .35s ease-in reverse both; }
+  .liftoff .card { background: var(--bg); border: 3px solid var(--ink); box-shadow: 8px 8px 0 var(--ink);
+                   padding: 2rem 2.4rem; display: flex; flex-direction: column; align-items: center;
+                   gap: 1rem; min-width: min(420px, 88vw); }
+  .liftoff svg { width: 52px; height: 52px; overflow: visible; animation: lift 1.1s cubic-bezier(.3, -.4, .2, 1.4) both; }
+  .liftoff .say { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .14em;
+                  text-align: center; line-height: 1.5; }
+  .liftoff .say em { font-style: normal; color: var(--muted); display: block; font-size: 11px;
+                     letter-spacing: .1em; font-weight: 400; margin-top: .45rem; }
+  .liftoff .track { width: 100%; height: 6px; border: 2px solid var(--ink); }
+  .liftoff .track i { display: block; height: 100%; background: var(--green);
+                      animation: liftrun 1.5s cubic-bezier(.4, 0, .2, 1) both; }
+  @keyframes liftfade { from { opacity: 0; } }
+  @keyframes lift { from { transform: translateY(14px) scale(.85); opacity: 0; } }
+  @keyframes liftrun { from { width: 0; } to { width: 100%; } }
+  @media (prefers-reduced-motion: reduce) {
+    .liftoff, .liftoff svg, .liftoff .track i { animation-duration: .01s; }
+    .liftoff .track i { width: 100%; }
+  }
   header button.report { background: none; border: 1px solid var(--line); color: var(--muted); font: inherit;
                          font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: .3rem .6rem;
                          cursor: pointer; }
@@ -663,9 +691,36 @@ function paintHold(waiting, filling) {
       + "that needs you, before the next opens. Click to go back to collecting jobs.";
 }
 
+// The assistant's ring, drawn static: the same mark the fill puts on every
+// field it sets, so the thing that is about to go and fill forms is the
+// thing the person sees take off.
+const LIFT_RING = `<svg viewBox="-70 -70 140 140" aria-hidden="true">
+    <circle r="50" cx="7" cy="7" fill="var(--ink)"/>
+    <circle r="50" fill="var(--bg)" stroke="var(--ink)" stroke-width="7"/>
+    <circle r="14" fill="var(--purple)"/></svg>`;
+
+function liftoff(waiting) {
+  const el = document.createElement("div");
+  el.className = "liftoff";
+  el.innerHTML = `<div class="card" role="status" aria-live="polite">
+      ${LIFT_RING}
+      <div class="say">Taking flight
+        <em>${waiting ? `Applying to ${waiting} job${waiting === 1 ? "" : "s"}, one at a time`
+          : "Applying to each job as it is ready, one at a time"}</em></div>
+      <div class="track"><i></i></div>
+    </div>`;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.classList.add("going");
+    setTimeout(() => el.remove(), 350);
+  }, 1500);
+}
+
 async function toggleHold() {
   holding = !holding;
   starting = !holding;
+  // Only on the way up. Going back to collecting is a quiet decision.
+  if (!holding) liftoff(lastCounts.waiting);
   paintHold();
   try {
     const out = await api("/settings", { method: "POST",
