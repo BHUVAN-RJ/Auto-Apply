@@ -120,7 +120,7 @@ job you ever considered.
 | `server/` | FastAPI on `localhost:8787` by default. Owns the queue, serves the review UI, holds checkpoint state |
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
-| `browser/` | `browser-use` fill loop driving your real Chrome profile |
+| `browser/` | `browser-use` fill loop driving your real Chrome profile. `guard.py` is the never-submit deny-list; `signin.py` waits out a login wall and says when the form is back; `press_submit.py` is the only place a Submit control is ever pressed, and the agent cannot reach it |
 | `review/` | Local web page: diff view, PDF preview, approve / reject / chat, and the Profile, Projects, Scout, Screening and Prompts tabs |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
@@ -412,15 +412,23 @@ lands in `data/apply_<job>.log`, and the review page shows the tail of it under
 "Fill log" along with the failure reason, so a broken run can be diagnosed
 without leaving the page.
 
-**A form behind a sign-in is not a failure.** Workday, McKinsey and plenty
-of employer portals keep the application behind Apply and a login, and the
-fill never presses Apply. When it opens a page with no file input on it
-anywhere, that is not the form: the job goes back to checkpoint 1 with
-"this form is behind Apply and a sign-in" and its documents intact, rather
-than onto the failed shelf where a perfectly good application reads as
-lost. Sign in until the form is actually on the screen, press Approve, and
-the fill runs again — or use the banner's **put** chips and attach the two
-PDFs yourself.
+**A form behind a sign-in is waited for, not failed.** Workday, McKinsey and
+plenty of employer portals keep the application behind Apply and a login,
+and the fill never presses Apply and never types a credential. What it does
+instead is watch: the tab stays open, its banner says *"Waiting while you
+sign in — I will carry on from the first page"*, and you sign in however you
+normally would. Single sign-on is fine — "Continue with Google" takes the
+page off to Google and back, and the watch follows **the tab**, not the
+link, so nothing is lost in the middle. The moment the application form is
+on the screen, the fill starts from the first page as though the wall had
+never been there: autofill, the tailored resume, the cover letter, the open
+questions.
+
+It gives you ten minutes. If the form never appears, the job goes back to
+checkpoint 1 with "this form is behind Apply and a sign-in" and its
+documents intact — never onto the failed shelf, where a perfectly good
+application reads as lost. From there, sign in and press Approve, or use the
+banner's **put** chips and attach the two PDFs yourself.
 
 The browser model must accept images — browser-use sends a screenshot to the
 model on every step, and a text-only model returns 404 on all of them and fills
@@ -593,8 +601,17 @@ is described by its outcome, not by where it is kept — `APPLIED`,
 is a button to the job, next to one that says what it will show you ("Show
 me what I sent", "Show me why I rejected it"). A job still in flight reads
 "In autopilot · Waiting for your review", because there the progress is the
-answer. An application already submitted gets the loudest block the bar
-has, in red, and that bar never folds itself away.
+answer. A job already applied for gets the loudest block the bar has, in
+red — and the heading is true of where the job actually got to: `ALREADY
+APPLIED` only once it was sent, `ALREADY IN AUTOPILOT` in amber for a form
+filled and waiting for your Submit, `FILLING THIS NOW` while it is being
+filled. The block itself is the button back to the job.
+
+Every banner folds itself into a small corner badge three seconds after it
+has a verdict, in that verdict's colour, with the countdown drawn across
+the ✕. Tap the badge and the bar comes back — with the same result, never a
+second screen — for another three seconds; hovering or tabbing into it
+holds it open for as long as you are reading.
 
 When the job is one of yours, the bar also carries the tailored **resume**
 and **cover letter** as chips: drag one onto a file slot, click it to

@@ -187,10 +187,29 @@ leak; a deny-list in code does not.
   JavaScript would make the click guard decorative, and Enter submits a
   single-input form with no button click.
 - The fill loop's terminal action is always a screenshot plus `status: filled`.
-  `submitted` is reachable only from the review page, only on a job that is
-  filled or still filling (the human's own submission wins over the agent).
-- One fill per job. `runner.launch("apply.py")` refuses while one is alive,
-  and `/fill` needs `force` — sent only after the human confirmed the kill.
+  `submitted` is reachable only from the review page. The automatic paths
+  that mark it (a confirmation seen in the tab, the server's own watch) still
+  want a job that is filled or filling, because there a stray "thank you for
+  your interest" is the risk; the page's own **I submitted it** button is a
+  person stating a fact about the world and is accepted from any live status,
+  refused only on a job already submitted or rejected.
+- A Submit control is pressed in exactly one place: `browser/press_submit.py`,
+  reached only from `POST /review/{id}/submit`, which is the review page's
+  **Submit it** button behind a confirmation naming the job. No model can
+  reach it — nothing the agent runs may even import it, and no browser-use
+  action is registered for it (`tests/test_invariants.py` #6). The same
+  `guard.SUBMIT_PATTERNS` the agent is refused is what finds the control
+  there. A press is not a submission: the job is marked only once the page
+  becomes a real confirmation, and the tab is never closed.
+- One fill per job, and one fill at a time across jobs. `runner.launch(
+  "apply.py")` refuses while one is alive for that job; `/fill` refuses while
+  *another* job is filling; both need `force` — sent only after the human
+  confirmed. `settings.hold_fills` (on by default) holds every automatic
+  start, and `runner.serial_tick` releases the approved jobs one at a time.
+- A sign-in is waited for, never solved. `browser/signin.py` watches the tab
+  (by CDP target id, so single sign-on can leave the site and come back) and
+  the fill resumes from the first page once a form appears. Nothing types,
+  clicks or reads a credential; the account is the person's.
 - Nothing closes the browser. A submission closes that job's form tab and
   nothing else; the Jobright list, the next form and the logins stay. The
   agent never closes anything.
