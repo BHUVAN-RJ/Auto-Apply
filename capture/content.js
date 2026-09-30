@@ -85,6 +85,13 @@ const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
 // offers, it never counts down and never queues itself.
 const cold = !!window.__autopilotCold;
 if (cold) window.__autopilotHandOpened = true;
+// The click on a cold badge is not a page being read, it is a decision: the
+// person looked at this posting and asked for it. So a clean verdict counts
+// down and queues itself from here, exactly as it does on a tab Jobright's
+// Apply opened. What the hand-opened rule protects against is a banner
+// nobody asked for acting by itself, which is still the case for an ATS form
+// that got the script on its host alone.
+let askedByHand = false;
 
 // "Use Opus": tailor this one job with the expensive model. Armed by the
 // button during the countdown and read when the job is queued, so pressing
@@ -392,6 +399,7 @@ function renderCold() {
     // this host.
     button.classList.add("live");
     button.disabled = true;
+    askedByHand = true;
     screen();
   });
   document.documentElement.appendChild(host);
@@ -737,7 +745,10 @@ function render(result, { pending = false } = {}) {
     // This tab has done its job once the pipeline has it: the fill opens
     // its own tab on approve. Only a job created just now; an "already in
     // autopilot" tab may be the one a fill is working on.
-    if (!onJobright && result?.created) closeSelf();
+    // A tab the person is standing in front of is never taken away from
+    // them: they clicked the badge on a page they are reading, and the
+    // posting is the page. Only the tab Apply opened goes.
+    if (!onJobright && result?.created && !askedByHand) closeSelf();
   };
   // A bar being read is a bar in use: hovering it, or tabbing into it, holds
   // the countdown, and leaving starts it again. Without this the three
@@ -758,8 +769,9 @@ function render(result, { pending = false } = {}) {
   };
   // A tab the person opened themselves is never queued by a countdown: the
   // injector marks only Jobright's own Apply tabs, and a form found by hand
-  // is a page being read, not a decision made.
-  if (add && AUTO_ADD.has(verdict) && !seen && !window.__autopilotHandOpened) {
+  // is a page being read, not a decision made. Clicking the cold badge is
+  // the decision, so that one does count down.
+  if (add && AUTO_ADD.has(verdict) && !seen && (askedByHand || !window.__autopilotHandOpened)) {
     add.classList.add("counting");
     label(onJobright ? "Opening job page" : "Adding to autopilot");
     started = performance.now();
@@ -1104,7 +1116,7 @@ function schedule() {
   bannerCollapsed = false;
   // A cold page is not screened on arrival, so there is nothing to settle
   // for: the badge goes on and the person decides.
-  if (cold) { renderCold(); return; }
+  if (cold) { askedByHand = false; renderCold(); return; }
   setTimeout(() => {
     if (location.href === lastUrl) screen();
   }, SETTLE_MS);

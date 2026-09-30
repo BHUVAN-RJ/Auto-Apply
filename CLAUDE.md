@@ -1002,7 +1002,12 @@ invariants first.
   hand-opened one, so it screens, offers, and never counts down, never
   presses Autofill and never closes itself. A cold page that turns out to be
   a job already on file gets what any match gets: the outcome line and the
-  put chips for that job's own resume and cover letter. This is what makes
+  put chips for that job's own resume and cover letter. **The click does
+  count down** (`askedByHand`, 2026-09-29): cold sets `__autopilotHandOpened`
+  so the banner cannot act on its own, but the person clicking the badge is
+  the decision that flag exists to wait for, so an `ok` or `caution` verdict
+  queues itself from there like any employer tab. The tab is never closed
+  after it, though - the posting is the page they are standing on. This is what makes
   "the badge on every page" safe to say about a browser that also holds
   email: the badge is drawn locally and reads nothing until it is asked.
 - Whatever comes next lands here first, one line each, with the date.
