@@ -493,6 +493,9 @@ def reject(job_id: str, rejection: Rejection) -> dict:
     killed = runner.stop_fill(job_id)
     if killed:
         detail += f" (fill {killed} killed)"
+    tailoring = runner.stop_pipeline(job_id)
+    if tailoring:
+        detail += f" (tailoring {tailoring} stopped)"
 
     store.set_status(app_dir, Status.SKIPPED, detail)
     store.write_or_append(app_dir, "rejection.md", f"# Rejected\n\n**{label}**\n\n"

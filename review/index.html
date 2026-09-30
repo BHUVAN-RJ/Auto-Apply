@@ -763,8 +763,12 @@ async function loadList() {
   // Not drawn yet (the URL named it), or its status moved: draw it.
   if (open && (!shownStatus || open.status !== shownStatus)) show(current);
   const waiting = jobs.filter((j) => BUCKET[j.status] === "you");
+  // A "Use Opus" job is waiting for a prompt to be pasted into a chat
+  // somewhere else, which may be hours. It is still in flight, but it is not
+  // the thing to open first: it sorts under everything at its own status.
   const inflight = jobs.filter((j) => ["you", "agent"].includes(BUCKET[j.status]))
-    .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || NEWEST(a, b));
+    .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status)
+      || (a.handoff ? 1 : 0) - (b.handoff ? 1 : 0) || NEWEST(a, b));
   const applied = jobs.filter((j) => BUCKET[j.status] === "done").sort(NEWEST);
   const rejected = jobs.filter((j) => BUCKET[j.status] === "stop").sort(NEWEST);
   $("count").textContent = jobs.length
@@ -791,6 +795,7 @@ async function loadList() {
               data-live="${LIVE.has(j.status) ? 1 : 0}" aria-current="${j.id === current}">
         <span class="role">${escape(j.title || j.url)}</span>
         <span class="co">${escape(j.company || j.source || "")}</span>
+        ${j.handoff ? `<span class="why">waiting for your Opus paste</span>` : ""}
         ${j.status === "skipped" && j.reject_reason
           ? `<span class="why">${escape(reasonLabel(j.reject_reason))}${
               j.reject_note ? " — " + escape(j.reject_note) : ""}</span>`

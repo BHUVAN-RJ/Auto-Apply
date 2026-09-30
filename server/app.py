@@ -289,6 +289,12 @@ def jobs() -> list[dict]:
                   else Status.SKIPPED if job.status is Status.SKIPPED else None)
         if wanted and job.app_dir:
             row["decided_at"] = store.reached_at(Path(job.app_dir), wanted) or job.added_at
+        # A job waiting on a prompt pasted into a chat is not waiting on the
+        # person's review; it is waiting on them somewhere else entirely, so
+        # the list puts it at the bottom of what needs them rather than at
+        # the top (2026-09-30).
+        if job.app_dir:
+            row["handoff"] = (Path(job.app_dir) / "handoff.md").exists()
         out.append(row)
     return out
 

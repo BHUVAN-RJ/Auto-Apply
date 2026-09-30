@@ -134,6 +134,31 @@ def stop_fill(job_id: str) -> Optional[int]:
     return pid
 
 
+def stop_pipeline(job_id: str) -> Optional[int]:
+    """Kill the tailoring running for this job, if any. Returns the pid.
+
+    A job cancelled seconds after it was added is usually still being
+    scraped and tailored, and letting that finish writes documents for an
+    application nobody wants and holds a model call open (2026-09-30).
+    """
+    try:
+        out = subprocess.run(["pgrep", "-f", f"pipeline.py {job_id}$"], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    pids = [int(p) for p in out.split() if p.isdigit() and int(p) != os.getpid()]
+    if not pids:
+        return None
+    pid = pids[0]
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        os.kill(pid, signal.SIGTERM)
+    return pid
+
+
 def start_fill(job_id: str, log_dir: Optional[Path] = None, force: bool = False) -> Optional[int]:
     """Begin filling an approved application, if autofill is switched on.
 

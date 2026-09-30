@@ -290,3 +290,29 @@ def test_a_real_failure_is_not_retried(monkeypatch):
     monkeypatch.setattr(fill, "RETRY_WAIT", 0)
     result = asyncio.run(fill._press_again("http://x", "https://example.com/job"))
     assert len(calls) == 1 and "no Autofill control" in result.note
+
+
+def test_a_failure_in_the_documents_step_is_never_silent(monkeypatch):
+    """It went into `Report.note`, which nothing logged, so a Greenhouse job
+    that died here said "resume NOT attached" with no errors beside it and no
+    way to tell why (Canonical, `f7a6`)."""
+    import asyncio
+
+    from browser import fill
+
+    async def boom():
+        raise RuntimeError("Session with given id not found.")
+
+    with_retry = []
+
+    async def run():
+        with_retry.append(1)
+        await boom()
+
+    try:
+        asyncio.run(fill._twice("documents", run))
+    except RuntimeError as error:
+        assert "Session with given id" in str(error)
+    else:
+        raise AssertionError("the error must reach the caller")
+    assert len(with_retry) == 2, "a dropped session is retried once"

@@ -25,7 +25,7 @@ from typing import Optional
 import paths
 from server import settings
 
-from . import ats, autofill, chrome, forms, guard, signin
+from . import ats, autofill, chrome, forms, guard, signin, workday
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -126,6 +126,10 @@ AGENT_ENV = "AUTOPILOT_AGENT"
 # behaviour: no form, no fill, `needs_sign_in.txt` and a trip to the review
 # page to press Fill again.
 SIGNIN_ENV = "AUTOPILOT_WAIT_FOR_SIGNIN"
+# Workday is five or six pages behind an account, and every other system this
+# app fills is one. `AUTOPILOT_WORKDAY=0` goes back to filling page one and
+# leaving the rest to the person.
+WORKDAY_ENV = "AUTOPILOT_WORKDAY"
 
 # Where the applicant is, as every location field on every form must read.
 AUTOFILL_STEP = """1. If a Jobright autofill button or panel is offered, click it and let it
@@ -498,17 +502,34 @@ TRANSPORT = re.compile(r"no close frame|session with given id|connection is clos
 RETRY_WAIT = 2.0
 
 
-async def _press_again(cdp_url: str, url: str) -> "autofill.AutofillResult":
-    """Press Jobright's Autofill, once more if the connection dropped."""
+def _corrections_store():
+    """What the person corrected on earlier forms, or None when the
+    auto-learn switch on the review page is off."""
+    if os.environ.get(CORRECTIONS_ENV, "1") == "0" or not settings.auto_learn():
+        return None
+    return forms.load_corrections()
+
+
+async def _twice(what: str, run):
+    """Run a CDP step, once more when the connection is what broke. Any
+    other failure is raised where it happened: a page with no Autofill
+    control will not grow one in two seconds."""
     for attempt in (1, 2):
         try:
-            return await autofill.press(cdp_url, url)
-        except Exception as error:  # noqa: BLE001 - the agent is the fallback
+            return await run()
+        except Exception as error:  # noqa: BLE001 - the caller decides
             if attempt == 2 or not TRANSPORT.search(str(error)):
-                return autofill.AutofillResult(note=f"failed: {error}")
-            log.info("autofill: %s; the connection dropped, trying once more", error)
+                raise
+            log.info("%s: %s; the connection dropped, trying once more", what, error)
             await asyncio.sleep(RETRY_WAIT)
-    return autofill.AutofillResult(note="failed")
+
+
+async def _press_again(cdp_url: str, url: str) -> "autofill.AutofillResult":
+    """Press Jobright's Autofill, once more if the connection dropped."""
+    try:
+        return await _twice("autofill", lambda: autofill.press(cdp_url, url))
+    except Exception as error:  # noqa: BLE001 - the agent is the fallback
+        return autofill.AutofillResult(note=f"failed: {error}")
 
 
 async def fill_async(
@@ -577,7 +598,37 @@ async def fill_async(
             log.info("sign-in watch: %s", error)
             gate = None
 
-    if not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
+    # Workday, page by page. Every other system is one page: press Autofill,
+    # put the documents on, stop. Workday asks for the same three steps five
+    # times and then shows a review page, so filling only the first one left
+    # most of the work where it was.
+    walk = None
+    if (not filled.attempted and workday.is_workday(url)
+            and os.environ.get(WORKDAY_ENV, "1") != "0"):
+        tab = (gate.target_id if gate is not None and gate.target_id
+               else autofill.find_tab(cdp_url, url))
+        if tab:
+            try:
+                walk = await workday.walk(cdp_url, tab, resume_pdf, cover_letter_pdf,
+                                          answerer, _corrections_store())
+            except Exception as error:  # noqa: BLE001 - then the one-page path
+                log.info("workday walk: %s", error)
+                walk = None
+        if walk is not None:
+            log.info("workday: %s", walk.summary())
+            pressed = autofill.AutofillResult(clicked=True, target_id=tab,
+                                              note=walk.summary())
+            filled.resume_uploaded = walk.resume_uploaded
+            filled.resume_name = resume_pdf.name if walk.resume_uploaded else ""
+            filled.cover_letter_uploaded = walk.cover_letter_uploaded
+            filled.answered = list(walk.answered)
+            filled.errors.extend(walk.errors)
+            if walk.paused:
+                filled.errors.append(walk.detail)
+            (screenshot_to.parent / "workday.json").write_text(
+                json.dumps(walk.to_json(), indent=2), encoding="utf-8")
+
+    if walk is None and not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
         # The injector presses Autofill when the human opens the form; when
         # that tab is still open the fill works there, no second tab and no
         # second press.
@@ -602,13 +653,19 @@ async def fill_async(
             # What the human corrected on earlier forms goes over Jobright's
             # values by exact label; the store is empty when nothing was.
             # Only while the auto-learn switch on the page is on.
-            corrections = (forms.load_corrections()
-                           if os.environ.get(CORRECTIONS_ENV, "1") != "0" and settings.auto_learn() else None)
+            corrections = _corrections_store()
             try:
-                docs = await forms.upload_documents(cdp_url, pressed.target_id, adapter or forms.Adapter(),
-                                                    resume_pdf, cover_letter_pdf, answerer, corrections)
+                docs = await _twice(
+                    "documents",
+                    lambda: forms.upload_documents(cdp_url, pressed.target_id,
+                                                   adapter or forms.Adapter(), resume_pdf,
+                                                   cover_letter_pdf, answerer, corrections))
             except Exception as error:  # noqa: BLE001 - the agent is the fallback
+                # In the report's `note`, which nothing logged, so a job that
+                # died here said only "resume NOT attached" with no errors
+                # beside it and no way to tell why (Canonical, `f7a6`).
                 docs = forms.Report(note=f"failed: {error}")
+                docs.errors.append(f"documents by code: {error}")
             filled.resume_uploaded = docs.resume_uploaded
             filled.resume_name = docs.resume_name
             filled.cover_letter_uploaded = docs.cover_letter_uploaded

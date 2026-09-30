@@ -22,10 +22,12 @@ What it never does:
   every control before it is pressed, the review page is a terminal stage,
   and the review page's own Submit is the person's click, in their browser
   or through the review page's own button. This module has no path to it.
-- It never presses **Apply** on a posting either. Workday's Apply is refused
-  by the same guard, and the driver stops and asks instead: a posting page is
-  not an application form, and pressing Apply is how an application starts on
-  someone else's terms.
+- It never presses **Submit**, and that is the only never here about pressing.
+  It does press **Apply** on a posting (2026-09-30, `browser/open_apply.py`),
+  under that module's own precondition: no file input, no password box and
+  too few fields to be an application, so there is nothing on the page that
+  could be sent. Refusing it did not protect anything - Workday's account
+  page, which the person has to reach, does not exist until Apply is pressed.
 - It never answers a visa, sponsorship or work-authorisation question: those
   fields are skipped before anything is matched (`engine`), and a page whose
   only unfilled required fields are those stops for the person.
@@ -49,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from . import autofill, guard
+from . import guard
 from .autofill import Session
 
 log = logging.getLogger(__name__)
@@ -294,14 +296,18 @@ def stage_of(look: dict) -> str:
         return "account"
     if VERIFY.search(heads) or VERIFY.search(text[:1500]):
         return "verify"
+    # A posting first, and only then a review page. `guard.describes_submit`
+    # answers True to "Apply" - it is the deny-list for the agent, where
+    # starting an application and sending one are equally forbidden - so a
+    # Workday posting, which has an Apply button and nothing to type, read
+    # as a review page and the walk stopped on it believing it was finished.
+    if int(look.get("editable") or 0) <= 2 and any(APPLY_ONLY.match(b) for b in buttons):
+        return "posting"
     # A review page is the one with Submit on it and (almost) nothing to type.
     if any(guard.describes_submit(b) for b in buttons) and int(look.get("editable") or 0) <= 3:
         return "review"
     if REVIEW.search(heads):
         return "review"
-    # A posting: an Apply button, no form under it.
-    if int(look.get("editable") or 0) <= 2 and any(APPLY_ONLY.match(b) for b in buttons):
-        return "posting"
     if int(look.get("editable") or 0) > 2 or int(look.get("files") or 0):
         return "form"
     return "unknown"
@@ -340,3 +346,176 @@ def blocking(look: dict) -> list[str]:
             continue
         out.append(text[:160])
     return out[:12]
+
+
+# --------------------------------------------------------------- the walk --
+#
+# Everything above is a question asked of one look at one page. This is the
+# loop that asks them, page after page, and it is deliberately dull: look,
+# decide, do one thing, look again. Nothing here is a guess about what
+# Workday meant - a page it cannot name is a page it stops on.
+
+CHANGE_KEYS = ("url", "heads", "editable", "files")
+
+
+async def look_at(page: Session) -> dict:
+    return (await page.evaluate(PAGE_JS)) or {}
+
+
+def _shape(look: dict) -> tuple:
+    """What "the page changed" means: a new URL, new headings, or a
+    different number of boxes. Workday's steps share a URL more often than
+    not, so the URL alone cannot answer it."""
+    return (str(look.get("url") or ""), " | ".join(look.get("heads") or []),
+            int(look.get("editable") or 0), int(look.get("files") or 0))
+
+
+async def click(page: Session, button: dict) -> None:
+    """Press a control at its centre with a real mouse event. The caller has
+    already refused it if it reads as a submit; this only presses."""
+    await page.evaluate(f"({CLICK_AT_JS})({button['x']!r}, {button['y']!r})")
+    await asyncio.sleep(SETTLE / 2)
+    for kind in ("mousePressed", "mouseReleased"):
+        await page.send("Input.dispatchMouseEvent", {
+            "type": kind, "x": button["x"], "y": button["y"],
+            "button": "left", "clickCount": 1,
+        })
+
+
+async def advance(page: Session, before: tuple, timeout: Optional[float] = None) -> dict:
+    """Wait for the page to become a different page. Returns the look it
+    settled on; the caller compares the shapes to see whether it moved.
+
+    The timeout is read here, not frozen into the signature: a module-level
+    `Path`/float default is bound at import, so a test that lowers it changes
+    nothing and waits the real twenty-five seconds a page.
+    """
+    deadline = time.monotonic() + (ADVANCE_TIMEOUT if timeout is None else timeout)
+    look: dict = {}
+    while time.monotonic() < deadline:
+        await asyncio.sleep(SETTLE)
+        try:
+            look = await look_at(page)
+        except Exception:  # noqa: BLE001 - mid-navigation, look again
+            continue
+        if look and _shape(look) != before:
+            return look
+    return look
+
+
+async def walk(cdp_url: str, target_id: str, resume=None, cover_letter=None,
+               answerer=None, corrections=None, max_pages: int = MAX_PAGES) -> WorkdayResult:
+    """Walk one Workday application, page by page, and stop at the review.
+
+    On each page: Jobright's autofill, then the tailored documents and the
+    open questions by code, then the page's own "Save and Continue". Never
+    Submit - the review page is where this ends, which is checkpoint 2, and
+    the person's own click is what follows it.
+
+    Stops and says why whenever the next step is the person's: an account,
+    an email to verify, a question Workday will not let pass, or a page that
+    would not move.
+    """
+    from . import autofill, open_apply, signin
+    from .forms import Adapter
+    from .forms.engine import run_documents
+
+    result = WorkdayResult(target_id=target_id)
+    applies = 0
+    async with autofill.attached(cdp_url, target_id=target_id) as (page, _):
+        await page.send("DOM.enable")
+        for number in range(1, max_pages + 1):
+            try:
+                look = await look_at(page)
+            except Exception as error:  # noqa: BLE001
+                result.errors.append(f"reading page {number}: {error}")
+                break
+            stage = stage_of(look)
+            result.stage = stage
+            step = Page(number=number, stage=stage, url=str(look.get("url") or ""),
+                        heading=(look.get("heads") or [""])[0])
+            result.pages.append(step)
+
+            if stage == "posting":
+                # The same press the sign-in watch makes, with the same
+                # precondition: a posting has nothing on it that could be
+                # sent. Anything else about this page is the person's.
+                if applies >= open_apply.MAX_PRESSES:
+                    result.paused, result.detail = "needs_apply", PAUSES["needs_apply"]
+                    break
+                shot = signin.Look(url=str(look.get("url") or ""),
+                                   fields=int(look.get("editable") or 0),
+                                   files=int(look.get("files") or 0),
+                                   passwords=int(look.get("passwords") or 0))
+                label = await open_apply.press(page, shot)
+                if not label:
+                    result.paused, result.detail = "needs_apply", PAUSES["needs_apply"]
+                    break
+                applies += 1
+                step.advanced = bool(await advance(page, _shape(look)))
+                continue
+
+            if stage == "account":
+                result.paused, result.detail = "needs_sign_in", PAUSES["needs_sign_in"]
+                break
+            if stage == "verify":
+                result.paused, result.detail = "verify_email", PAUSES["verify_email"]
+                break
+            if stage == "review":
+                # The end of the line. Submit is the person's, from the page
+                # or from the review page's own button.
+                result.reached_review = True
+                break
+            if stage != "form":
+                result.paused, result.detail = "stuck", PAUSES["stuck"]
+                break
+
+            # Jobright first, in this tab, so its autofill has this page's
+            # fields before ours goes over them.
+            try:
+                pressed = await autofill.in_tab(cdp_url, target_id)
+                step.autofilled = pressed.summary() if pressed else ""
+            except Exception as error:  # noqa: BLE001 - ours still runs
+                step.errors.append(f"jobright autofill: {error}")
+
+            # The documents belong to the page that has a slot for them, and
+            # only until they are on: Workday asks for a resume once.
+            want_resume = resume if (look.get("files") and not result.resume_uploaded) else None
+            want_cover = cover_letter if (look.get("files") and not result.cover_letter_uploaded) else None
+            try:
+                report = await run_documents(page, Adapter(), target_id, want_resume, want_cover,
+                                             answerer, corrections)
+                step.resume_uploaded = report.resume_uploaded
+                step.cover_letter_uploaded = report.cover_letter_uploaded
+                step.answered = list(report.answered)
+                step.corrected = list(report.corrected)
+                result.resume_uploaded = result.resume_uploaded or report.resume_uploaded
+                result.cover_letter_uploaded = result.cover_letter_uploaded or report.cover_letter_uploaded
+                result.answered.extend(report.answered)
+                # A page with no file input is not a broken page here: it is
+                # page one of five, and the slot is on page two.
+                step.errors.extend(e for e in report.errors if want_resume or "resume" not in e.lower())
+            except Exception as error:  # noqa: BLE001
+                step.errors.append(f"documents: {error}")
+            result.errors.extend(step.errors)
+
+            before = _shape(await look_at(page))
+            button = next_button(look if _shape(look) == before else await look_at(page))
+            if button is None:
+                stop = blocking(look)
+                result.needs = stop
+                result.paused = "blocked" if stop else "stuck"
+                result.detail = PAUSES[result.paused]
+                break
+            await click(page, button)
+            after = await advance(page, before)
+            step.advanced = bool(after) and _shape(after) != before
+            if not step.advanced:
+                stop = blocking(after or look)
+                result.needs = stop
+                result.paused = "blocked" if stop else "stuck"
+                result.detail = PAUSES[result.paused]
+                break
+        else:
+            result.paused, result.detail = "too_many_pages", PAUSES["too_many_pages"]
+    return result

@@ -1863,3 +1863,43 @@ answering `submitted` for a confirmation in string work is the second
 guard. That is what put the resume and cover letter chips back on the
 Workday form, which is how a form no automation can reach still gets the
 tailored documents.
+
+## Phase 22 — the whole application, page by page (2026-09-30)
+
+Built:
+
+- **Apply is pressed** (`browser/open_apply.py`). A posting is not an
+  application, and the account behind Apply cannot be offered until Apply is
+  pressed, so refusing to press it protected nothing and cost a Workday job
+  the whole `SIGNIN_TIMEOUT`. The precondition is read off the page rather
+  than assumed: no file input, no password box, fewer than `FORM_FIELDS`
+  editable fields, so there is nothing on it that could be sent. The label
+  must read as the start of an application and never as the end of one.
+- **Workday, page by page** (`browser/workday.walk`). Jobright's autofill,
+  the tailored documents on the page that has a slot, the corrections, the
+  open questions, then that page's own "Save and Continue", up to
+  `MAX_PAGES`. It stops at the review page - never Submit - and stops and
+  says whose turn it is on an account, an email to verify, a question
+  Workday will not let pass, or a page that would not move.
+- **The long wait belongs to a real wall** (`signin.NO_SIGNIN_TIMEOUT`), and
+  a dropped CDP connection is retried once rather than failing the job.
+
+Agreed and not built, in this order:
+
+1. **A database of what was applied for.** `data/queue.json` plus a folder
+   per application is the record now: it answers "have I applied here" well
+   (`server/seen.py`) and answers nothing else. Wanted: one queryable store
+   of every application - company, role, ATS, dates through each status, the
+   resume that went, the screen's verdict, the outcome - so the questions
+   worth asking ("which resumes got replies", "how many at this company",
+   "what did I send in September") are one query rather than a walk over 130
+   folders. SQLite beside the folders, written from `archive/store.py`, with
+   the folders still the source of truth.
+2. **Applying from GitHub repositories.** Read a set of repositories - a
+   company's own, a jobs board kept as a repo (`SimplifyJobs/New-Grad-
+   Positions` and the like) - scrape the postings out of their README tables
+   and JSON, screen each one through `tailor/screening.py`, and queue what
+   passes exactly as `/capture` does. The scout already does this shape for
+   careers pages (`scout/providers.py`), so it is a provider and a parser,
+   not a new pipeline. Needs the database above first, or a repo that lists
+   400 jobs will queue what has already been applied for.

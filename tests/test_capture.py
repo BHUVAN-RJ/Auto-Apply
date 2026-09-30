@@ -268,3 +268,15 @@ def test_the_submission_watch_only_silences_a_confirmation_page():
     # The job id and the poll stay: a confirmation reached later is still
     # marked, and `/screen` answers `submitted` for one before any rule runs.
     assert "sessionStorage.removeItem(JOB_KEY)" in script
+
+
+def test_the_banner_can_take_a_job_back_out():
+    """Auto-add is a countdown, and a countdown runs out while someone is
+    still reading. The button that added the job is the one that undoes it,
+    and the server side is the review page's own reject, so the folder and
+    the record stay."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert "click to stop" in script, "the countdown says it can be stopped"
+    assert 'data-act = "undo"' in script.replace(".dataset.act = ", "data-act = ")
+    assert '"changed_my_mind"' in script
+    assert "/reject" in script

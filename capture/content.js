@@ -616,6 +616,9 @@ function render(result, { pending = false } = {}) {
   let timer = null;
   let started = 0;
   let frame = 0;
+  // The id of the job this bar put into autopilot, while it can still be
+  // taken out again.
+  let added = null;
   const draw = () => {
     const done = Math.min(1, (performance.now() - started) / AUTO_ADD_MS);
     bar.style.width = `${done * 100}%`;
@@ -735,6 +738,17 @@ function render(result, { pending = false } = {}) {
       }
     }
     add.classList.add("done");
+    // Added by a countdown nobody asked to stop in time, or by a click made
+    // too quickly: the decision is still the person's, so the button that
+    // added it is the one that takes it back. It drops the job (the same
+    // reject the review page makes) and stops the tailoring with it.
+    if (queuedId) {
+      added = queuedId;
+      add.disabled = false;
+      add.classList.remove("done");
+      add.dataset.act = "undo";
+      label("Undo · take it out again");
+    }
     if (queuedId) {
       // The review tab is pointed at the job but stays where it is: the
       // person is reading the posting, and the fill opens its own tab
@@ -773,7 +787,7 @@ function render(result, { pending = false } = {}) {
   // the decision, so that one does count down.
   if (add && AUTO_ADD.has(verdict) && !seen && (askedByHand || !window.__autopilotHandOpened)) {
     add.classList.add("counting");
-    label(onJobright ? "Opening job page" : "Adding to autopilot");
+    label(onJobright ? "Opening job page · click to stop" : "Adding to autopilot · click to stop");
     started = performance.now();
     timer = setTimeout(act, AUTO_ADD_MS);
     frame = requestAnimationFrame(draw);
@@ -834,6 +848,17 @@ function render(result, { pending = false } = {}) {
     if (action === "add" && !add.disabled) {
       if (timer) cancel();
       else act();
+    }
+    if (action === "undo" && added && !add.disabled) {
+      e.stopPropagation();
+      stopCollapse();
+      add.disabled = true;
+      label("Taking it out…");
+      undo(added).then((ok) => {
+        label(ok ? "Taken out of autopilot" : "Could not take it out");
+        added = null;
+        add.dataset.act = "add";
+      });
     }
   });
   document.documentElement.appendChild(host);
@@ -944,6 +969,20 @@ function esc(s) {
 // Close this tab. The injector closes only an employer tab Apply opened and
 // the extension only the sender; window.close is the fallback, which a tab
 // no script opened ignores.
+// Take a job back out of autopilot, seconds after it went in. The server
+// side is the review page's own reject, so the job keeps its folder and its
+// record: changing your mind is part of the record, not a deletion.
+async function undo(jobId) {
+  try {
+    const res = await post(`/review/${jobId}/reject`,
+                           { reason: "changed_my_mind", note: "cancelled from the posting page" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+
 async function closeSelf() {
   if (typeof window.__autopilotRequest === "function") {
     try {
