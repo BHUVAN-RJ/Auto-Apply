@@ -117,3 +117,23 @@ def test_the_guard_still_refuses_the_control_the_button_presses():
     for pattern in guard.SUBMIT_PATTERNS:
         assert json.dumps(pattern) in press_submit._SUBMIT_SOURCE
     assert press_submit._SUBMIT_SOURCE in press_submit.CANDIDATES_JS
+
+
+def test_the_apply_press_can_never_be_a_submit():
+    """Apply is pressed inside the fill, so the line between starting an
+    application and sending one is checked here and not only in that
+    module's own tests. Two halves: the label must read as a start and never
+    as a finish, and the page must have nothing on it that could be sent."""
+    from browser import open_apply, signin
+
+    for label in ("Submit", "Submit Application", "Send", "Finish", "Complete application",
+                  "Confirm and submit", "Withdraw"):
+        assert open_apply.choose([{"text": label, "shown": True, "disabled": False, "top": 1}]) is None, label
+    # A page holding an application is refused whatever its buttons say.
+    assert not open_apply.safe_to_press(signin.Look(files=1))
+    assert not open_apply.safe_to_press(signin.Look(fields=signin.FORM_FIELDS))
+    assert not open_apply.safe_to_press(signin.Look(passwords=1))
+    # And a control is only ever pressed through the one gated function.
+    source = (ROOT / "browser" / "open_apply.py").read_text()
+    assert source.count('await page.send("Input.dispatchMouseEvent"') == 1
+    assert "safe_to_press" in source.split("async def press(")[1]

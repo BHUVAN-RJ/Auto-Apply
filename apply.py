@@ -137,14 +137,17 @@ def fill_one(job: Job) -> bool:
     store.write_or_append(app_dir, "fill_notes.md", "".join(body))
 
     if not result.ok and result.no_form:
-        # The page had no form on it: Workday, McKinsey and the rest keep
-        # it behind Apply and a sign-in, and the fill never presses Apply.
-        # Nothing is wrong with this job - the resume and the letter are
-        # written and waiting - so it goes back to checkpoint 1 rather than
-        # onto the failed shelf, where a perfectly good application reads
-        # as gone (Morgan Stanley, McKinsey and CVS all landed there).
-        detail = ("the form is behind Apply and a sign-in: open the posting, sign in "
-                  "until you can see the application form, then press Fill the form again")
+        # The page had no form on it: Workday, McKinsey and the rest keep it
+        # behind Apply and an account. Apply is pressed now
+        # (`browser/open_apply.py`), so what is left here is the account
+        # itself, which is the person's. Nothing is wrong with this job - the
+        # resume and the letter are written and waiting - so it goes back to
+        # checkpoint 1 rather than onto the failed shelf, where a perfectly
+        # good application reads as gone (Morgan Stanley, McKinsey and CVS
+        # all landed there).
+        detail = ("the application is behind an account: the tab is open on it, sign in "
+                  "or create the account until you can see the form, then press Fill "
+                  "the form again")
         store.set_status(app_dir, Status.AWAITING_REVIEW, detail)
         queue.update(job.id, status=Status.AWAITING_REVIEW, error=None)
         store.write(app_dir, "needs_sign_in.txt", detail + "\n")

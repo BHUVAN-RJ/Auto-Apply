@@ -172,3 +172,121 @@ def test_a_resume_slot_outranks_any_header():
     """A page you can attach a resume to is the application, whatever the
     sign-in offer above it says: Greenhouse and Ashby both put one there."""
     assert not signin.looks_like_signin(look(text="Sign In", files=1, fields=6))
+
+
+# -- the posting that nobody was pressing Apply on ------------------------
+
+class PressablePage(FakePage):
+    """A Workday posting whose Apply leads to the account page."""
+
+    def __init__(self, looks, controls):
+        super().__init__(looks)
+        self.controls = controls
+        self.presses = []
+
+    async def evaluate(self, expression):
+        if "elementFromPoint" in expression:
+            return True
+        if "getBoundingClientRect" in expression and "START" in expression:
+            return self.controls
+        return await super().evaluate(expression)
+
+    async def send(self, method, params=None):
+        if method == "Input.dispatchMouseEvent" and params.get("type") == "mousePressed":
+            self.presses.append(params)
+        return {}
+
+
+def _watch(monkeypatch, page, **kw):
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def attached(cdp_url, url="", target_id=""):
+        yield page, target_id or "TAB1"
+    monkeypatch.setattr(signin, "attached", attached)
+    monkeypatch.setattr(signin, "POLL", 0)
+    return asyncio.run(signin.wait_for_form("http://x", "TAB1", "https://acme.wd5.myworkdayjobs.com/job/1", **kw))
+
+
+def test_a_postings_apply_is_pressed_so_the_account_can_be_offered(monkeypatch):
+    """The Globus Medical run: the tab sat on the posting for the full ten
+    minutes because the sign-in it was waiting for cannot appear until Apply
+    is pressed."""
+    posting = {"url": "https://acme.wd5.myworkdayjobs.com/job/1", "text": "Associate Software Engineer",
+               "fields": 1, "files": 0, "passwords": 0}
+    account = {"url": "https://acme.wd5.myworkdayjobs.com/job/1/apply", "text": "Sign In\nCreate Account",
+               "fields": 3, "files": 0, "passwords": 1}
+    form = {"url": "https://acme.wd5.myworkdayjobs.com/job/1/apply/2", "text": "My Information",
+            "fields": 9, "files": 1, "passwords": 0}
+    page = PressablePage([posting, account, form],
+                         [{"text": "Apply", "shown": True, "disabled": False,
+                           "top": 100, "x": 40, "y": 60}])
+    result = _watch(monkeypatch, page, timeout=5)
+    assert result.applied == "Apply" and result.pressed == 1
+    assert len(page.presses) == 1
+    assert result.ready and result.saw_signin
+
+
+def test_a_posting_nobody_is_watching_stops_holding_the_fill_queue(monkeypatch):
+    """A wall somebody is standing in front of gets the full ten minutes. A
+    page where nothing is happening gets `NO_SIGNIN_TIMEOUT`, because the
+    fills run one at a time and this one is going nowhere."""
+    posting = {"url": "https://acme.wd5.myworkdayjobs.com/job/1", "text": "A job",
+               "fields": 1, "files": 0, "passwords": 0}
+    page = PressablePage([posting], [])
+    monkeypatch.setattr(signin, "NO_SIGNIN_TIMEOUT", 0.01)
+    result = _watch(monkeypatch, page, timeout=600)
+    assert not result.ready and not result.saw_signin
+    assert result.waited < 5 and "no application form" in result.note
+
+
+def test_the_apply_press_can_be_switched_off(monkeypatch):
+    posting = {"url": "https://acme.wd5.myworkdayjobs.com/job/1", "text": "A job",
+               "fields": 1, "files": 0, "passwords": 0}
+    page = PressablePage([posting], [{"text": "Apply", "shown": True, "disabled": False,
+                                      "top": 1, "x": 1, "y": 1}])
+    monkeypatch.setattr(signin, "NO_SIGNIN_TIMEOUT", 0.01)
+    result = _watch(monkeypatch, page, timeout=600, press_apply=False)
+    assert page.presses == [] and result.pressed == 0
+
+
+def test_a_dropped_connection_is_retried_once(monkeypatch):
+    """Two of the three Greenhouse jobs on the failed shelf died on the CDP
+    socket, not on the form: "no close frame received or sent" and "Session
+    with given id not found". The tab was fine; the connection was not."""
+    import asyncio
+
+    from browser import fill
+
+    calls = []
+
+    async def press(cdp_url, url):
+        calls.append(url)
+        if len(calls) == 1:
+            raise RuntimeError("no close frame received or sent")
+        return fill.autofill.AutofillResult(note="pressed")
+
+    monkeypatch.setattr(fill.autofill, "press", press)
+    monkeypatch.setattr(fill, "RETRY_WAIT", 0)
+    result = asyncio.run(fill._press_again("http://x", "https://job-boards.greenhouse.io/embed/job_app"))
+    assert len(calls) == 2 and result.note == "pressed"
+
+
+def test_a_real_failure_is_not_retried(monkeypatch):
+    """Only the transport is worth a second attempt; a page that has no
+    Autofill control will not grow one in two seconds."""
+    import asyncio
+
+    from browser import fill
+
+    calls = []
+
+    async def press(cdp_url, url):
+        calls.append(url)
+        raise RuntimeError("no Autofill control on the page")
+
+    monkeypatch.setattr(fill.autofill, "press", press)
+    monkeypatch.setattr(fill, "RETRY_WAIT", 0)
+    result = asyncio.run(fill._press_again("http://x", "https://example.com/job"))
+    assert len(calls) == 1 and "no Autofill control" in result.note

@@ -1036,6 +1036,36 @@ invariants first.
   *because* of the bug (they read the maintainer's real process list);
   `tests/conftest.py` stubs the scan for every test but the one marked
   `real_fill_scan`.
+- **Apply is pressed, so the account can be offered** (2026-09-30, asked for:
+  "fix Workday"). `browser/open_apply.py`, called from `signin.wait_for_form`.
+  A Workday job opened its tab, found the posting rather than a form, and
+  waited the full `SIGNIN_TIMEOUT` for a sign-in that **cannot appear until
+  Apply is pressed** - ten minutes of the one-at-a-time fill queue on a page
+  where nothing was ever going to happen (Globus Medical, `3dcc`). The
+  principle it was protecting is intact, because Apply is not Submit and the
+  difference is checked on the page: `safe_to_press` wants no file input,
+  fewer than `signin.FORM_FIELDS` editable fields and no password box - a
+  posting, with nothing on it that could be sent - and `APPLY_START` must
+  match the control's whole label while `NOT_APPLY` (submit / send / finish /
+  withdraw / save / sign in) disqualifies it. At most `MAX_PRESSES` (3), which
+  is posting → Workday's chooser → "Apply Manually". The module does not
+  import `guard`, may not even name the submit presser (invariant #6 reads it
+  as text), and has one gated `Input.dispatchMouseEvent` in it; invariant
+  "the apply press can never be a submit" checks both halves. It is not
+  Workday-specific - ADP, iCIMS, Rippling and the rest word their button the
+  same way.
+- **The long wait belongs to a wall that is really there** (2026-09-30).
+  `signin.NO_SIGNIN_TIMEOUT` (90 s) is what a page gets when no sign-in was
+  ever detected; the generous `SIGNIN_TIMEOUT` (600 s) applies only once
+  `saw_signin`. Somebody halfway through creating an account deserves ten
+  minutes; a posting nobody is standing in front of was costing the fill
+  queue the same ten.
+- **A dropped CDP connection is not a failed application** (2026-09-30).
+  Two of the three Greenhouse jobs on the failed shelf died on the socket -
+  `no close frame received or sent`, `Session with given id not found` - with
+  the tab sitting there fillable and the tailored resume beside it.
+  `fill._press_again` retries `autofill.press` once, on a `TRANSPORT` error
+  only: a page with no Autofill control will not grow one in two seconds.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

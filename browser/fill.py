@@ -14,6 +14,7 @@ Nothing here can reach a submit button.
 from __future__ import annotations
 
 import asyncio
+import re
 import json
 import logging
 import os
@@ -485,6 +486,31 @@ def resolve_cdp_url(headless: bool = False) -> str:
     return os.environ.get(CDP_URL, "").strip() or chrome.ensure(profile_dir(), headless=headless)
 
 
+# A dropped CDP connection is not a failed application. Two of the three
+# Greenhouse jobs on the failed shelf died on "no close frame received or
+# sent" and "Session with given id not found" (2026-09-30): the socket went
+# while the tab sat there, perfectly fillable, and the job landed on the
+# failed shelf with its tailored resume beside it. The second attempt opens a
+# fresh connection, which is all either of them needed.
+TRANSPORT = re.compile(r"no close frame|session with given id|connection is closed|"
+                       r"websocket|connection closed|target closed|"
+                       r"cannot call send|broken pipe", re.I)
+RETRY_WAIT = 2.0
+
+
+async def _press_again(cdp_url: str, url: str) -> "autofill.AutofillResult":
+    """Press Jobright's Autofill, once more if the connection dropped."""
+    for attempt in (1, 2):
+        try:
+            return await autofill.press(cdp_url, url)
+        except Exception as error:  # noqa: BLE001 - the agent is the fallback
+            if attempt == 2 or not TRANSPORT.search(str(error)):
+                return autofill.AutofillResult(note=f"failed: {error}")
+            log.info("autofill: %s; the connection dropped, trying once more", error)
+            await asyncio.sleep(RETRY_WAIT)
+    return autofill.AutofillResult(note="failed")
+
+
 async def fill_async(
     url: str,
     resume_pdf: Path,
@@ -540,9 +566,13 @@ async def fill_async(
             gate_tab[0] = autofill.find_tab(cdp_url, url)
             tab, gate = await signin.ready_tab(cdp_url, url, notify=say)
             gate_tab[0] = tab
+            if gate.applied:
+                log.info("pressed Apply (%s), %d time(s)", gate.applied, gate.pressed)
             if gate.saw_signin:
                 log.info("sign-in wall: waited %.0fs, form %s",
                          gate.waited, "reached" if gate.ready else "never appeared")
+            elif not gate.ready:
+                log.info("no form after %.0fs on %s", gate.waited, gate.url or "the posting")
         except Exception as error:  # noqa: BLE001 - then the old path, unchanged
             log.info("sign-in watch: %s", error)
             gate = None
@@ -562,10 +592,7 @@ async def fill_async(
             log.info("could not reuse the opened tab: %s", error)
             pressed = None
         if pressed is None:
-            try:
-                pressed = await autofill.press(cdp_url, url)
-            except Exception as error:  # noqa: BLE001 - the agent is the fallback
-                pressed = autofill.AutofillResult(note=f"failed: {error}")
+            pressed = await _press_again(cdp_url, url)
         log.info(pressed.summary())
         # The documents, in code, once Jobright is done: the tailored resume
         # over whatever it attached, the cover letter where there is a slot.

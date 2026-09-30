@@ -24,8 +24,14 @@ stable across navigation, so the same tab is watched through the provider and
 back to the employer, and the moment the second detector fires the fill starts
 from the first page as if the wall had never been there.
 
-Nothing here types, clicks, or reads a credential. Signing in is the person's,
-in their own browser; this only notices when they are through.
+Nothing here types or reads a credential. Signing in is the person's, in their
+own browser; this only notices when they are through. The one thing it does
+press is a posting's **Apply**, and only when the page has nothing on it that
+could be sent (`open_apply.safe_to_press`): the sign-in the person is waiting
+to be shown cannot appear until Apply is pressed, so refusing to press it did
+not protect anything - it just left the tab on the posting until the timeout.
+Checkpoint 2, the filled form, is untouched; nothing here can reach a Submit
+control.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlsplit
 
+from . import open_apply
 from .autofill import Session, attached
 
 # How long a person gets to sign in before the fill gives up and hands the job
@@ -45,6 +52,13 @@ from .autofill import Session, attached
 # sitting open, while the cost of giving up early is the round trip this
 # module exists to remove.
 SIGNIN_TIMEOUT = 600.0
+# A posting that never becomes a form is not somebody halfway through an
+# account: it is a page where nothing is happening, and the fill queue runs
+# one job at a time. So the generous timeout is only for a wall that is
+# actually there. Without one, the watch gives up after this instead - long
+# enough for Apply to be pressed and the account page to render, short enough
+# that an unattended Workday job costs a minute rather than ten (2026-09-30).
+NO_SIGNIN_TIMEOUT = 90.0
 POLL = 2.0
 
 # The hosts a sign-in leaves for. The tab is still the job's tab while it is
@@ -209,6 +223,8 @@ class Wait:
     url: str = ""
     waited: float = 0.0
     note: str = ""
+    pressed: int = 0            # how many Apply controls were pressed
+    applied: str = ""           # the label of the last one
 
 
 async def look_at(page: Session) -> Look:
@@ -216,7 +232,8 @@ async def look_at(page: Session) -> Look:
 
 
 async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
-                        timeout: float = SIGNIN_TIMEOUT, notify=None) -> Wait:
+                        timeout: float = SIGNIN_TIMEOUT, notify=None,
+                        press_apply: bool = True) -> Wait:
     """Watch one tab until its application form is on the screen.
 
     Follows the tab, never the link: single sign-on takes the page to
@@ -225,7 +242,9 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
     the second detector fires, so the caller can fill from the first page as
     though the wall had never been there.
 
-    Nothing is typed and nothing is pressed. `notify` is called with a short
+    Nothing is typed and no credential is touched. A posting's Apply is
+    pressed (`press_apply`, and only on a page with nothing to send), because
+    the account is not offered until it is. `notify` is called with a short
     line whenever the answer changes, for the banner on the tab.
     """
     result = Wait(target_id=target_id)
@@ -250,8 +269,28 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
                 if notify and line != said:
                     said = line
                     await _say(notify, line)
+            elif press_apply and result.pressed < open_apply.MAX_PRESSES:
+                # A posting, with nothing on it that could be sent. Pressing
+                # its Apply is what the person approved at checkpoint 1; the
+                # sign-in they are waiting to be asked for cannot appear
+                # until it is pressed. Checkpoint 2 is untouched: there is no
+                # path from here to a Submit control.
+                try:
+                    label = await open_apply.press(page, look)
+                except Exception:  # noqa: BLE001 - then wait as before
+                    label = None
+                if label:
+                    result.pressed += 1
+                    result.applied = label
+                    if notify:
+                        await _say(notify, f"Opening the application ({label})")
+                    await asyncio.sleep(open_apply.SETTLE)
             result.waited = time.monotonic() - started
-            if result.waited >= timeout:
+            # The full wait belongs to a wall that is really there. A posting
+            # nobody is standing in front of gives up quickly instead, so one
+            # job does not hold the one-at-a-time fill queue for ten minutes.
+            limit = timeout if result.saw_signin else min(timeout, NO_SIGNIN_TIMEOUT)
+            if result.waited >= limit:
                 result.note = ("no application form appeared while waiting to be signed in"
                                if result.saw_signin else "no application form on this page")
                 break
@@ -261,7 +300,7 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
 
 
 async def ready_tab(cdp_url: str, url: str, timeout: float = SIGNIN_TIMEOUT,
-                    notify=None) -> tuple[str, Wait]:
+                    notify=None, press_apply: bool = True) -> tuple[str, Wait]:
     """The tab this job's form is on, once it is reachable.
 
     Reuses the tab already open on the job (the one the injector screened,
@@ -275,7 +314,8 @@ async def ready_tab(cdp_url: str, url: str, timeout: float = SIGNIN_TIMEOUT,
     if not target_id:
         async with attached(cdp_url, url) as (_, opened):
             target_id = opened
-    wait = await wait_for_form(cdp_url, target_id, url, timeout=timeout, notify=notify)
+    wait = await wait_for_form(cdp_url, target_id, url, timeout=timeout, notify=notify,
+                               press_apply=press_apply)
     wait.target_id = target_id
     return target_id, wait
 
