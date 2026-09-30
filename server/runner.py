@@ -179,19 +179,30 @@ def any_fill_running() -> Optional[str]:
         if process.poll() is None:
             return job_id
         del _fills[job_id]
+    # `-fl`, not `-af`: macOS pgrep has no `-a`, and it printed bare pids
+    # rather than command lines, so this loop matched nothing and the answer
+    # was always None (2026-09-30). The guard then held only while `_fills`
+    # did - inside one server process - and a restart put three fills on one
+    # Chrome window at once.
     try:
-        out = subprocess.run(["pgrep", "-af", "apply.py"], capture_output=True, text=True,
+        out = subprocess.run(["pgrep", "-fl", "apply.py"], capture_output=True, text=True,
                              timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     for line in out.splitlines():
         parts = line.split()
+        if not parts or not parts[0].isdigit() or int(parts[0]) == os.getpid():
+            continue
         # "<pid> <python> /path/apply.py <job id>"; a bare `apply.py` with no
         # id is the batch run and counts as a fill in progress too.
-        if len(parts) >= 3 and parts[-2].endswith("apply.py") and int(parts[0]) != os.getpid():
+        if len(parts) >= 3 and parts[-2].endswith("apply.py"):
             return parts[-1]
-        if parts and parts[-1].endswith("apply.py") and int(parts[0]) != os.getpid():
+        if parts[-1].endswith("apply.py"):
             return "batch"
+        # A process we cannot name is still a fill. Saying "nothing is
+        # running" because the output was not the shape expected is the one
+        # answer that opens a second tab.
+        return "unknown"
     return None
 
 

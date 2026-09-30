@@ -570,6 +570,7 @@
     <select id="reason" required></select>
     <label for="note">Anything else (optional)</label>
     <textarea id="note" placeholder="e.g. wants 8 years, posting says onsite only"></textarea>
+    <p class="hint" id="rejectStops">Any fill still running for this job is killed and its tab closed.</p>
     <div class="actions" style="justify-content:flex-end;margin-bottom:0">
       <button class="act" value="cancel" formnovalidate>Cancel</button>
       <button class="act danger" id="confirmReject" value="reject">Reject</button>
@@ -924,7 +925,8 @@ async function show(id) {
     ${working ? `
       <div class="actions">
         <span class="state agent">Agent is working</span>
-        <span class="hint">Leave the browser alone. Options return in ${working}s.</span>
+        <span class="hint">Leave the browser alone. The rest of the options return in ${working}s.</span>
+        <button class="act danger" id="reject">Reject…</button>
       </div>` : ""}
     ${!reviewable && !filled && !working ? `
       <div class="actions">

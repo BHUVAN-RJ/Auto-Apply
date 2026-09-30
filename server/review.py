@@ -478,10 +478,21 @@ def reject(job_id: str, rejection: Rejection) -> dict:
     A reason is required: a rejected job stays visible in the list, and a
     rejection with no reason tells you nothing three weeks later. The folder
     is kept intact as the record of what was tried.
+
+    A rejection stops the work at once. The fill goes (2026-09-30): a
+    rejected job whose `apply.py` kept running held the one tab the app
+    owns, so `runner.serial_tick` started nothing and nine approved jobs
+    sat still behind one job the person had already said no to - and the
+    agent itself, with no form left to work on, once wandered into another
+    job's tab. Its tab goes with it, the same way a submission's does: the
+    form is finished with either way, and only that tab closes.
     """
-    _, app_dir = _job_and_dir(job_id)
+    job, app_dir = _job_and_dir(job_id)
     label = REJECT_LABELS[rejection.reason]
     detail = f"{label}: {rejection.note}" if rejection.note else label
+    killed = runner.stop_fill(job_id)
+    if killed:
+        detail += f" (fill {killed} killed)"
 
     store.set_status(app_dir, Status.SKIPPED, detail)
     store.write_or_append(app_dir, "rejection.md", f"# Rejected\n\n**{label}**\n\n"
@@ -492,7 +503,9 @@ def reject(job_id: str, rejection: Rejection) -> dict:
         reject_reason=rejection.reason,
         reject_note=rejection.note,
     )
-    return {"id": job_id, "status": Status.SKIPPED.value, "reason": label}
+    tab = "closed" if chrome.close_tab(_form_tab(job, app_dir)) else "not_open"
+    return {"id": job_id, "status": Status.SKIPPED.value, "reason": label,
+            "killed": killed, "tab": tab}
 
 
 @router.get("/meta/reject-reasons")

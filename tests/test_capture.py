@@ -107,9 +107,10 @@ def test_add_opens_the_captured_job_in_autopilot():
 def test_a_newly_queued_employer_tab_closes_itself_and_nothing_else_does():
     """The tab Apply opened is screened and queued, then goes; approve
     opens a fresh one. Never a Jobright tab, never one already in
-    autopilot (a fill may be on it)."""
+    autopilot (a fill may be on it), and never one the person asked to
+    screen from its badge - there the posting is the page they are on."""
     script = (runner.ROOT / "capture" / "content.js").read_text()
-    assert "if (!onJobright && result?.created) closeSelf();" in script
+    assert "if (!onJobright && result?.created && !askedByHand) closeSelf();" in script
     assert 'post("/__close", {})' in script
     assert 'chrome.runtime.sendMessage({ type: "close-me" })' in script
     background = (runner.ROOT / "capture" / "background.js").read_text()

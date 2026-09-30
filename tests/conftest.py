@@ -28,3 +28,19 @@ def _own_prompt_edits(tmp_path, monkeypatch):
     monkeypatch.setattr(workshop, "STORE", tmp_path / "_workshop.json")
     # A test that re-tailors a few times must not start a real model call.
     monkeypatch.setattr(workshop, "LEARN_EVERY", 10**6)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_fills(request, monkeypatch):
+    """The process list belongs to the machine, not to the suite. The
+    one-tab-at-a-time guard reads it with pgrep, so a real `apply.py` running
+    on the maintainer's laptop made `/fill` answer 409 in five tests that
+    have nothing to do with it. The test that means to exercise the guard
+    itself says so with `@pytest.mark.real_fill_scan`.
+    """
+    from server import runner
+
+    if request.node.get_closest_marker("real_fill_scan"):
+        return
+    monkeypatch.setattr(runner, "any_fill_running", lambda: None)
+    monkeypatch.setattr(runner, "_pgrep_fill", lambda job_id: None)

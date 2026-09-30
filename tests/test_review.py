@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from archive import store
-from server import queue, runner
+from server import queue, review, runner
 from server.app import app
 from server.models import Job, Status
 
@@ -292,6 +292,21 @@ def test_you_can_reject_at_any_stage(client):
                                json={"reason": "changed_my_mind"})
         assert response.status_code == 200, status
         assert queue.get(job_id).status == Status.SKIPPED
+
+
+def test_rejecting_kills_the_fill_and_closes_its_tab(client, monkeypatch):
+    """A rejected job whose fill kept running held the one tab the app owns,
+    so the serial queue started nothing and every approved job behind it
+    stood still. Saying no stops the work."""
+    killed, closed = [], []
+    monkeypatch.setattr(runner, "stop_fill", lambda jid: killed.append(jid) or 4242)
+    monkeypatch.setattr(review.chrome, "close_tab", lambda tab: closed.append(tab) or True)
+    job_id, app_dir = reviewable_job()
+    queue.update(job_id, status=Status.FILLING)
+    body = client.post(f"/review/{job_id}/reject", json={"reason": "poor_fit"}).json()
+    assert killed == [job_id] and body["killed"] == 4242 and body["tab"] == "closed"
+    assert len(closed) == 1
+    assert "fill 4242 killed" in (app_dir / "status.json").read_text()
 
 
 def test_the_job_list_carries_the_rejection_reason(client):

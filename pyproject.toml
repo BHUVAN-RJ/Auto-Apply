@@ -28,6 +28,9 @@ packages = ["server", "tailor", "tex", "browser", "archive", "voice"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_fill_scan: let this test read the real process list for running fills",
+]
 
 [tool.uv]
 # The app runs from this folder; uv installs its dependencies, not the app.

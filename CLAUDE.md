@@ -352,9 +352,10 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
   `_RegisterApplication ... abort()` five times in twenty minutes. Our
   scripts started from Herdr or uvicorn are fine. Not ours to fix; know
   the signature.
-- **Rejecting a `filling` job does not stop its fill.** `apply.py` keeps
-  running on a rejected job and, with no form to work on, wandered into
-  another job's tab. `pgrep -fl apply.py` and kill it by hand for now.
+- **Rejecting a `filling` job stops its fill** (fixed 2026-09-30). It used
+  not to: `apply.py` kept running on a rejected job and, with no form to work
+  on, wandered into another job's tab - and held the serial queue behind it.
+  `review.reject` kills the fill and closes its tab.
 - **`el.click()` on Jobright's opener does not fill.** "Autofill my
   application" opens the panel; the control inside starts the fill. The
   press now takes the second step. A tab froze hard once during this
@@ -1010,6 +1011,31 @@ invariants first.
   after it, though - the posting is the page they are standing on. This is what makes
   "the badge on every page" safe to say about a browser that also holds
   email: the badge is drawn locally and reads nothing until it is asked.
+- **Reject stops the work, and it is never taken away** (2026-09-30, asked
+  for, and the end of the "rejecting a `filling` job does not stop its fill"
+  entry below). `review.reject` now calls `runner.stop_fill` and closes that
+  job's form tab (`chrome.close_tab(_form_tab(...))`, the same one line a
+  submission uses), records the killed pid in the status note, and returns
+  `killed` / `tab`. Nine approved jobs stood still for twenty minutes behind
+  one job the person had already rejected, because its `apply.py` kept the
+  one tab the app owns and `serial_tick` waits for that. And the button was
+  missing exactly when it was wanted: `fillWorking` hid every option during
+  the fill's first grace seconds, so the "Agent is working" row had no way
+  out. That row carries Reject now; the `.actions` row already carried it
+  everywhere else.
+- **`pgrep -af` is not a thing on macOS, and it silently disabled the
+  one-tab rule** (2026-09-30). `runner.any_fill_running` parsed
+  `pgrep -af apply.py` for "<pid> <python> <path> <job id>"; macOS pgrep has
+  no `-a`, printed bare pids, nothing matched, and the answer was always
+  None. The guard therefore held only through `_fills`, this process's own
+  memory, so every server restart forgot what was filling: three `apply.py`
+  runs opened tabs on one Chrome window within a minute of a restart. It is
+  `pgrep -fl` now, and output in an unexpected shape answers `"unknown"`
+  rather than None - saying "nothing is running" is the one answer that
+  opens a second tab. The five tests that covered `/fill` were passing
+  *because* of the bug (they read the maintainer's real process list);
+  `tests/conftest.py` stubs the scan for every test but the one marked
+  `real_fill_scan`.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

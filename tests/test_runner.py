@@ -1,5 +1,6 @@
 """Launching work from the review page."""
 
+import subprocess
 import sys
 
 import pytest
@@ -145,3 +146,29 @@ def test_stop_fill_kills_the_process_group(tmp_path, monkeypatch):
     assert killed == [(4242, runner.signal.SIGTERM)]
     assert runner.fill_pid("c4f3") is None
     assert runner.stop_fill("c4f3") is None
+
+
+@pytest.mark.real_fill_scan
+def test_a_fill_started_by_another_process_is_seen(monkeypatch):
+    """`_fills` is empty in a freshly started server, so the one-tab rule
+    rests entirely on reading the process list. It was read with `pgrep -af`,
+    which macOS does not support: bare pids came back, nothing matched, and
+    the answer was always None - three fills on one Chrome window after a
+    restart."""
+    runner._fills.clear()
+    lines = "54905 /usr/bin/python /repo/apply.py 3dcc\n"
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:2] == ["pgrep", "-fl"], "macOS pgrep has no -a"
+        return subprocess.CompletedProcess(cmd, 0, stdout=lines, stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    assert runner.any_fill_running() == "3dcc"
+    lines = "54905 /usr/bin/python /repo/apply.py\n"
+    assert runner.any_fill_running() == "batch"
+    # Output in a shape we did not expect is still a fill: saying "nothing is
+    # running" is the one answer that opens a second tab.
+    lines = "54905\n"
+    assert runner.any_fill_running() == "unknown"
+    lines = "\n"
+    assert runner.any_fill_running() is None
