@@ -140,9 +140,41 @@ def test_an_ats_form_opened_by_apply_is_not_hand_opened():
     assert "t1" in r.marked
 
 
-def test_an_unrelated_tab_gets_nothing():
+def cold_flags(injector):
+    """What each injection told the page about whether anything pointed it
+    at a job."""
+    return [("__autopilotCold=true" in params["expression"])
+            for method, params, _ in injector.calls
+            if method == "Runtime.evaluate" and params.get("expression", "").endswith("SCRIPT")]
+
+
+def test_an_unrelated_tab_gets_the_script_cold():
+    """The browser is the person's job-hunting window and a posting can be on
+    any host, so every page gets the script. A page nothing pointed at a job
+    is cold: the badge, and no request until it is clicked."""
     r = Recorder()
     run(r, created("t1", ELSEWHERE), attached("t1", ELSEWHERE, "s1"), loaded("s1"))
+    assert injected(r) == ["s1", "s1"]
+    assert cold_flags(r) == [True, True]
+    assert hand_flags(r) == [True, True]
+    assert "t1" not in r.marked
+    assert r.closable("s1")[1] == 403
+
+
+def test_a_page_pointed_at_a_job_is_not_cold():
+    """Jobright's own page, the tab its Apply opened, and an ATS form found
+    by hand are all pages someone said were a job."""
+    ats = "https://jobs.ashbyhq.com/acme/1"
+    for url in (JOBRIGHT, EMPLOYER, ats):
+        r = Recorder()
+        run(r, created("t1", url), attached("t1", url, "s1"), loaded("s1"))
+        assert cold_flags(r) == [False, False], url
+
+
+def test_the_apps_own_page_is_never_injected():
+    r = Recorder()
+    review = f"{inject.SERVER_ORIGIN}/#ab12"
+    run(r, created("t1", review), attached("t1", review, "s1"), loaded("s1"))
     assert injected(r) == []
 
 

@@ -168,9 +168,19 @@ class Injector:
         return await future
 
     def wanted(self, target_id: str, url: str) -> bool:
-        return is_web(url) and (
-            from_source(url) or target_id in self.marked or is_ats(url)
-        )
+        """Every web page gets the script; the app's own page does not. The
+        browser is the person's job-hunting window, so a posting can be on
+        any host - a company's own careers page, a startup's one-off form -
+        and a host list could only ever guess. What a page nothing pointed
+        at a job gets is `cold`: the badge and no request at all."""
+        if not is_web(url):
+            return False
+        return not (url == SERVER_ORIGIN or url.startswith(f"{SERVER_ORIGIN}/"))
+
+    def cold(self, target_id: str, url: str) -> bool:
+        """Whether this tab is a page nobody said was a job. Cold pages draw
+        the badge, read nothing and call nothing until it is clicked."""
+        return not (from_source(url) or target_id in self.marked or is_ats(url))
 
     async def inject(self, session: str, target_id: str, why: str) -> None:
         url = self.urls.get(target_id, "")
@@ -179,7 +189,11 @@ class Injector:
         # A tab nothing marked was opened by the person, not by an Apply
         # button: the banner screens and offers, but never counts down.
         hand = target_id not in self.marked and not from_source(url)
-        script = f"window.__autopilotHandOpened={'true' if hand else 'false'};\n{self.script}"
+        cold = self.cold(target_id, url)
+        script = (
+            f"window.__autopilotHandOpened={'true' if hand else 'false'};\n"
+            f"window.__autopilotCold={'true' if cold else 'false'};\n{self.script}"
+        )
         try:
             result = await self.send(
                 "Runtime.evaluate",

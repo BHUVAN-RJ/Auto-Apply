@@ -118,8 +118,8 @@ function notify(title, message) {
 // Clicking Apply on Jobright lands on whatever site the employer uses,
 // which cannot be enumerated in the manifest. Any tab that was opened from
 // Jobright, or navigated away from it, is screened wherever it ends up.
-// Nothing else is screened: the screen is for the Jobright flow, and the
-// context menu still queues any page by hand.
+// Every other page gets the script too, cold: the badge, and no request
+// until it is clicked.
 const SOURCE_HOSTS = ["jobright.ai"];
 // An application form opened by hand is still a form. These hosts are
 // screened wherever they came from, but never marked: the banner offers,
@@ -170,14 +170,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     lastUrl.set(tabId, info.url);
   }
   const url = tab.url || "";
-  if (info.status !== "complete" || !(marked.has(tabId) || isAts(url))) return;
-  if (!/^https?:/.test(url) || fromSource(url)) return;
+  if (info.status !== "complete") return;
+  // Every page gets the script: a posting can be on any host, and a host
+  // list could only ever guess. The app's own page is the exception.
+  if (!/^https?:/.test(url) || fromSource(url) || url.startsWith(SERVER)) return;
   const hand = !marked.has(tabId);
+  // Nobody pointed this page at a job: it draws the badge and reads nothing
+  // until the badge is clicked.
+  const cold = hand && !isAts(url);
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: (value) => { window.__autopilotHandOpened = value; },
-      args: [hand],
+      func: (hand, cold) => {
+        window.__autopilotHandOpened = hand;
+        window.__autopilotCold = cold;
+      },
+      args: [hand, cold],
     });
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
   } catch {

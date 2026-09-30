@@ -988,6 +988,23 @@ invariants first.
   `fetch.Posting.from_markdown` + `pipeline.read_posting` bring the posting
   back off disk, since the answer arrives hours later and a re-fetch would
   be a different posting.
+- **The badge is on every page, cold** (2026-09-29, asked for). A posting can
+  be on any host - a company's own careers page, a startup's one-off form -
+  so the host list (`is_ats`) could only ever guess, and the pages it missed
+  got no banner, no verdict and no way to put the tailored resume on a slot.
+  Every http(s) page now gets `content.js`; the app's own page is the only
+  exception. A page nothing pointed at a job is **cold**
+  (`window.__autopilotCold`, set beside `__autopilotHandOpened` by
+  `Injector.cold` and by `background.js`): `schedule()` calls `renderCold()`
+  instead of `screen()`, which draws the orb at rest in the corner and makes
+  **no request and no read of the page at all** - not `/screen`, not
+  `pageText()`. The click is the whole decision; from there the page is a
+  hand-opened one, so it screens, offers, and never counts down, never
+  presses Autofill and never closes itself. A cold page that turns out to be
+  a job already on file gets what any match gets: the outcome line and the
+  put chips for that job's own resume and cover letter. This is what makes
+  "the badge on every page" safe to say about a browser that also holds
+  email: the badge is drawn locally and reads nothing until it is asked.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

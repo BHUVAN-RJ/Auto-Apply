@@ -76,6 +76,16 @@ const QUEUED_WAIT_MS = 90000;
 // countdown) presses Apply instead, and the employer's page queues itself.
 const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
 
+// Every page in this browser gets this script, because a posting can be on
+// any host and a host list could only ever guess. Most of those pages are
+// not a job: email, a bank, a search. A cold page reads nothing and calls
+// nothing - no `/screen`, no posting text, no request of any kind - it draws
+// the badge and waits. The click on it is the whole decision, and from
+// there the page behaves like any form opened by hand: it screens, it
+// offers, it never counts down and never queues itself.
+const cold = !!window.__autopilotCold;
+if (cold) window.__autopilotHandOpened = true;
+
 // "Use Opus": tailor this one job with the expensive model. Armed by the
 // button during the countdown and read when the job is queued, so pressing
 // it does not cut the countdown short — the job goes in as it would have,
@@ -337,6 +347,54 @@ function pageText() {
   const main =
     document.querySelector("main, [role=main], article") || document.body;
   return (main.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// The badge on a page nobody has said anything about: the assistant's own
+// orb, at rest, in the corner. It is a button and nothing else - no text
+// read, no fetch - and clicking it hands the page to `screen`, which
+// replaces this host with the banner.
+function renderCold() {
+  document.getElementById(HOST_ID)?.remove();
+  const host = document.createElement("div");
+  host.id = HOST_ID;
+  const shadow = host.attachShadow({ mode: "closed" });
+  shadow.innerHTML = `
+    <style>
+      :host { all: initial; }
+      button.badge { position: fixed; top: 6px; left: 6px; z-index: 2147483647;
+                     width: 52px; height: 52px; display: flex; align-items: center;
+                     justify-content: center; padding: 0; background: transparent;
+                     border: 0; box-shadow: none; cursor: pointer; opacity: .75;
+                     transition: opacity .15s ease; }
+      button.badge:hover, button.badge:focus-visible { opacity: 1; outline: none; }
+      .badge svg { width: 52px; height: 52px; overflow: visible; }
+      .assistant-shadow { fill: #000; }
+      .assistant-ring { fill: #fff; stroke: #000; stroke-width: 5; }
+      .assistant-core { fill: #b48cff; transform-box: fill-box; transform-origin: center;
+                        transition: transform .15s ease; }
+      .badge:hover .assistant-core, .badge:focus-visible .assistant-core { transform: scale(1.35); }
+      .badge.live .assistant-core { animation: flow 1.1s ease-in-out infinite; }
+      @keyframes flow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.7); } }
+      @media (prefers-reduced-motion: reduce) { .badge.live .assistant-core { animation: none; transform: scale(1.4); } }
+    </style>
+    <button class="badge" aria-label="Screen this page with Job Autopilot"
+            title="Job Autopilot — click to screen this posting">
+      <svg class="assistant-logo" viewBox="-70 -70 140 140" aria-hidden="true">
+        <circle class="assistant-shadow" cx="7" cy="7" r="50"/>
+        <circle class="assistant-ring" r="50"/>
+        <circle class="assistant-core" r="11"/>
+      </svg>
+    </button>`;
+  const button = shadow.querySelector("button.badge");
+  button.addEventListener("click", () => {
+    // `screen` waits for a client-rendered page's text, which can take
+    // seconds; the orb says something is happening until it renders over
+    // this host.
+    button.classList.add("live");
+    button.disabled = true;
+    screen();
+  });
+  document.documentElement.appendChild(host);
 }
 
 function render(result, { pending = false } = {}) {
@@ -1044,6 +1102,9 @@ function schedule() {
   lastUrl = location.href;
   if (submissionWatched && !notTheConfirmation()) return;
   bannerCollapsed = false;
+  // A cold page is not screened on arrival, so there is nothing to settle
+  // for: the badge goes on and the person decides.
+  if (cold) { renderCold(); return; }
   setTimeout(() => {
     if (location.href === lastUrl) screen();
   }, SETTLE_MS);
