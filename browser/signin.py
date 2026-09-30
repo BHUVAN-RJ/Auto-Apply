@@ -37,6 +37,7 @@ control.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -45,6 +46,10 @@ from urllib.parse import urlsplit
 
 from . import open_apply
 from .autofill import Session, attached
+
+# The same pattern the presser aims at, so the two never disagree about what
+# an Apply button is.
+_APPLY_SOURCE = json.dumps(open_apply.APPLY_START.pattern)
 
 # How long a person gets to sign in before the fill gives up and hands the job
 # back the old way. Generous on purpose: a Workday account with an email
@@ -113,7 +118,14 @@ LOOK_JS = r"""
     const s = getComputedStyle(el);
     return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
   };
-  let fields = 0, files = 0, passwords = 0;
+  const APPLY = new RegExp(APPLY_PATTERN, "i");
+  let fields = 0, files = 0, passwords = 0, apply = 0;
+  for (const el of document.querySelectorAll("button, a, input[type=submit], [role=button]")) {
+    const text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim();
+    if (!text || text.length > 60 || !APPLY.test(text)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) apply++;
+  }
   for (const el of document.querySelectorAll("input, textarea, select")) {
     const t = (el.type || "").toLowerCase();
     if (t === "hidden" || t === "submit" || t === "button") continue;
@@ -126,10 +138,10 @@ LOOK_JS = r"""
     url: location.href,
     title: document.title || "",
     text: (document.body ? document.body.innerText : "").slice(0, 4000),
-    fields, files, passwords,
+    fields, files, passwords, apply,
   };
 })()
-"""
+""".replace("APPLY_PATTERN", _APPLY_SOURCE)
 
 
 @dataclass
@@ -140,13 +152,15 @@ class Look:
     fields: int = 0
     files: int = 0
     passwords: int = 0
+    apply: int = 0              # controls offering to start an application
 
     @classmethod
     def of(cls, raw: Optional[dict]) -> "Look":
         raw = raw or {}
         return cls(url=str(raw.get("url") or ""), title=str(raw.get("title") or ""),
                    text=str(raw.get("text") or ""), fields=int(raw.get("fields") or 0),
-                   files=int(raw.get("files") or 0), passwords=int(raw.get("passwords") or 0))
+                   files=int(raw.get("files") or 0), passwords=int(raw.get("passwords") or 0),
+                   apply=int(raw.get("apply") or 0))
 
 
 # ------------------------------------------------------------ detector one --
@@ -166,6 +180,14 @@ def looks_like_signin(look: Look) -> bool:
     if look.files:
         # Somewhere to attach a resume is the application, whatever the
         # header above it says.
+        return False
+    if look.apply:
+        # A page offering to start an application is a posting, even when its
+        # header carries a "Sign In" link - which every Workday tenant's does
+        # (Globus Medical, 2026-09-30: "Sign In" on its own line, no fields,
+        # so the words alone made a posting read as a wall, and the Apply
+        # sitting on the same page was never pressed). A password box is
+        # decisive and was tested above; this is only about the words.
         return False
     head = f"{look.title}\n{look.text[:1500]}"
     if ALWAYS.search(head):

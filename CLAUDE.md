@@ -1066,6 +1066,42 @@ invariants first.
   the tab sitting there fillable and the tailored resume beside it.
   `fill._press_again` retries `autofill.press` once, on a `TRANSPORT` error
   only: a page with no Autofill control will not grow one in two seconds.
+- **Workday, page by page** (2026-09-30, asked for). `workday.walk` is the
+  driver the module was missing: per page, Jobright's autofill, then the
+  tailored documents on the page that has a slot (and only until they are
+  on), the corrections and the open questions, then that page's own "Save
+  and Continue"; up to `MAX_PAGES`. It ends at the review page - Submit is
+  never pressed - and stops and says whose turn it is (`PAUSES`) on an
+  account, an email to verify, a question Workday will not pass
+  (`blocking()`), or a page that would not move. `fill_async` runs it in
+  place of the one-page path when `workday.is_workday(url)`;
+  `AUTOPILOT_WORKDAY=0` goes back. It writes `workday.json` beside the
+  screenshot. Two bugs its tests found: `stage_of` called a **posting** a
+  review page (`guard.describes_submit` answers yes to "Apply", since for
+  the agent starting an application and sending one are equally forbidden),
+  so the walk would have stopped on the posting believing it had finished;
+  and `advance`'s timeout was frozen into a default argument at import,
+  which is the trap written down twice already in this file.
+- **A posting with "Sign In" in its header is not a wall** (2026-09-30,
+  found live, not in a test). Every Workday tenant's header carries one, and
+  Globus Medical's posting had no fields at all, so `ON_ITS_OWN` matched the
+  whole line and `looks_like_signin` said yes - the watch then waited for
+  someone to get through a wall that was not there while the Apply button on
+  the same page was never pressed. `signin.LOOK_JS` now counts the controls
+  matching `open_apply.APPLY_START` (one pattern, both places) and a page
+  offering to start an application is not a sign-in. A password box is still
+  decisive, so the account page behind Apply is still a wall.
+- **A job waiting on an Opus paste sorts to the bottom** (2026-09-30, asked
+  for). `/jobs` carries `handoff` (`handoff.md` in the folder) and the
+  in-flight list breaks ties on it: the job is waiting on the person in a
+  chat somewhere else, which may be hours, so it is not the one to open
+  first. The row says "waiting for your Opus paste".
+- **A job can be taken back out** (2026-09-30, asked for). The countdown now
+  reads "Adding to autopilot · click to stop", and once it has been added the
+  same button becomes "Undo · take it out again": `POST
+  /review/{id}/reject` with `changed_my_mind`, so the folder and the record
+  stay. `runner.stop_pipeline` goes with it, because a job cancelled seconds
+  after it was added is usually still being tailored.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

@@ -15,7 +15,8 @@ from browser import signin
 
 def look(**kw) -> signin.Look:
     base = {"url": "https://acme.wd1.myworkdayjobs.com/en-US/careers/job/1/apply",
-            "title": "Apply", "text": "", "fields": 0, "files": 0, "passwords": 0}
+            "title": "Apply", "text": "", "fields": 0, "files": 0, "passwords": 0,
+            "apply": 0}
     base.update(kw)
     return signin.Look(**base)
 
@@ -316,3 +317,22 @@ def test_a_failure_in_the_documents_step_is_never_silent(monkeypatch):
     else:
         raise AssertionError("the error must reach the caller")
     assert len(with_retry) == 2, "a dropped session is retried once"
+
+
+def test_a_posting_with_a_sign_in_link_in_its_header_is_not_a_wall():
+    """Every Workday tenant puts "Sign In" in its header. The Globus Medical
+    posting had it, no fields at all, and an Apply button - and the words
+    alone made the watch call it a sign-in, so it waited for someone to get
+    through a wall that was not there while the Apply on the same page was
+    never pressed."""
+    posting = look(text="Sign In\nApply\nAssociate Software Engineer\nAudubon, PA",
+                   fields=0, apply=1)
+    assert not signin.looks_like_signin(posting)
+    from browser import open_apply
+    assert open_apply.safe_to_press(posting)
+
+
+def test_the_account_page_is_still_a_wall_even_with_apply_on_it():
+    """A password box is decisive, whatever else the page offers."""
+    page = look(text="Sign In\nApply\nPassword", fields=3, passwords=1, apply=1)
+    assert signin.looks_like_signin(page)
