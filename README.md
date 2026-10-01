@@ -436,9 +436,12 @@ lands in `data/apply_<job>.log`, and the review page shows the tail of it under
 without leaving the page.
 
 **A form behind a sign-in is waited for, not failed.** Workday, McKinsey and
-plenty of employer portals keep the application behind Apply and a login,
-and the fill never presses Apply and never types a credential. What it does
-instead is watch: the tab stays open, its banner says *"Waiting while you
+plenty of employer portals keep the application behind Apply and a login.
+Apply itself is pressed now — a posting has no file input, no password box
+and nothing on it that could be sent, which is checked on the page rather
+than assumed, so pressing it starts the application the person already
+approved and nothing else. The account is still theirs: no credential is
+read, typed or stored. What the fill does is watch: the tab stays open, its banner says *"Waiting while you
 sign in — I will carry on from the first page"*, and you sign in however you
 normally would. Single sign-on is fine — "Continue with Google" takes the
 page off to Google and back, and the watch follows **the tab**, not the
@@ -447,11 +450,31 @@ on the screen, the fill starts from the first page as though the wall had
 never been there: autofill, the tailored resume, the cover letter, the open
 questions.
 
-It gives you ten minutes. If the form never appears, the job goes back to
-checkpoint 1 with "this form is behind Apply and a sign-in" and its
-documents intact — never onto the failed shelf, where a perfectly good
+Nothing is pressed until that form is on the screen. Before that the tab is
+yours — create the account, sign in, get to the first page — and the
+autopilot takes over from there.
+
+It gives you ten minutes once a wall is actually there, and ninety seconds on
+a page where nothing is happening, because the fills run one at a time. If
+the form never appears, the job goes back to checkpoint 1 with "the
+application is behind an account" and its documents intact — never onto the failed shelf, where a perfectly good
 application reads as lost. From there, sign in and press Approve, or use the
 banner's **put** chips and attach the two PDFs yourself.
+
+**Some applications are more than one page, and those are walked.** Workday
+is five or six pages behind an account and LinkedIn's Easy Apply is five
+short ones; filling only the first left most of the work where it was. Each
+has a walk of its own — the tailored resume on the page that asks for it, the
+page's own *Save and Continue* or *Next*, up to the review page — and each
+stops and says whose turn it is the moment something is wanted that only you
+can give: an account, an email to verify, a question the app may not answer.
+Neither can reach **Submit**: a control that reads as one is refused before
+it can be offered as the way forward, and the review page is where the line
+ends, the same as a filled form everywhere else.
+
+On LinkedIn the screening questions are deliberately left to you — half of
+them are the work-authorisation questions this app never answers — and they
+are listed on the review page so you know what is waiting.
 
 The browser model must accept images — browser-use sends a screenshot to the
 model on every step, and a text-only model returns 404 on all of them and fills

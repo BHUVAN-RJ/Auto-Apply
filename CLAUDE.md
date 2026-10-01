@@ -243,6 +243,10 @@ Specifically:
 | `server/form.py` | the preliminary interview: `GET/POST /profile/form`, fixed `QUESTIONS` (contact, location, work, education, source pinned to Other, EEO, work authorisation), `/profile/form/hints` = contacts from the resume cached in `data/contacts.json`. The Profile tab's `Form` module walks them one per screen (Enter next, Skip, Save and stop), then shows the file and the "Corrected fields" table with delete. Authorisation keys are on file but not in `forms.profile.KEYS`: collected, never auto-filled |
 | `browser/ats.py` + `ats_rules.md` | per-system notes for the browser model, picked by URL (oracle, greenhouse, ashby, workday, lever), sent verbatim under "Notes for this application system". Edit the markdown, not the Python. Oracle: one "Upload Attachment" control for every document, so the upload guard lets the cover letter onto a generic attachment slot (never onto a resume-named one) |
 | `browser/guard.py` | the never-submit deny-list |
+| `browser/open_apply.py` | **the only place Apply is pressed** (2026-09-30). Apply is not Submit, and the difference is checked on the page: `safe_to_press` wants no file input, no password box and fewer than `signin.FORM_FIELDS` editable fields, so there is nothing on it that could be sent; `APPLY_START` must match the control's whole label (including LinkedIn's "Easy Apply") and `NOT_APPLY` disqualifies submit / send / finish / withdraw / save / sign in. `MAX_PRESSES` 3: posting → chooser → "Apply Manually". Does not import `guard`, may not name the submit presser (invariant #6 reads it as text), one gated `Input.dispatchMouseEvent` |
+| `browser/workday.py` | **Workday, page by page** (2026-09-30). `walk`: per page, Jobright's autofill, the tailored documents on the page that has a slot, corrections, open questions, then that page's own "Save and Continue", up to `MAX_PAGES`. Ends at the review page, never Submit; `PAUSES` names whose turn it is (account, email verification, a question `blocking()` found, a page that would not move). `stage_of` reads a posting *before* a review page, because `guard.describes_submit` answers yes to "Apply". Writes `workday.json` |
+| `browser/linkedin_apply.py` | **LinkedIn Easy Apply** (2026-09-30). Nothing selected by class - LinkedIn's rotate - so the anchors are `aria-label`, visible text and the `N/M pages` the flow prints; the flow is not a `[role=dialog]`, it replaces the page. The tailored resume goes on every time (`put_resume`, slot cleared, name read back); the screening questions are the person's, so it stops at the first unanswered control and lists them; ends at the review page. `linkedin.json`. **Not yet verified live** |
+| `tailor/linkedin.py` | the posting behind a LinkedIn URL, from `jobs-guest/jobs/api/jobPosting/<id>` - no login, no key. A fetch of the job page is 1778 words of LinkedIn around 194 of posting. `fetch.fetch` asks here first for `/jobs/view/<id>` or `?currentJobId=` |
 | `browser/press_submit.py` | the only place a Submit control is pressed, and the agent cannot reach it: the review page's **Submit it** button, through `POST /review/{id}/submit`. `choose` picks the control, `confirmed` decides whether the page that came back is a receipt |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
 | `tex/compile.py` | engine picked per document, not fixed |
@@ -579,7 +583,7 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest` collects 628 tests (573 without `test_fill.py`); `tests/test_invariants.py` is the short list
+`pytest` collects 816 tests (761 without `test_fill.py`); `tests/test_invariants.py` is the short list
 every copy runs after any change (`scripts/check.sh --quick`), and
 `tests/conftest.py` points prompt edits and the Workshop store at a
 temporary folder for every test. The suite stubs the model, browser, lualatex, and

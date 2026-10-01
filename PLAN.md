@@ -2047,3 +2047,52 @@ credentials:
    verification email, not fill a password on a page whose host does not
    match the stored pattern exactly - the whole point of the feature is that
    it is stricter about the URL than a password manager, not looser.
+
+## Phase 25 — the systems that take more than one page (2026-09-30)
+
+Built, in the order the queue now runs them.
+
+**The running order is what the fill can finish.** `runner.ATS_ORDER`:
+Ashby, Greenhouse, Lever, Workday, then everything else, oldest first inside
+each, sorted in `runner.waiting` so `serial_tick` takes them that way. Not a
+preference about employers — the first three land at checkpoint 2 without
+asking anybody, so a session finishes as many applications as it can before
+it meets one that needs a person.
+
+**Apply is pressed; Submit still is not.** `browser/open_apply.py`. The
+account behind Apply cannot be offered until Apply is pressed, so refusing to
+press it protected nothing and cost a Workday job the whole
+`SIGNIN_TIMEOUT`. The difference between starting an application and sending
+one is checked on the page — no file input, no password box, too few fields
+to be an application — not asserted.
+
+**Nothing is pressed before the form is on the screen.** The sign-in watch
+answers that question and `fill_async` used to ignore the answer: on a
+posting it opened a second tab and pressed Jobright's "Autofill for Another
+Job" against a job description, which is where the stray `about:blank` tabs
+came from. `form_is_up` gates the whole step; the account, the sign-in and
+the first page are the person's.
+
+**Workday walks its pages** (`browser/workday.walk`) and **LinkedIn walks
+its own** (`browser/linkedin_apply.walk`). Both end at the review page, both
+stop and say whose turn it is, neither can reach Submit —
+`guard.describes_submit` refuses a control before it is returned as the way
+forward.
+
+**One resume on the slot.** `run_documents` clears an occupied slot before
+uploading, not only when the input has vanished: Workday keeps the input *and*
+the attachment, so ours went on beside Jobright's.
+
+**An answer is not a policy.** A capture that lands on an Ashby application
+page screens the form, and "No, I do not require visa sponsorship" read as
+the employer refusing. `screening.is_answer`; the comma is the discriminator.
+
+Next, agreed and not built:
+
+- **Learning mode for LinkedIn's questions.** The correction loop is keyed on
+  `form_fill.json` and the tab's own ping, neither of which exists for a flow
+  with no stable field ids. The design is a LinkedIn-scoped store keyed on the
+  question's text ("How many years of experience with Python?" → "2"),
+  written when the person answers and replayed on the next LinkedIn job only.
+- A live verification pass over `linkedin_apply`'s selectors, which come from
+  one real reading of the flow.
