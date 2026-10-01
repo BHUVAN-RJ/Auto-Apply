@@ -1903,3 +1903,108 @@ Agreed and not built, in this order:
    careers pages (`scout/providers.py`), so it is a provider and a parser,
    not a new pipeline. Needs the database above first, or a repo that lists
    400 jobs will queue what has already been applied for.
+
+## Phase 23 — when the posting is missing (raised 2026-09-30, not built)
+
+Scaffolding only: what was measured, what the shape would be, and the
+questions that decide whether it is worth building.
+
+### What is actually wrong, measured over 179 postings on disk
+
+`tailor.quality.score` separates a description from a page of field labels
+cleanly — the median posting scores 1024, and the bad ones score 17 to 29:
+
+| band | count |
+|---|---|
+| full description (400+) | 167 |
+| thin (100–400) | 9 |
+| **a shell, not a description (<100)** | **5** |
+
+So it is 3% of jobs, not a third. But the 5 are worse than "thin": not one of
+them is a short job description. They are an application form (`Easy Apply ·
+Personal information · Fields marked with * are required`), a login page, a
+session-expired page, and a candidate-profile page. One of them —
+ServiceNow's, 49 words of form labels — was **submitted**, so an application
+went out carrying a resume tailored against nothing.
+
+Two other numbers worth having: **64 of 179** folders are named
+`unknown-company` (no employer name anywhere in the metadata, which the cover
+letter feels more than the resume does), and every one of the 5 shells came
+from `the page the browser saw` rather than a fetch.
+
+### The finding that changes the order of the work
+
+The description usually still exists; we captured the wrong URL. The
+SmartRecruiters apply shell carries the company and the publication id in its
+own path, and the public API answers without a key:
+
+```
+GET api.smartrecruiters.com/v1/companies/Intuitive/postings/53e1c4f2-…
+→ 814 words: company description, job description, qualifications
+```
+
+against the 72 words of form labels we stored. `scout/providers.py` already
+speaks this API, and Greenhouse, Lever, Ashby and Workday have the same
+shape. **Recovering the posting we failed to capture is deterministic, free,
+and fixes the observed cases.** A search agent cannot beat 814 words of the
+employer's own text.
+
+So the order is: (1) recognise a shell, (2) recover the real posting from the
+ATS, (3) only then, search.
+
+### 1. Recognise a shell — small, and useful on its own
+
+`quality.score(text) < SHELL` (the gap between 29 and 148 is wide enough to
+pick a number with confidence) plus the signals already written:
+`forms.engine.MIN_FORM_FIELDS`, `signin.looks_like_signin`. A job whose
+posting is a shell should say so on the review page and in `posting.md`
+rather than being tailored silently, which is the part that let an
+application go out blind. This is worth building whatever happens to the
+rest.
+
+### 2. Recover the posting from the ATS — deterministic
+
+One function per system, mapping an apply URL to the posting's own text,
+reusing `scout/providers.py`. SmartRecruiters: company + publication id from
+the path. Greenhouse: `for=` and `token=`. Lever and Ashby: the slug pair.
+Workday: the CXS endpoint the scout already calls. No key, no model, no
+browser. Fits `pipeline.fetch_posting` as one more candidate, scored like the
+others.
+
+### 3. Search — the fallback, and the part to be honest about
+
+What it would be: the browser we already own (`browser/chrome.py`, port
+9333), a **background** tab (`Target.createTarget`, never stealing focus —
+the browser is the person's working set), the page's text read over CDP the
+way `signin.LOOK_JS` reads one, the tab closed by the same rule that lets the
+injector close exactly one tab it opened. No new dependency, no API key,
+which is what the one-click thesis demands.
+
+What it would actually buy, said plainly: **company context, not role
+context.** `tailor/rules.md` works from a ranked list of the posting's own
+terms — title, level, required, preferred, responsibilities. A search for
+"ServiceNow" returns what the company does, which helps the cover letter and
+the summary line, and returns nothing about what *this* role requires. A
+resume tailored from company context alone would be tailored to the employer
+and not the job, and `_check_invented` would refuse most of what a search
+turns up anyway, because a figure has to come from the master resume or a
+story and a name has to come from the master, a story, or the posting. Search
+results are none of those, so **the term list would have to be allowed to
+come from searched text**, which is a real loosening of a rule that exists to
+stop the resume claiming things.
+
+### Open questions, for the decision
+
+1. Is 3% of jobs worth a browser-driving feature, when layers 1 and 2 cover
+   the observed cases deterministically?
+2. If a shell is recognised and cannot be recovered, is the right answer a
+   search, or **stopping** — "I could not find the description for this one;
+   open it and paste it, or skip it"? The hand-paste path already exists for
+   the Opus handoff and is one textarea away.
+3. Does searched text count as a source for `_check_invented`? If not, the
+   search can only inform the cover letter and the summary. If yes, that is a
+   deliberate widening and belongs in `rules.md` with its own test.
+4. Which engine, and does it survive without a key? A results page is
+   scraped, rate-limited and captcha-prone; the company's own careers page
+   and About page, reached from the ATS slug, are more reliable and need no
+   engine at all.
