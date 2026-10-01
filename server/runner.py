@@ -241,6 +241,7 @@ def any_fill_running() -> Optional[str]:
 ATS_ORDER = (
     ("ashby", ("ashbyhq.com",)),
     ("greenhouse", ("greenhouse.io",)),
+    ("lever", ("jobs.lever.co", "lever.co")),
     ("workday", ("myworkdayjobs.com", "myworkdaysite.com", ".workday.com")),
 )
 

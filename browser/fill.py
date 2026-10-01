@@ -628,7 +628,19 @@ async def fill_async(
             (screenshot_to.parent / "workday.json").write_text(
                 json.dumps(walk.to_json(), indent=2), encoding="utf-8")
 
-    if walk is None and not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
+    # Nothing is pressed until the application's first page is on the screen.
+    # The watch above answers that question; when it says no - a posting
+    # behind Apply, an account not created yet, a sign-in the person has not
+    # finished - the old code pressed on regardless. On Globus Medical that
+    # meant opening a second tab and pressing Jobright's "Autofill for
+    # Another Job" against a job posting, which is where the stray `about:
+    # blank` tabs came from (2026-09-30, asked for: "let the user do all of
+    # it, and once the first page is visible the autopilot can take over").
+    form_is_up = gate is None or gate.ready
+    if not form_is_up:
+        log.info("no application form on the screen yet; leaving the tab to the person")
+        filled.errors.append(forms.NOT_A_FORM)
+    if walk is None and form_is_up and not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
         # The injector presses Autofill when the human opens the form; when
         # that tab is still open the fill works there, no second tab and no
         # second press.
@@ -678,6 +690,11 @@ async def fill_async(
                      len(docs.corrected), len(docs.answered),
                      f"; {'; '.join(docs.errors)}" if docs.errors else "")
     target_id = filled.target_id or pressed.target_id
+    # The tab the watch was looking at is the job's tab, even when nothing
+    # was pressed in it: a screenshot of the sign-in the person has to finish
+    # is more use on the review page than no screenshot at all.
+    if not target_id and gate is not None and gate.target_id:
+        target_id = gate.target_id
     tab_id = filled.tab_id if filled.target_id else pressed.tab_id
     if not agent_on:
         # Code only: Jobright's autofill, then the documents. No model

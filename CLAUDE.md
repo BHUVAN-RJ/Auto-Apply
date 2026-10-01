@@ -1172,6 +1172,27 @@ invariants first.
   hold still on the signed-in page, for the Easy Apply work: `aria-label`,
   visible text, `document.title` ("Role | Company | LinkedIn"), and the
   `N/M pages` the flow prints.
+- **Nothing is pressed before the form is on the screen** (2026-09-30, asked
+  for). The sign-in watch answers "is the application up?" and `fill_async`
+  pressed on regardless of the answer: on a Workday posting that meant
+  opening a second tab and pressing Jobright's "Autofill for Another Job"
+  against a job description, which is where the stray `about:blank` tabs came
+  from. `form_is_up = gate is None or gate.ready` gates the whole
+  autofill-and-documents step; when it is false the job comes back as one
+  needing a person (`NOT_A_FORM` → `awaiting_review`), and the screenshot is
+  taken of the gate's own tab so the review page still shows where it got to.
+  The person creates the account, signs in, and the autopilot takes over on
+  the first page.
+- **One resume on the slot, not two** (2026-09-30, asked for). `remove_attached`
+  only ran when the input had *vanished* (Greenhouse drops it once a file is
+  on). Workday keeps the input **and** the attachment, so ours went on beside
+  Jobright's and the form carried two resumes with nothing to say which was
+  sent. `run_documents` now clears an occupied slot before uploading, with
+  `DELETE_LABELS` - remove / delete / clear / × only, never "Replace" or
+  "Change", which open a native file chooser on some systems and froze a tab
+  once - then re-reads the fields and uploads onto the input that came back.
+- **Lever goes before Workday** in `ATS_ORDER` (2026-09-30, asked for):
+  Ashby, Greenhouse, Lever, Workday, the rest.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

@@ -194,16 +194,18 @@ def test_the_easy_ones_take_the_tab_first(monkeypatch):
         job("a1", "https://jobs.ashbyhq.com/acme/1"),
         job("a2", "https://jobs.ashbyhq.com/acme/2"),
         job("g2", "https://boards.greenhouse.io/acme/jobs/2"),
+        job("l1", "https://jobs.lever.co/acme/1"),
     ]
     import server.queue as queue_module
 
     monkeypatch.setattr(queue_module, "all_jobs", lambda: list(rows))
-    assert [j.title for j in runner.waiting()] == ["a1", "a2", "g1", "g2", "w1", "other"]
+    assert [j.title for j in runner.waiting()] == ["a1", "a2", "g1", "g2", "l1", "w1", "other"]
 
 
 def test_the_running_order_is_read_off_the_host():
     assert runner.ats_rank("https://jobs.ashbyhq.com/acme/1") == 0
     assert runner.ats_rank("https://job-boards.greenhouse.io/embed/job_app?for=acme") == 1
-    assert runner.ats_rank("https://acme.wd5.myworkdayjobs.com/x") == 2
-    assert runner.ats_rank("https://careers.example.com/jobs/9") == 3
-    assert runner.ats_rank("") == 3
+    assert runner.ats_rank("https://jobs.lever.co/acme/1") == 2
+    assert runner.ats_rank("https://acme.wd5.myworkdayjobs.com/x") == 3
+    assert runner.ats_rank("https://careers.example.com/jobs/9") == 4
+    assert runner.ats_rank("") == 4

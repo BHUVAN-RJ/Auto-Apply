@@ -481,11 +481,11 @@ FILE_NAME_FN = r"""
 # `exclude`, and returns its remove button's label without clicking; the
 # click is `CLICK_REMOVE_FN`, after the guard has read the label.
 FIND_REMOVE_FN = r"""
-(function (pattern, exclude) {
+(function (pattern, exclude, labels) {
   const want = new RegExp(pattern, "i");
   const skip = exclude ? new RegExp(exclude, "i") : null;
   const text = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
-  const remove = /remove|delete|clear|replace|change|^[×✕x]$/i;
+  const remove = new RegExp(labels, "i");
   for (const btn of document.querySelectorAll("button, [role=button], a")) {
     const label = (btn.getAttribute("aria-label") || btn.getAttribute("title") || text(btn)).trim();
     if (!remove.test(label) || label.length > 40) continue;
@@ -506,6 +506,13 @@ FIND_REMOVE_FN = r"""
   return null;
 })
 """
+
+# What a control that clears a slot is called. The wider list includes
+# "replace" and "change", which on some systems open a native file chooser -
+# fine when the input has already vanished and there is nothing else to try,
+# never worth pressing on a page that still has a working input.
+REMOVE_LABELS = r"remove|delete|clear|replace|change|^[×✕x]$"
+DELETE_LABELS = r"remove|delete|clear|^[×✕x]$"
 
 # The slot labels `remove_attached` looks for, as regex sources for the page.
 RESUME_SLOT = r"\b(resume|r[ée]sum[ée]|cv|curriculum)\b"
@@ -1134,12 +1141,13 @@ class Engine:
         await asyncio.sleep(POLL * 4)
         return str(await self.call(FILE_NAME_FN, f.ref, path.name) or "")
 
-    async def remove_attached(self, pattern: str, exclude: str = "") -> bool:
+    async def remove_attached(self, pattern: str, exclude: str = "",
+                              labels: str = REMOVE_LABELS) -> bool:
         """Click the remove button on the file slot whose label matches
         `pattern`, so its input reappears. False when there is none. The
         button's label goes through the submit guard first: the one click
         this makes on a form is never on anything that reads as submit."""
-        found = await self.call(FIND_REMOVE_FN, pattern, exclude)
+        found = await self.call(FIND_REMOVE_FN, pattern, exclude, labels)
         if not found:
             return False
         label = str(found.get("label", ""))
@@ -1401,12 +1409,31 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
         (resume, resume_input, RESUME_SLOT, COVER_SLOT, "resume"),
         (cover_letter, cover_input, COVER_SLOT, "", "cover letter"),
     ):
-        if wanted and have is None:
+        if not wanted:
+            continue
+        if have is None:
+            # The input itself is gone: Greenhouse drops it once a file is on
+            # the slot. Anything that clears it is worth pressing, because
+            # without the input there is nothing else to try.
             try:
                 if await engine.remove_attached(pattern, exclude):
                     fields = await engine.wait_for_fields()
             except Exception as error:  # noqa: BLE001 - then the agent replaces it
                 report.errors.append(f"clearing the {what} slot: {error}")
+            continue
+        # The input is still there and a file is already on it: Workday keeps
+        # both, so setting ours left the form carrying two resumes - theirs
+        # and ours - and no way for a reader to tell which one was sent
+        # (2026-09-30, asked for). Delete first, then upload. Only a control
+        # that plainly deletes; "Replace" and "Change" open a native file
+        # chooser on some systems, which froze a tab once.
+        try:
+            if await engine.remove_attached(pattern, exclude, DELETE_LABELS):
+                fields = await engine.wait_for_fields()
+                resume_input, cover_input = engine.file_inputs(fields)
+                have = resume_input if what == "resume" else cover_input
+        except Exception as error:  # noqa: BLE001 - the upload still runs
+            report.errors.append(f"clearing the attached {what}: {error}")
     await engine.upload_files(fields)
     # The uploads may have re-rendered the form; read it again.
     fields = await engine.scan() or fields

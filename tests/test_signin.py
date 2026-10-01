@@ -336,3 +336,16 @@ def test_the_account_page_is_still_a_wall_even_with_apply_on_it():
     """A password box is decisive, whatever else the page offers."""
     page = look(text="Sign In\nApply\nPassword", fields=3, passwords=1, apply=1)
     assert signin.looks_like_signin(page)
+
+
+def test_nothing_is_pressed_before_the_form_is_on_the_screen():
+    """The watch answers "is the application up?" and the fill used to press
+    on regardless of the answer. On a Workday posting that meant opening a
+    second tab and pressing Jobright's "Autofill for Another Job" against a
+    job description - the stray tabs - and on a sign-in it meant working a
+    page the person had not finished with."""
+    source = (__import__("server.runner", fromlist=["ROOT"]).ROOT / "browser" / "fill.py").read_text()
+    assert "form_is_up = gate is None or gate.ready" in source
+    assert "if walk is None and form_is_up and not filled.attempted" in source
+    # And the job comes back as one needing a person, not a failure.
+    assert "filled.errors.append(forms.NOT_A_FORM)" in source

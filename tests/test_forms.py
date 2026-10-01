@@ -543,3 +543,21 @@ def test_a_honeypot_is_never_written_into(tmp_path):
     report = run_documents(page, resume=resume, answerer=lambda q: f"Answer to: {q}")
     assert report.answered == ["Why do you want to work here?"]
     assert page.fields["2"]["value"] == ""
+
+
+def test_an_occupied_slot_is_cleared_before_ours_goes_on():
+    """Workday keeps the file input *and* the attachment, so setting ours put
+    a second resume on the form - Jobright's and ours, with no way for a
+    reader to tell which was sent. Greenhouse drops the input instead, which
+    is the case that was already handled."""
+    source = (engine.__file__ and open(engine.__file__).read())
+    body = source.split("async def run_documents(")[1].split("async def upload_documents(")[0]
+    # Both cases: the input gone, and the input there with a file on it.
+    assert "if have is None:" in body
+    assert "engine.remove_attached(pattern, exclude, DELETE_LABELS)" in body
+    # The delete list is the narrow one: "Replace" and "Change" open a native
+    # file chooser on some systems, which froze a tab.
+    assert "replace" not in engine.DELETE_LABELS and "change" not in engine.DELETE_LABELS
+    assert "replace" in engine.REMOVE_LABELS and "change" in engine.REMOVE_LABELS
+    # And the fields are read again, so the upload uses the input that came back.
+    assert "resume_input, cover_input = engine.file_inputs(fields)" in body
