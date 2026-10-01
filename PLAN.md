@@ -2008,3 +2008,42 @@ stop the resume claiming things.
    scraped, rate-limited and captcha-prone; the company's own careers page
    and About page, reached from the ATS slug, are more reliable and need no
    engine at all.
+
+## Phase 24 — one account per employer, and a filler that knows which (raised 2026-09-30, not built)
+
+Asked for. Every Workday tenant is `<company>.wd5.myworkdayjobs.com`, so a
+browser's password manager sees a hundred sites that look alike, offers the
+wrong account, and a person ends up with several accounts at one employer or
+none they can find. A password manager keyed on "the host" is the wrong key:
+**the key is the employer**, and one employer has exactly one account.
+
+What it would be:
+
+- A store of `{employer, sign-in URL pattern, email, password}`, one row per
+  employer, matched by the **tenant** rather than the host - the
+  `<company>` in `<company>.wd5.myworkdayjobs.com`, the `for=` in a
+  Greenhouse embed, the slug in a Lever or Ashby URL. The same matcher
+  `server/seen.py` already uses to recognise an ATS job id.
+- Generating the password when an account is created, so it is strong and
+  unique per employer rather than the one the person reuses.
+- Filling it at the sign-in the fill already waits for (`browser/signin.py`
+  stops there today and hands the tab to the person).
+
+Three things to settle before any of it is written, because this is
+credentials:
+
+1. **Where they live.** Not in `data/`, not in the repo, not in a dotfile:
+   the macOS Keychain, through `security add-generic-password`, one item per
+   employer, so the operating system owns the secret and the app holds only
+   the account name. Anything else is a plaintext password file on a laptop.
+2. **Who types it.** Today nothing in this app reads, types or stores a
+   credential, and `signin.py` says so in its first paragraph. Filling a
+   password is a deliberate reversal of that, and it should be behind its own
+   switch, off by default, with the password never passing through a model,
+   never written to a log, never put in a snapshot and never sent to the
+   correction loop (`forms.snapshot` already drops protected fields; a
+   password field needs the same treatment and its own test).
+3. **What it must never do.** Not create accounts unattended, not answer a
+   verification email, not fill a password on a page whose host does not
+   match the stored pattern exactly - the whole point of the feature is that
+   it is stricter about the URL than a password manager, not looser.
