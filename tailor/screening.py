@@ -439,6 +439,40 @@ def sentence_around(text: str, start: int, end: int) -> str:
     return " ".join(text[left:right].split())
 
 
+# An answer, not a policy. Ashby renders a question and its options as plain
+# lines, so the text a screen reads carries both - and while the question
+# itself is passed over by `is_question`, the option under it is a flat
+# statement: "No, I do not require visa sponsorship to work in the United
+# States". That sentence read as the employer refusing sponsorship, and a
+# posting captured on its application page was rejected on the strength of
+# the candidate's own answer (2026-09-30).
+# The comma is what separates an answer from a policy: "No, I do not require
+# sponsorship" is a candidate answering, "No visa sponsorship is available"
+# is an employer refusing, and both open with the same word.
+ANSWER_OPENS = re.compile(
+    r"^\s*(?:(?:yes|no|n/?a|not\s+applicable)\s*[,:;—-]|i\s+(?:do|am|have|will|would)\b)", re.I)
+
+
+def is_answer(text: str, start: int, sentence: str) -> bool:
+    """Whether this match is somebody answering a question rather than an
+    employer stating a policy.
+
+    Two signs, either is enough: the sentence opens the way an answer opens
+    ("Yes, ...", "No, I do not ..."), or the line above it is a question. A
+    form lists its options directly under the question they belong to, which
+    is the shape this reads.
+    """
+    if ANSWER_OPENS.match(sentence):
+        return True
+    head = text.rfind("\n", 0, start)
+    while head > 0:
+        above = text[text.rfind("\n", 0, head - 1) + 1:head].strip()
+        if above:
+            return above.endswith("?")
+        head = text.rfind("\n", 0, head - 1)
+    return False
+
+
 def is_question(sentence: str) -> bool:
     """A form's own question is not a requirement.
 
@@ -463,6 +497,8 @@ def first_match(text: str, rule: Rule) -> Optional[str]:
         for match in compiled.finditer(text):
             sentence = sentence_around(text, match.start(), match.end())
             if not sentence or is_question(sentence):
+                continue
+            if is_answer(text, match.start(), sentence):
                 continue
             if any(re.search(p, sentence, re.I) for p in rule.unless):
                 continue

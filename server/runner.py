@@ -231,12 +231,44 @@ def any_fill_running() -> Optional[str]:
     return None
 
 
+# The order the approved jobs go out in, asked for 2026-09-30. It is not a
+# preference about employers: it is what the fill is known to finish. Ashby
+# and Greenhouse fill and land at checkpoint 2 with nothing asked of anybody;
+# Workday walks five pages and usually wants an account first; everything
+# else is a mixture. So the ones that will certainly work go first, and a
+# session gets as many finished applications as possible before it meets one
+# that needs a person. Within a family the queue's own order stands.
+ATS_ORDER = (
+    ("ashby", ("ashbyhq.com",)),
+    ("greenhouse", ("greenhouse.io",)),
+    ("workday", ("myworkdayjobs.com", "myworkdaysite.com", ".workday.com")),
+)
+
+
+def ats_rank(url: str) -> int:
+    """Where this job's application system sits in the running order."""
+    host = (url or "").lower()
+    for rank, (_, hosts) in enumerate(ATS_ORDER):
+        if any(h in host for h in hosts):
+            return rank
+    return len(ATS_ORDER)
+
+
 def waiting() -> list:
-    """Approved jobs with documents, oldest first: the line for the next tab."""
+    """Approved jobs with documents, in the order they should take the tab.
+
+    Ashby first, then Greenhouse, then Workday, then the rest; oldest first
+    inside each. `enumerate` keeps that second key honest - sorting on the
+    rank alone would leave Python's stable sort to preserve the queue order,
+    which it does, but saying so is cheaper than relying on it.
+    """
     from server.models import Status
     from server import queue
 
-    return [job for job in queue.all_jobs() if job.status is Status.APPROVED and job.app_dir]
+    approved = [job for job in queue.all_jobs() if job.status is Status.APPROVED and job.app_dir]
+    return [job for _, _, job in
+            sorted(((ats_rank(job.url), i, job) for i, job in enumerate(approved)),
+                   key=lambda row: (row[0], row[1]))]
 
 
 def serial_tick() -> Optional[str]:

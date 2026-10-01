@@ -172,3 +172,38 @@ def test_a_fill_started_by_another_process_is_seen(monkeypatch):
     assert runner.any_fill_running() == "unknown"
     lines = "\n"
     assert runner.any_fill_running() is None
+
+
+def test_the_easy_ones_take_the_tab_first(monkeypatch):
+    """Ashby and Greenhouse fill and land at checkpoint 2 on their own;
+    Workday walks five pages and usually wants an account first. So a session
+    finishes as many applications as it can before it meets one that needs a
+    person. Within a family the queue's own order stands."""
+    from server.models import Job, Status
+
+    def job(name, url):
+        # `Job.id` is a hash of the URL, not a field, so the title is what
+        # this test reads the order off.
+        return Job(url=url, title=name, source="x", status=Status.APPROVED,
+                   app_dir=f"/tmp/{name}")
+
+    rows = [
+        job("w1", "https://acme.wd5.myworkdayjobs.com/careers/job/1"),
+        job("other", "https://careers.example.com/jobs/9"),
+        job("g1", "https://job-boards.greenhouse.io/embed/job_app?for=acme"),
+        job("a1", "https://jobs.ashbyhq.com/acme/1"),
+        job("a2", "https://jobs.ashbyhq.com/acme/2"),
+        job("g2", "https://boards.greenhouse.io/acme/jobs/2"),
+    ]
+    import server.queue as queue_module
+
+    monkeypatch.setattr(queue_module, "all_jobs", lambda: list(rows))
+    assert [j.title for j in runner.waiting()] == ["a1", "a2", "g1", "g2", "w1", "other"]
+
+
+def test_the_running_order_is_read_off_the_host():
+    assert runner.ats_rank("https://jobs.ashbyhq.com/acme/1") == 0
+    assert runner.ats_rank("https://job-boards.greenhouse.io/embed/job_app?for=acme") == 1
+    assert runner.ats_rank("https://acme.wd5.myworkdayjobs.com/x") == 2
+    assert runner.ats_rank("https://careers.example.com/jobs/9") == 3
+    assert runner.ats_rank("") == 3

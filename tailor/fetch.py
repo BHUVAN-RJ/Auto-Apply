@@ -147,6 +147,17 @@ def _strip_html(value: str) -> str:
 
 
 def fetch(url: str) -> Posting:
+    # LinkedIn answers a fetch with 1778 words of LinkedIn around 194 words of
+    # posting, and publishes the posting itself at a guest endpoint that needs
+    # no login and no key. Ask there first; anything it cannot read falls
+    # through to the ordinary fetch.
+    from . import linkedin
+
+    if linkedin.job_id(url):
+        found = linkedin.posting(url)
+        if found is not None:
+            return found
+
     with httpx.Client(
         follow_redirects=True,
         timeout=TIMEOUT,

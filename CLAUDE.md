@@ -1140,6 +1140,38 @@ invariants first.
   habit still works and is not warned about. Only `HEADER` changed;
   `rules.md` and `REPLY_FORMAT` are untouched, because the API path still
   wants the whole file.
+- **An answer under a question is not the employer's policy** (2026-09-30,
+  asked for: Ashby). A capture that lands on `/application` rather than the
+  overview screens the *form*, and Ashby renders a question and its options
+  as plain lines. The question was passed over by `screening.is_question`,
+  but the option under it is a flat statement - "No, I do not require visa
+  sponsorship to work in the United States" - which read as the employer
+  refusing to sponsor, so the job was auto-rejected on the strength of the
+  candidate's own answer. `screening.is_answer` passes over a match that
+  either opens the way an answer opens or sits directly under a line ending
+  in "?". **The comma is the discriminator**: "No, I do not require
+  sponsorship" is a candidate, "No visa sponsorship is available" is an
+  employer, and both open with "No" (a test for the second one caught this).
+  Replayed over all 179 postings on disk: not one flag changed, and the live
+  Ashby form went from `visa / hard` to clean.
+- **The queue goes out easiest-first** (2026-09-30, asked for).
+  `runner.ats_rank` / `ATS_ORDER`: Ashby, then Greenhouse, then Workday, then
+  the rest, oldest first inside each, and `runner.waiting` sorts on it so
+  `serial_tick` takes them in that order. Not a preference about employers -
+  it is what the fill is known to finish without asking anybody, so a session
+  lands as many finished applications as it can before it meets one that
+  needs a person.
+- **LinkedIn's posting comes from the guest endpoint, not the page**
+  (2026-09-30). `tailor/linkedin.py`: a fetch of a job page returns 1778
+  words of LinkedIn around 194 words of posting, and the page's class names
+  are generated and rotate (`bghmnt bghmns bghr4 …`), so nothing may hang off
+  them. `linkedin.com/jobs-guest/jobs/api/jobPosting/<id>` answers the
+  description, title, company, place and the criteria list with no login and
+  no key; `fetch.fetch` asks there first for any `/jobs/view/<id>` or
+  `?currentJobId=`, and falls back to the ordinary fetch. Anchors that do
+  hold still on the signed-in page, for the Easy Apply work: `aria-label`,
+  visible text, `document.title` ("Role | Company | LinkedIn"), and the
+  `N/M pages` the flow prints.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

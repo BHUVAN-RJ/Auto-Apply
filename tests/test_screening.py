@@ -258,3 +258,51 @@ def test_a_reply_that_is_not_a_rule_is_said_plainly(monkeypatch):
     monkeypatch.setattr(server_screening.llm, "complete", lambda *a, **k: "I cannot help with that")
     res = client().post("/screening/ask", json={"request": "what is the weather"}).json()
     assert res["rule"] is None and "try saying it differently" in res["problem"]
+
+
+# -- a form's own answers are not the employer's policy -------------------
+
+ASHBY_FORM = """Autofill with Greenhouse
+Resume
+Click to upload or drag and drop here
+
+LinkedIn Profile Link
+If hired, in which country will you be based?
+For the country in which you will be based, do you now, or will you at any time in the future, require visa/work permit sponsorship to work in the United States or Canada?
+No, I do not require visa sponsorship to work in the United States
+Yes, I require visa sponsorship to work in the United States
+No, I do not require work permit sponsorship to work in Canada
+Yes, I require work permit sponsorship to work in Canada
+Submit Application
+"""
+
+
+def test_an_answer_under_a_question_is_not_a_refusal():
+    """Ashby renders a question and its options as plain lines, and a capture
+    that lands on the application page rather than the overview screens that
+    text. The question is passed over, but the option under it is a flat
+    statement - "No, I do not require visa sponsorship to work in the United
+    States" - which read as the employer refusing to sponsor and auto-
+    rejected the job on the strength of the candidate's own answer."""
+    assert screening.fired(ASHBY_FORM) == []
+
+
+def test_the_employers_own_refusal_still_fires():
+    """The guard is about who is speaking, not about the words."""
+    posting = ("About the role\n"
+               "We are unable to sponsor or take over sponsorship of an employment visa at this time.\n")
+    fired = [r.category for r, _ in screening.fired(posting)]
+    assert "visa" in fired
+
+
+def test_an_answer_is_recognised_by_either_sign():
+    # It opens the way an answer opens...
+    assert screening.is_answer("No, I do not require sponsorship", 0, "No, I do not require sponsorship")
+    # ...or the line above it is the question it answers.
+    text = "Do you require sponsorship?\nI require visa sponsorship to work in the US\n"
+    start = text.index("I require")
+    assert screening.is_answer(text, start, "I require visa sponsorship to work in the US")
+    # A policy under a heading is neither.
+    text = "Work authorisation\nWe do not sponsor visas for this role.\n"
+    start = text.index("We do not")
+    assert not screening.is_answer(text, start, "We do not sponsor visas for this role.")
