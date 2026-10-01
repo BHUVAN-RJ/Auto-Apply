@@ -199,7 +199,10 @@ def known() -> list[Known]:
     return list(rows.values())
 
 
-def _expired(item: Known) -> bool:
+def expired(item: Known) -> bool:
+    """A rejection old enough to stop matching: the same title at the same
+    company a season later is a new opening, not the one that was turned
+    down."""
     if item.status != Status.SKIPPED.value:
         return False
     try:
@@ -231,6 +234,12 @@ def _best(item: "Known") -> tuple:
         is_source_page(item.url),                  # the employer's row over Jobright's
         item.status == Status.SKIPPED.value,       # a live row over a rejected duplicate
     )
+
+
+def furthest(items: list[Known]) -> Known:
+    """The row that got furthest through the pipeline, which is the answer to
+    "what happened with this job?" - see `APPLIED_FIRST`."""
+    return sorted(items, key=_best)[0]
 
 
 def find(url: str, title: str = "", company: str = "", text: str = "") -> Optional[Match]:
@@ -269,7 +278,7 @@ def find(url: str, title: str = "", company: str = "", text: str = "") -> Option
     my_hash = quality.simhash(text) if text else 0
     hits: list[tuple[Known, str]] = []
     for item in rows:
-        if norm_company(item.company) != mine or _expired(item):
+        if norm_company(item.company) != mine or expired(item):
             continue
         if title_similarity(title, item.title) >= TITLE_SIMILARITY:
             hits.append((item, "same role at the same company"))

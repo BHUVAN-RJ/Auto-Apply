@@ -143,6 +143,11 @@ function onHosts(url, hosts) {
   }
 }
 
+// The Simplify new-grad list's own page: the tracker is drawn over its
+// tables instead of the banner, and it is in the manifest as well so it
+// works on a page the person opened before the background woke up.
+const LIST_PAGE = /^https:\/\/github\.com\/[^/]+\/New-Grad-Positions(\/|$|\?|#)/i;
+
 function fromSource(url) {
   return onHosts(url, SOURCE_HOSTS);
 }
@@ -174,6 +179,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   // Every page gets the script: a posting can be on any host, and a host
   // list could only ever guess. The app's own page is the exception.
   if (!/^https?:/.test(url) || fromSource(url) || url.startsWith(SERVER)) return;
+  if (LIST_PAGE.test(url)) {
+    // A list of postings, not one: its own overlay, and nothing read from
+    // the page until a button on it is pressed.
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["tracker.js"] });
+    } catch {
+      // Already there, or the page is restricted.
+    }
+    return;
+  }
   const hand = !marked.has(tabId);
   // Nobody pointed this page at a job: it draws the badge and reads nothing
   // until the badge is clicked.

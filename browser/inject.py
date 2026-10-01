@@ -36,6 +36,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from itertools import count
@@ -57,6 +58,12 @@ CLOSE_PATH = "/__close"
 SERVER_ORIGIN = SERVER
 
 CONTENT_JS = Path(__file__).resolve().parent.parent / "capture" / "content.js"
+# The Simplify new-grad list's own GitHub page gets a script of its own: the
+# tracker, which draws a status column over the tables and works one day of
+# postings at a time (`capture/tracker.js`). It is not a posting, so the
+# banner has nothing to say about it, and the tracker never acts by itself.
+TRACKER_JS = Path(__file__).resolve().parent.parent / "capture" / "tracker.js"
+LIST_PAGE = re.compile(r"^https://github\.com/[^/]+/New-Grad-Positions(/|$|\?|#)", re.I)
 SOURCE_HOSTS = ("jobright.ai",)
 # Jobright's own extension opens "Apply with autofill" in a tab it creates
 # itself, so there is no opener and no Page.windowOpen to tie it to the
@@ -108,6 +115,11 @@ def tagged(url: str) -> bool:
     return any(mark in query for mark in SOURCE_MARKS)
 
 
+def is_list_page(url: str) -> bool:
+    """The job list the tracker is drawn on, rather than a posting."""
+    return bool(LIST_PAGE.match(url or ""))
+
+
 def is_web(url: str) -> bool:
     return url.startswith("http://") or url.startswith("https://")
 
@@ -134,9 +146,11 @@ class Page:
 class Injector:
     """One CDP connection to the browser; page sessions multiplexed over it."""
 
-    def __init__(self, ws_url: str, script: str):
+    def __init__(self, ws_url: str, script: str, tracker: str = ""):
         self.ws_url = ws_url
         self.script = script
+        # The list page's own script; empty means it gets the banner's.
+        self.tracker = tracker
         self.ids = count(1)
         self.pending: dict[int, asyncio.Future] = {}
         self.socket = None
@@ -186,6 +200,11 @@ class Injector:
         url = self.urls.get(target_id, "")
         if not self.wanted(target_id, url):
             return
+        if self.tracker and is_list_page(url):
+            # Not a posting: a list of them, with its own overlay. Nothing
+            # is read from it until the person presses a button on it.
+            await self.evaluate_script(session, self.tracker, url, "tracker")
+            return
         # A tab nothing marked was opened by the person, not by an Apply
         # button: the banner screens and offers, but never counts down.
         hand = target_id not in self.marked and not from_source(url)
@@ -194,6 +213,9 @@ class Injector:
             f"window.__autopilotHandOpened={'true' if hand else 'false'};\n"
             f"window.__autopilotCold={'true' if cold else 'false'};\n{self.script}"
         )
+        await self.evaluate_script(session, script, url, why)
+
+    async def evaluate_script(self, session: str, script: str, url: str, why: str) -> None:
         try:
             result = await self.send(
                 "Runtime.evaluate",
@@ -515,6 +537,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--open", metavar="URL", help="open this URL in a new tab once attached")
     parser.add_argument("--script", type=Path, default=CONTENT_JS)
+    parser.add_argument("--tracker", type=Path, default=TRACKER_JS,
+                        help="the overlay for the job list's own page")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -526,8 +550,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     # content.js keeps 8787 as the extension default.  The injected copy uses
     # the same configurable server as this bridge, so another local service
     # occupying that port does not split browser requests across two apps.
-    script = args.script.read_text().replace("http://127.0.0.1:8787", SERVER)
-    injector = Injector(browser_ws(cdp_url), script)
+    def read(path: Path) -> str:
+        return path.read_text().replace("http://127.0.0.1:8787", SERVER) if path.exists() else ""
+
+    script = read(args.script)
+    injector = Injector(browser_ws(cdp_url), script, read(args.tracker))
 
     async def go() -> None:
         if args.open:

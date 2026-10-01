@@ -30,6 +30,16 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://github.com/*/New-Grad-Positions",
+        "https://github.com/*/New-Grad-Positions/*"
+      ],
+      "js": [
+        "tracker.js"
+      ],
+      "run_at": "document_idle"
     }
   ]
 }

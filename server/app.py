@@ -28,6 +28,7 @@ from .review import router as review_router
 from .scout import router as scout_router
 from .screen import router as screen_router
 from .screening import router as screening_router
+from .simplify import router as simplify_router
 from .settings import router as settings_router
 from .voice import router as voice_router
 
@@ -79,6 +80,7 @@ class StatusUpdate(BaseModel):
 app.include_router(review_router)
 app.include_router(screen_router)
 app.include_router(screening_router)
+app.include_router(simplify_router)
 app.include_router(settings_router)
 app.include_router(profile_router)
 app.include_router(form_router)

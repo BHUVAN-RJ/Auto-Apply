@@ -15,11 +15,12 @@ from browser import inject
 JOBRIGHT = "https://jobright.ai/jobs/info/abc123"
 EMPLOYER = "https://jobs.example.com/apply/1?jr_id=abc123"
 ELSEWHERE = "https://news.example.com/article"
+LIST_PAGE = "https://github.com/SimplifyJobs/New-Grad-Positions"
 
 
 class Recorder(inject.Injector):
     def __init__(self):
-        super().__init__("ws://unused", "SCRIPT")
+        super().__init__("ws://unused", "SCRIPT", "TRACKER")
         self.calls = []
 
     async def send(self, method, params=None, session=None):
@@ -86,6 +87,11 @@ def injected(injector):
     return [session for method, params, session in injector.calls
             if method == "Runtime.evaluate"
             and params.get("expression", "").endswith("SCRIPT")]
+
+
+def tracked(injector):
+    return [session for method, params, session in injector.calls
+            if method == "Runtime.evaluate" and params.get("expression", "") == "TRACKER"]
 
 
 def test_source_hosts_and_tags():
@@ -169,6 +175,29 @@ def test_a_page_pointed_at_a_job_is_not_cold():
         r = Recorder()
         run(r, created("t1", url), attached("t1", url, "s1"), loaded("s1"))
         assert cold_flags(r) == [False, False], url
+
+
+def test_the_job_lists_own_page_gets_the_tracker_not_the_banner():
+    """The Simplify list is a page of postings, not one: its overlay draws a
+    status column over the tables and works a day at a time. The banner has
+    nothing to say about it, and neither script reads it until a button on
+    it is pressed."""
+    r = Recorder()
+    run(r, created("t1", LIST_PAGE), attached("t1", LIST_PAGE, "s1"), loaded("s1"))
+    assert tracked(r) == ["s1", "s1"]
+    assert injected(r) == []
+
+
+def test_a_posting_reached_from_the_list_is_still_a_posting():
+    """Only the list's own page is the tracker's; a GitHub page that is not
+    the list, and the employer form a row leads to, are unchanged."""
+    assert inject.is_list_page(LIST_PAGE + "/blob/dev/README.md")
+    assert not inject.is_list_page("https://github.com/SimplifyJobs/Summer-Internships")
+    assert not inject.is_list_page(EMPLOYER)
+    r = Recorder()
+    other = "https://github.com/SimplifyJobs/Summer-Internships"
+    run(r, created("t1", other), attached("t1", other, "s1"), loaded("s1"))
+    assert tracked(r) == [] and injected(r) == ["s1", "s1"]
 
 
 def test_the_apps_own_page_is_never_injected():
