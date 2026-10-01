@@ -346,6 +346,6 @@ def test_nothing_is_pressed_before_the_form_is_on_the_screen():
     page the person had not finished with."""
     source = (__import__("server.runner", fromlist=["ROOT"]).ROOT / "browser" / "fill.py").read_text()
     assert "form_is_up = gate is None or gate.ready" in source
-    assert "if walk is None and form_is_up and not filled.attempted" in source
+    assert "if (walk is None and easy is None and form_is_up and not filled.attempted" in source
     # And the job comes back as one needing a person, not a failure.
     assert "filled.errors.append(forms.NOT_A_FORM)" in source

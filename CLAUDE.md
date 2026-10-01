@@ -1193,6 +1193,23 @@ invariants first.
   once - then re-reads the fields and uploads onto the input that came back.
 - **Lever goes before Workday** in `ATS_ORDER` (2026-09-30, asked for):
   Ashby, Greenhouse, Lever, Workday, the rest.
+- **LinkedIn Easy Apply, walked to the review page** (2026-09-30, asked for).
+  `browser/linkedin_apply.py`, wired into `fill_async` ahead of the Workday
+  walk and the one-page path (`AUTOPILOT_LINKEDIN=0` off). Nothing may be
+  selected by class - LinkedIn's rotate (`bghmnt bghmns bghr4 …` on the apply
+  button itself) - so every anchor is what a reader sees: `aria-label`,
+  visible text, and the `N/M pages` line the flow prints on every step; the
+  flow is **not** a `[role=dialog]`, it replaces the page. **The tailored
+  resume goes on every time** (`put_resume`, the slot cleared first, the name
+  read back) rather than reusing LinkedIn's stored one, which is the master.
+  **The screening questions are the person's**: half of them are
+  work-authorisation questions this app may never answer, so the walk stops
+  the moment a page has an unanswered control and lists the questions on the
+  review page (`Report.missing`). It stops at the review page and never
+  presses Submit; `next_button` refuses anything `guard.describes_submit`
+  recognises before it is returned. `linkedin.json` beside the screenshot.
+  **Not yet verified against the live flow** - the selectors are written from
+  one real reading of it, and the first real run is the test.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

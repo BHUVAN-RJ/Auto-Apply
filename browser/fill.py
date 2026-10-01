@@ -25,7 +25,7 @@ from typing import Optional
 import paths
 from server import settings
 
-from . import ats, autofill, chrome, forms, guard, signin, workday
+from . import ats, autofill, chrome, forms, guard, linkedin_apply, signin, workday
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -130,6 +130,10 @@ SIGNIN_ENV = "AUTOPILOT_WAIT_FOR_SIGNIN"
 # app fills is one. `AUTOPILOT_WORKDAY=0` goes back to filling page one and
 # leaving the rest to the person.
 WORKDAY_ENV = "AUTOPILOT_WORKDAY"
+# LinkedIn Easy Apply, which is a walk of its own: the tailored resume on
+# every time, the screening questions left to the person, and a stop at the
+# review page. `AUTOPILOT_LINKEDIN=0` leaves LinkedIn to the person entirely.
+LINKEDIN_ENV = "AUTOPILOT_LINKEDIN"
 
 # Where the applicant is, as every location field on every form must read.
 AUTOFILL_STEP = """1. If a Jobright autofill button or panel is offered, click it and let it
@@ -598,12 +602,40 @@ async def fill_async(
             log.info("sign-in watch: %s", error)
             gate = None
 
+    # LinkedIn Easy Apply. Jobright does not fill it and the flow is its own
+    # shape, so it has its own walk; the account and the questions are the
+    # person's, the resume and the page turns are ours.
+    easy = None
+    if (not filled.attempted and linkedin_apply.is_linkedin(url)
+            and os.environ.get(LINKEDIN_ENV, "1") != "0" and form_is_up):
+        tab = (gate.target_id if gate is not None and gate.target_id
+               else autofill.find_tab(cdp_url, url))
+        if tab:
+            try:
+                easy = await linkedin_apply.walk(cdp_url, tab, resume_pdf)
+            except Exception as error:  # noqa: BLE001 - then the ordinary path
+                log.info("linkedin easy apply: %s", error)
+                easy = None
+        if easy is not None:
+            log.info("linkedin: %s", easy.summary())
+            pressed = autofill.AutofillResult(clicked=True, target_id=tab, note=easy.summary())
+            filled.resume_uploaded = easy.resume_uploaded
+            filled.resume_name = resume_pdf.name if easy.resume_uploaded else ""
+            filled.errors.extend(easy.errors)
+            if easy.paused:
+                filled.errors.append(easy.detail)
+                for question in easy.asks:
+                    filled.missing.append({"label": question[:200], "kind": "question",
+                                           "required": True})
+            (screenshot_to.parent / "linkedin.json").write_text(
+                json.dumps(easy.to_json(), indent=2), encoding="utf-8")
+
     # Workday, page by page. Every other system is one page: press Autofill,
     # put the documents on, stop. Workday asks for the same three steps five
     # times and then shows a review page, so filling only the first one left
     # most of the work where it was.
     walk = None
-    if (not filled.attempted and workday.is_workday(url)
+    if (easy is None and not filled.attempted and workday.is_workday(url)
             and os.environ.get(WORKDAY_ENV, "1") != "0"):
         tab = (gate.target_id if gate is not None and gate.target_id
                else autofill.find_tab(cdp_url, url))
@@ -640,7 +672,8 @@ async def fill_async(
     if not form_is_up:
         log.info("no application form on the screen yet; leaving the tab to the person")
         filled.errors.append(forms.NOT_A_FORM)
-    if walk is None and form_is_up and not filled.attempted and os.environ.get(AUTOFILL_BY_CODE, "1") != "0":
+    if (walk is None and easy is None and form_is_up and not filled.attempted
+            and os.environ.get(AUTOFILL_BY_CODE, "1") != "0"):
         # The injector presses Autofill when the human opens the form; when
         # that tab is still open the fill works there, no second tab and no
         # second press.

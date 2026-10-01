@@ -53,6 +53,7 @@ SETTLE = 1.0
 APPLY_START = re.compile(
     r"^\s*(apply|apply now|apply online|apply for this job|apply to this job|"
     r"apply manually|apply with (your )?resume|autofill with resume|"
+    r"easy apply|easy apply to this job|"
     r"use my last application|start (your )?application|begin application|"
     r"continue to application)\s*[.>»→]*\s*$", re.I)
 
