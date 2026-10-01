@@ -1126,6 +1126,20 @@ invariants first.
   for). "Drag onto a file slot, click to download, or 'put' it in the
   form's slot:" took more of the bar than the two files it explained. The
   sentence is gone; what each chip does is in its own `title`.
+- **"Use Opus" asks for the body, not the whole file** (2026-09-30, asked
+  for). The preamble is the person's own LaTeX design: identical on every
+  job, never tailored, and two hundred lines a chat has to retype before it
+  reaches the part that matters - and a model that retypes it eventually
+  reflows one line of it, which is the thing `restore_preamble` exists to
+  forgive. `byhand.HEADER` now names one change to the reply format: the
+  ```tex block holds only what lies between `\begin{document}` and
+  `\end{document}`, neither line included, preamble left out entirely.
+  `byhand.as_document` puts the master's preamble and closing line back
+  around what was pasted, `extract` recognises a body by its first section
+  heading (an apology is still refused), and a whole document pasted by
+  habit still works and is not warned about. Only `HEADER` changed;
+  `rules.md` and `REPLY_FORMAT` are untouched, because the API path still
+  wants the whole file.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

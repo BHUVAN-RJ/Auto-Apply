@@ -122,3 +122,53 @@ def test_the_posting_comes_back_off_disk_for_the_checkers():
     back = Posting.from_markdown(saved, url=POSTING.url)
     assert back.text.strip() == POSTING.text.strip()
     assert back.title == POSTING.title and back.company == POSTING.company
+
+
+# -- the body, not the whole file ----------------------------------------
+
+def test_the_prompt_asks_for_the_body_only():
+    """The preamble is the person's own design and is identical on every job,
+    so asking a chat to repeat two hundred lines of it buys nothing and
+    eventually costs a reflowed line. It is put back around the answer."""
+    hand = byhand.build(POSTING, MASTER, profile="p")
+    assert r"\begin{document}" in byhand.HEADER and r"\end{document}" in byhand.HEADER
+    assert "only the body" in byhand.HEADER
+    assert "Leave out the preamble entirely" in byhand.HEADER
+    assert byhand.HEADER in hand.prompt
+
+
+def test_a_pasted_body_becomes_the_whole_document():
+    body = (r"\section{EXPERIENCE}" "\n"
+            r"\resumeItem{Cut latency 40\% with Python and Redis, serving the billing path.}" "\n"
+            r"\resumeItem{Led a rewrite of the billing path, removing 12k lines.}")
+    document, wrapped = byhand.as_document(MASTER, body)
+    assert wrapped
+    assert document.startswith(r"\documentclass{article}")
+    assert document.rstrip().endswith(r"\end{document}")
+    assert "Cut latency 40" in document
+    # The preamble is the master's, byte for byte.
+    assert document[:document.index(r"\begin{document}")] == MASTER[:MASTER.index(r"\begin{document}")]
+
+
+def test_a_whole_document_still_works():
+    """Someone who pastes the lot - an older chat, a habit - is not punished
+    for it."""
+    document, wrapped = byhand.as_document(MASTER, MASTER)
+    assert not wrapped and document.strip() == MASTER.strip()
+
+
+def test_a_body_only_reply_is_accepted_and_checked():
+    reply = "```tex\n" + (
+        r"\section{EXPERIENCE}" "\n"
+        r"\resumeItem{Cut latency 40\% with Python and Redis on the service path.}" "\n"
+        r"\resumeItem{Led a rewrite of the billing path, removing 12k lines.}" "\n") + "```"
+    result = byhand.accept(reply, POSTING, MASTER, profile="p")
+    assert r"\documentclass{article}" in result.tex
+    assert result.tex.rstrip().endswith(r"\end{document}")
+    # Nothing was "restored": the preamble was never in the reply to argue with.
+    assert not any("preamble was restored" in w for w in result.warnings)
+
+
+def test_an_apology_is_still_refused():
+    with pytest.raises(tailor_module.TailorError):
+        byhand.accept("Sure, I can help with that!", POSTING, MASTER, profile="p")
