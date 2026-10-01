@@ -875,3 +875,22 @@ def test_reveal_names_the_files_and_shows_them_in_finder(client, monkeypatch):
     assert all((app_dir / name).exists() for name in body["revealed"])
     assert calls and calls[0][0] == "osascript" and "reveal" in calls[0][2]
     assert all(name.endswith(".pdf") for name in body["revealed"])
+
+
+def test_a_dialogs_buttons_are_never_left_disabled():
+    """`act` greys the buttons while a decision is in flight. It used to grey
+    every `button.act` on the page and restore them only when the call threw,
+    because a success re-renders the pane - but a dialog is not in the pane
+    and `show()` never redraws it. So the first successful action of a session
+    left the Reject dialog permanently dead: it opened, both buttons greyed,
+    and clicking them did nothing."""
+    page = (runner.ROOT / "review" / "index.html").read_text()
+    body = page.split("async function act(id, work)")[1].split("\n}")[0]
+    assert "querySelectorAll(\"button.act\")" not in body, \
+        "act must not reach into the dialogs"
+    assert "paneButtons()" in body and "finally" in body, \
+        "the pane's buttons come back whatever happened"
+    assert "section.detail button.act" in page
+    # And a dialog opens usable whatever happened before it.
+    opener = page.split("function openReject(id)")[1].split("\n}")[0]
+    assert "disabled = false" in opener

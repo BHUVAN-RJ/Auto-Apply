@@ -1102,6 +1102,18 @@ invariants first.
   /review/{id}/reject` with `changed_my_mind`, so the folder and the record
   stay. `runner.stop_pipeline` goes with it, because a job cancelled seconds
   after it was added is usually still being tailored.
+- **A dialog is not in the pane, so `act` must not disable it** (2026-09-30).
+  `act` greys every button while a decision is in flight and restored them
+  only when the call *threw*, on the grounds that a success re-renders the
+  pane. `querySelectorAll("button.act")` reaches the reject and report
+  dialogs, which live outside `#detail` and which `show()` never redraws - so
+  the first successful action of a session left the Reject dialog dead for
+  the rest of it: it opened, both buttons greyed, clicking did nothing, and
+  it read as "Reject is still broken" on a job the page also (wrongly) said
+  an agent was working on. `paneButtons()` is `section.detail button.act,
+  .fab button.act` and a `finally` restores them whatever happened;
+  `openReject` re-enables its own two as well. Proved on the live page
+  before and after: `confirmReject.disabled` true, then false.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

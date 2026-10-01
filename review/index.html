@@ -1428,6 +1428,7 @@ async function submitNow(id, data) {
 }
 
 function openReject(id) {
+  for (const button of $("rejectForm").querySelectorAll("button")) button.disabled = false;
   const select = $("reason");
   select.innerHTML = reasons.map((r) => `<option value="${r.value}">${escape(r.label)}</option>`).join("");
   $("note").value = "";
@@ -1455,15 +1456,29 @@ async function revise(id) {
   });
 }
 
+// The buttons go dead while the decision is in flight, and come back
+// afterwards whatever happened. They used to be re-enabled only when the
+// call threw, on the grounds that a success re-renders the pane - but a
+// dialog is not in the pane. `querySelectorAll("button.act")` reaches into
+// the reject and report dialogs, which `show()` never redraws, so the first
+// successful action of a session left the Reject dialog permanently
+// disabled: it opened, both buttons greyed, and clicking them did nothing
+// (2026-09-30, "the Reject button is not available"). Only the pane's own
+// buttons are disabled now, and they are restored in a `finally`.
+function paneButtons() {
+  return document.querySelectorAll("section.detail button.act, .fab button.act");
+}
+
 async function act(id, work) {
-  for (const button of document.querySelectorAll("button.act")) button.disabled = true;
+  for (const button of paneButtons()) button.disabled = true;
   try {
     await work();
     await loadList();
     await show(id);
   } catch (err) {
     alert(err.message);
-    for (const button of document.querySelectorAll("button.act")) button.disabled = false;
+  } finally {
+    for (const button of paneButtons()) button.disabled = false;
   }
 }
 
