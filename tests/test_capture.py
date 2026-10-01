@@ -244,9 +244,10 @@ def test_a_decided_job_is_described_by_its_outcome_not_by_where_it_is_kept():
     # answer yet - a screen still running, and a countdown about to queue.
     assert 'if (!pending && !(add && add.classList.contains("counting"))) {' in script
     assert "const AUTO_COLLAPSE_MS = 3000;" in script
-    # Opening the badge is a look, not a decision to keep the bar: the same
-    # three seconds run again. Reading it holds them.
-    assert "const expand = () => {" in script and "    autoCollapse();\n  };" in script
+    # Opening the badge is a decision to keep the bar (2026-09-30, reversing
+    # the rule above for this one case): a bar that opened itself folds
+    # itself away, a bar the person opened stays until they close it.
+    assert "const expand = () => {" in script and "    stopCollapse();\n  };" in script
     assert 'shell.addEventListener("mouseenter", stopCollapse);' in script
     assert 'shell.addEventListener("mouseleave", leave);' in script
     # And it is in the bar's body, in place of the ordinary seen line: the
@@ -280,3 +281,25 @@ def test_the_banner_can_take_a_job_back_out():
     assert 'data-act = "undo"' in script.replace(".dataset.act = ", "data-act = ")
     assert '"changed_my_mind"' in script
     assert "/reject" in script
+
+
+def test_a_bar_the_person_opened_stays_open():
+    """The three-second fold is for a bar that put itself on the screen. One
+    the person opened by tapping the badge is open because they want
+    something from it - the files, the reasons, the way back to the job -
+    and none of that is done in three seconds."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    expand = script.split("const expand = () => {")[1].split("};")[0]
+    assert "openedByHand = true" in expand and "stopCollapse()" in expand
+    assert "autoCollapse()" not in expand
+    # And moving the mouse off it does not start the countdown either.
+    leave = script.split("const leave = () =>")[1].split(";")[0]
+    assert "!openedByHand" in leave
+
+
+def test_the_file_chips_speak_for_themselves():
+    """A line explaining drag, click and put took more of the bar than the
+    files it explained."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert "Drag onto a file slot, click to download" not in script.split("title=")[0]
+    assert 'class="chip put"' in script

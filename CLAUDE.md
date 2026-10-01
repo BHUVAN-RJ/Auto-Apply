@@ -1114,6 +1114,18 @@ invariants first.
   .fab button.act` and a `finally` restores them whatever happened;
   `openReject` re-enables its own two as well. Proved on the live page
   before and after: `confirmReject.disabled` true, then false.
+- **A bar the person opened stays open** (2026-09-30, asked for; reverses
+  the 2026-09-27 "expanding the badge starts the same three seconds again"
+  for this one case). `expand()` calls `stopCollapse()`, sets `openedByHand`,
+  and `leave()` will not re-arm the countdown for such a bar. Tapping the
+  badge is how someone asks for the files, the verdict's reasons or the way
+  back to the job, and none of those is done in three seconds. A bar that
+  put *itself* on the screen still folds itself away; the ✕ is how a hand-
+  opened one closes.
+- **The file chips say what they are by being chips** (2026-09-30, asked
+  for). "Drag onto a file slot, click to download, or 'put' it in the
+  form's slot:" took more of the bar than the two files it explained. The
+  sentence is gone; what each chip does is in its own `title`.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

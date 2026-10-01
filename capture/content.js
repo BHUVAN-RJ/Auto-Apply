@@ -669,14 +669,16 @@ function render(result, { pending = false } = {}) {
     shell.classList.add("collapsed");
   };
   const expand = () => {
+    openedByHand = true;
     bannerCollapsed = false;
     host.dataset.collapsed = "false";
     shell.classList.remove("collapsed");
-    // Opening the badge is a look, not a decision to keep the bar. It gets
-    // the same three seconds a fresh verdict does, and the countdown across
-    // the ✕ says so. Reading it or reaching for a button holds it open
-    // (below), so the timer only ever takes back a bar nobody is using.
-    autoCollapse();
+    // A bar that opened itself folds itself away; a bar the person opened
+    // stays open. Tapping the badge is how someone asks for the files, the
+    // verdict's reasons, or the way back to the job - all of which take
+    // longer than three seconds and none of which the bar should take back
+    // from under them (2026-09-30). The ✕ is how it closes from here.
+    stopCollapse();
   };
   // Clicks crossing a closed shadow root are retargeted to its host on some
   // ATS pages.  Let the host restore the badge as well as its inner button.
@@ -685,6 +687,9 @@ function render(result, { pending = false } = {}) {
   // corner badge. Restoring it only expands this DOM; it never screens again.
   let closing = 0;
   let collapseTimer = null;
+  // Whether this bar is on the screen because the person put it there. One
+  // that opened itself folds itself away; one they opened does not.
+  let openedByHand = false;
   const stopCollapse = () => {
     clearTimeout(collapseTimer);
     collapseTimer = null;
@@ -770,7 +775,7 @@ function render(result, { pending = false } = {}) {
   // a job was rejected.
   shell.addEventListener("mouseenter", stopCollapse);
   shell.addEventListener("focusin", stopCollapse);
-  const leave = () => { if (!bannerCollapsed && !pending) autoCollapse(); };
+  const leave = () => { if (!bannerCollapsed && !pending && !openedByHand) autoCollapse(); };
   shell.addEventListener("mouseleave", leave);
   shell.addEventListener("focusout", leave);
 
@@ -888,8 +893,12 @@ async function loadFiles(shadow, jobId) {
   }
   const entries = [["resume", "Resume"], ["cover_letter", "Cover letter"]].filter(([k]) => data[k]);
   if (!entries.length) { row.innerHTML = `<span class="hint">No tailored files yet.</span>`; return; }
-  row.innerHTML = `<span class="hint">Drag onto a file slot, click to download, or “put” it in the form's slot:</span>` + entries.map(([k, label]) =>
-    `<span class="chip" draggable="true" data-key="${k}" title="${esc(data[k].name)}"><b>⇣</b> ${label} · ${esc(data[k].name)}</span>` +
+  // No sentence over the chips: a chip that can be dragged, clicked and put
+  // says so by being one, and the line explaining all three took more of the
+  // bar than the files did. What each one does is in its own title.
+  row.innerHTML = entries.map(([k, label]) =>
+    `<span class="chip" draggable="true" data-key="${k}"
+       title="${esc(data[k].name)} — drag onto a file slot, or click to download"><b>⇣</b> ${label} · ${esc(data[k].name)}</span>` +
     `<span class="chip put" data-put="${k}" title="Set the form's ${label.toLowerCase()} file input to this file"><b>→</b> put</span>`).join("");
   const files = {};
   for (const [k] of entries) {
