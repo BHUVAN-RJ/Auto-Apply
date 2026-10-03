@@ -245,6 +245,30 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     store.write(app_dir, "posting.md", posting.to_markdown())
     write_screen(app_dir, job, posting)
 
+    # A login wall or a bare application form is not a posting. Tailoring
+    # against one paid for a story pick, up to five tailoring attempts and a
+    # cover letter, all written to a page that says "Email Address:". The job
+    # waits at checkpoint 1 instead. A reviewer's instruction (a thread
+    # re-tailor, an approve that overrules) is the person deciding to go on,
+    # and fetches again first, so it is not stopped here.
+    thin = None if extra_instruction.strip() else quality.too_thin(posting.text)
+    if thin:
+        store.write(
+            app_dir,
+            "thin_posting.md",
+            f"# Not tailored: this page does not read as a job posting\n\n"
+            f"{thin}, from {posting.text_source or 'the fetched page'}. Usually "
+            "a sign-in wall or the application form itself.\n\n"
+            "Open the posting's own description page and add it again, or "
+            "approve to tailor against this text anyway.\n",
+        )
+        store.set_status(app_dir, held or Status.AWAITING_REVIEW, f"not tailored: {thin}")
+        if not keep_status or revive:
+            queue.update(job.id, status=Status.AWAITING_REVIEW)
+        print(f"  not tailored, the posting text is too thin: {thin}")
+        tell_tab(job, "done", "Not tailored: this page is not the job description")
+        return app_dir
+
     base_tex = paths.BASE / "resume.tex"
     target = base_page_count()
     stories = pick_stories(app_dir, posting)

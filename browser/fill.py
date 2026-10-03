@@ -514,6 +514,18 @@ def _corrections_store():
     return forms.load_corrections()
 
 
+def _sweep_blank(before: set[str]) -> None:
+    """Close the blank tabs this run left behind. Best effort; a tab that
+    will not close changes nothing about the fill."""
+    try:
+        closed = chrome.close_blank_tabs(before)
+    except Exception as error:  # noqa: BLE001 - tidying never fails a fill
+        log.debug("blank tab sweep: %s", error)
+        return
+    if closed:
+        log.info("closed %d blank tab(s) opened during this fill", len(closed))
+
+
 async def _twice(what: str, run):
     """Run a CDP step, once more when the connection is what broke. Any
     other failure is raised where it happened: a page with no Autofill
@@ -553,6 +565,11 @@ async def fill_async(
         raise FillError("OPENROUTER_API_KEY is unset")
 
     cdp_url = resolve_cdp_url(headless)
+    # The tabs that were already there. Anything blank that appears during
+    # this run was opened by something that then had nothing to put in it -
+    # Jobright's "another job" control, a swallowed window.open - and is
+    # swept up at the end. A tab with a page in it is never touched.
+    tabs_before = chrome.page_ids()
     browser = build_browser(Browser, headless=headless)
 
     # Step one in code, two ways. On a system with an adapter and a
@@ -563,10 +580,20 @@ async def fill_async(
     filled = forms.Report(note="skipped")
     pressed = autofill.AutofillResult(note="skipped")
     adapter = forms.adapter_for(url)
+    # The page with the form on it, which is not always the page the job was
+    # captured from. Ashby's posting (`/<org>/<id>`) and Lever's (`/<org>/<id>`)
+    # are overview pages with no form at all: the fill opened one of those,
+    # found nothing to attach a resume to and handed the job back as
+    # "could not attach", while the application was one known path away
+    # (2026-10-03, asked for). The adapter knows that path, and it is
+    # deterministic - no Apply press, no guessing.
+    form_url = adapter.apply_url(url) if adapter else url
+    if form_url != url:
+        log.info("the form is on %s, not the posting page", form_url)
     profile = forms.load() if adapter else None
     if adapter and profile and os.environ.get(FORM_FILL_ENV, "1") != "0":
         try:
-            filled = await forms.fill(cdp_url, url, adapter, profile, resume_pdf, cover_letter_pdf)
+            filled = await forms.fill(cdp_url, form_url, adapter, profile, resume_pdf, cover_letter_pdf)
         except Exception as error:  # noqa: BLE001 - the agent is the fallback
             filled = forms.Report(note=f"failed: {error}")
         log.info(filled.summary())
@@ -588,8 +615,8 @@ async def fill_async(
                 await autofill.notify(cdp_url, gate_tab[0], "working", line)
 
             gate_tab = [""]
-            gate_tab[0] = autofill.find_tab(cdp_url, url)
-            tab, gate = await signin.ready_tab(cdp_url, url, notify=say)
+            gate_tab[0] = autofill.find_tab(cdp_url, form_url)
+            tab, gate = await signin.ready_tab(cdp_url, form_url, notify=say)
             gate_tab[0] = tab
             if gate.applied:
                 log.info("pressed Apply (%s), %d time(s)", gate.applied, gate.pressed)
@@ -601,6 +628,22 @@ async def fill_async(
         except Exception as error:  # noqa: BLE001 - then the old path, unchanged
             log.info("sign-in watch: %s", error)
             gate = None
+
+    # Nothing is pressed until the application's first page is on the screen.
+    # The watch above answers that question; when it says no - a posting
+    # behind Apply, an account not created yet, a sign-in the person has not
+    # finished - the old code pressed on regardless. On Globus Medical that
+    # meant opening a second tab and pressing Jobright's "Autofill for
+    # Another Job" against a job posting, which is where the stray `about:
+    # blank` tabs came from (2026-09-30, asked for: "let the user do all of
+    # it, and once the first page is visible the autopilot can take over").
+    # Decided here rather than after the walks, because the LinkedIn branch
+    # reads it (2026-10-03: it was set thirty lines below its first use, so
+    # a LinkedIn job raised UnboundLocalError instead of filling).
+    form_is_up = gate is None or gate.ready
+    if not form_is_up:
+        log.info("no application form on the screen yet; leaving the tab to the person")
+        filled.errors.append(forms.NOT_A_FORM)
 
     # LinkedIn Easy Apply. Jobright does not fill it and the flow is its own
     # shape, so it has its own walk; the account and the questions are the
@@ -660,18 +703,6 @@ async def fill_async(
             (screenshot_to.parent / "workday.json").write_text(
                 json.dumps(walk.to_json(), indent=2), encoding="utf-8")
 
-    # Nothing is pressed until the application's first page is on the screen.
-    # The watch above answers that question; when it says no - a posting
-    # behind Apply, an account not created yet, a sign-in the person has not
-    # finished - the old code pressed on regardless. On Globus Medical that
-    # meant opening a second tab and pressing Jobright's "Autofill for
-    # Another Job" against a job posting, which is where the stray `about:
-    # blank` tabs came from (2026-09-30, asked for: "let the user do all of
-    # it, and once the first page is visible the autopilot can take over").
-    form_is_up = gate is None or gate.ready
-    if not form_is_up:
-        log.info("no application form on the screen yet; leaving the tab to the person")
-        filled.errors.append(forms.NOT_A_FORM)
     if (walk is None and easy is None and form_is_up and not filled.attempted
             and os.environ.get(AUTOFILL_BY_CODE, "1") != "0"):
         # The injector presses Autofill when the human opens the form; when
@@ -683,12 +714,12 @@ async def fill_async(
                 # provider and back; matching on the URL again would lose it.
                 pressed = await autofill.in_tab(cdp_url, gate.target_id)
             else:
-                pressed = await autofill.reuse(cdp_url, url)
+                pressed = await autofill.reuse(cdp_url, form_url)
         except Exception as error:  # noqa: BLE001 - then press afresh
             log.info("could not reuse the opened tab: %s", error)
             pressed = None
         if pressed is None:
-            pressed = await _press_again(cdp_url, url)
+            pressed = await _press_again(cdp_url, form_url)
         log.info(pressed.summary())
         # The documents, in code, once Jobright is done: the tailored resume
         # over whatever it attached, the cover letter where there is a slot.
@@ -732,8 +763,10 @@ async def fill_async(
     if not agent_on:
         # Code only: Jobright's autofill, then the documents. No model
         # touches the form; whatever is left is the human's, on the tab.
-        return await _finish_without_agent(cdp_url, url, target_id, filled, pressed, screenshot_to,
-                                           bool(cover_letter_pdf))
+        result = await _finish_without_agent(cdp_url, url, target_id, filled, pressed, screenshot_to,
+                                             bool(cover_letter_pdf))
+        _sweep_blank(tabs_before)
+        return result
 
     model = os.environ.get("OPENROUTER_BROWSER_MODEL", DEFAULT_BROWSER_MODEL)
     llm = ChatOpenAI(
@@ -817,6 +850,7 @@ async def fill_async(
         await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, url, target_id)
         if target_id:
             await autofill.notify(cdp_url, target_id, "done", "Filled and ready; your check, then Submit")
+        _sweep_blank(tabs_before)
 
     # A screenshot proves the browser was alive, not that the form was filled.
     # A run that never reached done, or that errored on every step other than

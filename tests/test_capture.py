@@ -1,5 +1,7 @@
 """Capturing a job starts the pipeline; nothing past checkpoint 1 starts."""
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -182,11 +184,13 @@ def test_use_opus_pressed_on_jobrights_page_reaches_the_employer_tabs_capture(la
     assert "6aad9999" not in app_module.PREMIUM_PREFS, "used once; a later capture is not bound by it"
 
 
-def test_the_countdown_leaves_room_to_press_use_opus():
-    """Both the button and the three seconds are in the banner; two seconds
-    was not enough to read the verdict and decide."""
+def test_the_countdown_is_two_seconds_and_opus_does_not_cancel_it():
+    """Two seconds (2026-10-03, asked for; three from 2026-09-24 to give the
+    Opus button room). Arming Opus never cancelled the countdown, and the
+    thread's own "Re-tailor with Opus" catches a press made after the job
+    has gone in, so the extra second bought nothing."""
     content = (runner.ROOT / "capture" / "content.js").read_text()
-    assert "const AUTO_ADD_MS = 3000;" in content
+    assert "const AUTO_ADD_MS = 2000;" in content
     assert 'data-act="opus"' in content
     # Armed, not pressed: the countdown is not cancelled by the choice.
     assert "usePremium = !usePremium;" in content
@@ -303,3 +307,14 @@ def test_the_file_chips_speak_for_themselves():
     script = (runner.ROOT / "capture" / "content.js").read_text()
     assert "Drag onto a file slot, click to download" not in script.split("title=")[0]
     assert 'class="chip put"' in script
+
+
+def test_i_submitted_it_is_not_asked_twice():
+    """Pressing the button is the statement. It records what the person did,
+    writes no correction and closes nothing but that form's tab, so a dialog
+    on top of it is a second click for nothing (2026-10-03, asked for). The
+    dialog that stays is the one on "Submit it", which presses Submit."""
+    page = (pathlib.Path(__file__).resolve().parent.parent / "review" / "index.html").read_text()
+    marked = page.split("async function markSubmitted(")[1].split("\n}")[0]
+    assert "confirm(" not in marked
+    assert "confirm(" in page.split("async function submitNow(")[1].split("\n}")[0]

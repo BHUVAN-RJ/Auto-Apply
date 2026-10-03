@@ -51,9 +51,12 @@ const CHECKS = "years of experience, visa and sponsorship, export control, clear
 // An ok or caution verdict queues the job on its own after this long; the
 // bar across the button is the countdown, and a click on it cancels. A
 // reject never queues itself: the button waits for the person.
-// 3s, not 2 (2026-09-24): the "Use Opus" button lives inside this window,
-// and two seconds was not enough to read the verdict and press it.
-const AUTO_ADD_MS = 3000;
+// Two seconds (2026-10-03, asked for; it was 3 from 2026-09-24 to give the
+// "Use Opus" button room inside the window). Arming Opus does not cancel the
+// countdown, so a press after the job has gone in is the thread's
+// "Re-tailor with Opus" instead, which sets the model on the row and
+// re-tailors - one click either way.
+const AUTO_ADD_MS = 2000;
 const AUTO_ADD = new Set(["ok", "caution"]);
 // Once the bar has a verdict to give, it has done its work: it closes
 // itself after this long, counted down in red across the ✕, and becomes

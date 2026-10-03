@@ -857,9 +857,14 @@ def test_the_prompt_is_served_whole_and_the_pasted_resume_is_checked(client, mon
     assert (app_dir / "handoff.md").exists()
 
 
-def test_reveal_names_the_files_and_shows_them_in_finder(client, monkeypatch):
-    """The Finder button makes the upload-named copies if the fill has not
-    (a folder that was only tailored has none) and selects both."""
+def test_reveal_selects_the_resume_alone_and_makes_both_copies(client, monkeypatch):
+    """The Finder button makes the upload-named copies if the fill has not (a
+    folder that was only tailored has none) and selects **the resume**.
+
+    Both were selected until 2026-10-03, which is two highlighted files to
+    pick between at the moment of dragging one onto a slot. The letter is
+    still made under its upload name, a row away in the same folder.
+    """
     import subprocess
     import sys
     job_id, app_dir = reviewable_job()
@@ -871,10 +876,12 @@ def test_reveal_names_the_files_and_shows_them_in_finder(client, monkeypatch):
 
     r = client.post(f"/review/{job_id}/reveal", json={})
     body = r.json()
-    assert r.status_code == 200 and len(body["revealed"]) == 2
-    assert all((app_dir / name).exists() for name in body["revealed"])
+    assert r.status_code == 200 and len(body["revealed"]) == 1
+    assert "resume" in body["revealed"][0].lower() and body["revealed"][0].endswith(".pdf")
+    assert body["also"] and "cover" in body["also"].lower()
+    assert (app_dir / body["revealed"][0]).exists() and (app_dir / body["also"]).exists()
     assert calls and calls[0][0] == "osascript" and "reveal" in calls[0][2]
-    assert all(name.endswith(".pdf") for name in body["revealed"])
+    assert calls[0][2].count("POSIX file") == 1, "one file selected, not two"
 
 
 def test_a_dialogs_buttons_are_never_left_disabled():

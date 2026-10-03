@@ -1,6 +1,7 @@
 """Pressing Jobright's Autofill in code: finds the button, clicks once,
 waits for the fields, and steps aside for the agent on anything else."""
 import asyncio
+import inspect
 
 import pytest
 
@@ -236,3 +237,45 @@ def test_find_tab_matches_the_form_not_the_path(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=5: io.BytesIO(__import__("json").dumps(pages).encode()))
     assert autofill.find_tab("http://x", "https://job-boards.greenhouse.io/embed/job_app?for=pallet&token=1") == "PALLET"
     assert autofill.find_tab("http://x", "https://job-boards.greenhouse.io/embed/job_app?for=other&token=3") == ""
+
+
+# --------------------------------------------- not this job's autofill ----
+
+
+def test_jobrights_another_job_control_is_never_pressed():
+    """"Autofill for Another Job" is Jobright saying it has no match for
+    this page; pressing it opens a tab of its own to pick a job in, which is
+    where the stray blank tabs came from - two or three per fill, since the
+    second-press rule would press it as well (2026-10-03, asked for)."""
+    import re
+
+    from browser import autofill
+
+    for label in ("Autofill for Another Job", "Autofill for another application",
+                  "Autofill - pick a job"):
+        assert re.search(autofill.SKIP, label, re.I), label
+    for label in ("Autofill", "Autofill my application", "Auto-fill"):
+        assert not re.search(autofill.SKIP, label, re.I), label
+    # The finder passes them over in the page as well, so a form offering
+    # both still gets its own Autofill pressed.
+    assert "SKIP.test" in autofill.FIND_JS and "another" in autofill.FIND_JS
+
+
+def test_the_press_waits_for_the_extension_to_settle():
+    """Jobright injects its panel and then works out which job the page is.
+    Pressing into that gap is what met the "another job" control."""
+    from browser import autofill
+
+    assert autofill.WARMUP >= 1.0
+    body = inspect.getsource(autofill.run)
+    assert body.index("WARMUP") < body.index("FIND_JS"), "the wait comes before the first look"
+
+
+def test_only_blank_tabs_this_run_opened_are_closed():
+    """The browser is the person's working set: the sweep may only take back
+    a tab that is blank *and* was not there when the fill started."""
+    from browser import chrome
+
+    body = inspect.getsource(chrome.close_blank_tabs)
+    assert "target_id in known" in body and "BLANK_URLS" in body
+    assert chrome.BLANK_URLS == ("about:blank", "")

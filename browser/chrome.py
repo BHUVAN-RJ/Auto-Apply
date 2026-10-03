@@ -155,6 +155,50 @@ def open_pages(port_number: Optional[int] = None) -> list[str]:
     return [p.get("url", "") for p in pages if p.get("type") == "page"]
 
 
+def page_ids(port_number: Optional[int] = None) -> set[str]:
+    """Target ids of the tabs open on our Chrome; empty when it is not up."""
+    url = cdp_url(port() if port_number is None else port_number)
+    try:
+        with urllib.request.urlopen(f"{url}/json", timeout=2) as response:
+            pages = json.loads(response.read())
+    except Exception:  # noqa: BLE001 - no browser, no tabs
+        return set()
+    return {p.get("id", "") for p in pages if p.get("type") == "page"} - {""}
+
+
+# Tabs that hold nothing and were nobody's decision. Jobright's extension
+# opens one when its autofill is pressed with no job matched, and a fill used
+# to leave two or three of them behind per job (2026-10-03, asked for). Only
+# a tab that is *blank* and that was not there when the run started is
+# closed: the browser is the person's working set and nothing else in it is
+# ours to take away.
+BLANK_URLS = ("about:blank", "")
+
+
+def close_blank_tabs(known: set[str], port_number: Optional[int] = None) -> list[str]:
+    """Close the blank tabs that appeared since `known` was taken. Returns
+    the ids closed. Never touches a tab with a page in it."""
+    port_number = port() if port_number is None else port_number
+    url = cdp_url(port_number)
+    try:
+        with urllib.request.urlopen(f"{url}/json", timeout=2) as response:
+            pages = json.loads(response.read())
+    except Exception:  # noqa: BLE001 - no browser, nothing to close
+        return []
+    closed = []
+    for page in pages:
+        if page.get("type") != "page":
+            continue
+        target_id = page.get("id", "")
+        if not target_id or target_id in known:
+            continue
+        if (page.get("url") or "").strip() not in BLANK_URLS:
+            continue
+        if close_tab(target_id, port_number):
+            closed.append(target_id)
+    return closed
+
+
 def close_tab(target_id: str, port_number: Optional[int] = None) -> bool:
     """Close one tab on our Chrome by target id, over the /json/close
     endpoint. The browser and every other tab stay. False when the browser

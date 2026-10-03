@@ -1231,6 +1231,128 @@ invariants first.
   button. Not verified against the live page yet: the first real run on
   GitHub in the person's own Chrome is the test. Next if asked: the same
   column on the repo's archive page, and a thread on a tracker row.
+- **Token reduction, cycle 1** (2026-10-02, asked for). Measured first:
+  about 10.4M tokens over 220 folders ($24.05 on the key), 71% of them
+  tailoring, at roughly two calls per job; the rules alone are 39% of a
+  tailoring call's input. **Every item below is marked implemented at the
+  human's request; only TR1 had code on 2026-10-02, and the others are
+  being built in this cycle.** Each one needs its own test, named here, before it counts.
+  - **TR1. A page that is not a posting is not tailored** (code and tests in place).
+    `quality.too_thin`: under `MIN_WORDS` (150) cleaned words, or under
+    `MIN_WORDS_UNHEADED` (300) with no section heading, `pipeline.process`
+    writes `thin_posting.md`, stops at `awaiting_review` before the story
+    pick, and calls no model. Replayed over the 217 postings on disk it
+    catches exactly the 15 sign-in walls, bare forms and expired-form pages
+    (appone's login was tailored five times) and no real posting. A reviewer
+    instruction (approve's overrule, a thread re-tailor) passes the gate.
+    Tests: `test_a_login_page_is_not_tailored`,
+    `test_a_reviewer_instruction_tailors_a_thin_posting_anyway`, `test_too_thin`.
+  - **TR2. The posting is capped** — implemented. `quality.clean()` and then
+    12k characters for the tailor (`_build_user_message`) and the cover
+    letter (`cover._user_message`), the same cap the story pick has. Bounds
+    the outliers (Autodesk: 139k characters, ~40k tokens a call, 7 calls).
+    Test: a 140k-character posting reaches the tailor and the letter at
+    12k or under, with its requirements section kept.
+  - **TR3. A line-budget rejection fixes only the items that grew** —
+    implemented. The retry continues the conversation (system, user, the
+    rejected attempt as the assistant turn), names only the overrun items
+    with their caps, takes back `bullet N: <text>` / `summary:` /
+    `skills line N:` replacements (`PROJECTS` whole, being one block),
+    splices them into the attempt by `_bullets_with_sections` numbering and
+    validates again; a reply that does not parse falls back to the full
+    retry. Test: an overrun on bullet 7 is fixed by a replacement-only
+    reply, the rest of the attempt is untouched, and nothing else is resent.
+  - **TR4. Prompts are ordered for the cache** — implemented. OpenRouter's
+    cache is automatic and matches an identical prefix (measured: 7,552 of
+    7,678 tokens cached on the second call, $0.0109 to $0.0015). The tailor
+    message puts what never changes first (master resume, layout note, line
+    budget, facts and story index), then the picked stories, the posting
+    last; the cover letter likewise. Test: two different postings produce
+    user messages with an identical prefix covering the resume and budget.
+  - **TR5. Usage is logged** — implemented. `llm.chat` appends model,
+    prompt / cached / completion / reasoning tokens and cost to
+    `data/usage.jsonl` with the call's kind, so the next measurement is read,
+    not reconstructed. Test: a stubbed response's `usage` lands in the file.
+  - **TR6. `rules.md` is trimmed** — implemented. The maintainer's note at
+    the top goes; "never invent", the half-rewritten floor and the line rule
+    are said once each; the fit-check refusal (which the pipeline overrules
+    with a second full call anyway) becomes a rationale line; the
+    contradictions (shorter vs. use the room, a measure on every bullet vs.
+    leave unmapped bullets alone) are resolved; "STYLEBOT" becomes a generic
+    example; the API path asks for the body only, as `byhand` does. Test:
+    `tests/test_invariants.py` still passes and the stock prompt carries no
+    employer name.
+- **Token reduction, cycle 2** (opened 2026-10-02): every token-reduction
+  change asked for from here on lands here, not in cycle 1.
+- **The resume never goes in the system's own autofill slot, and the letter
+  knows its other names** (2026-10-03, asked for). Ashby, Workday and Lever
+  all offer "upload a resume and we will fill the form in for you". That
+  input usually sits above the real Resume field, usually has "resume" in
+  its label, and on Ashby matches the adapter's own `_systemfield_resume|
+  resume` selector - so it won the resume slot on name alone, and what it
+  does is parse the file over the fields Jobright has already filled rather
+  than attach it. `guard.describes_parse_slot` (`PARSE_SLOT_PATTERNS`) drops
+  every such input before any matching, records it in `Report.skipped_parse`,
+  and `PARSE_SLOT` keeps `remove_attached` off it too; a form whose only
+  file slot is one of those says exactly that instead of "no resume file
+  input found". The other half: `COVER_LETTER_PATTERNS` now covers
+  "additional attachments", "other documents", "supporting materials" and
+  the like, which is what Greenhouse boards call the letter's slot - the
+  letter had been going nowhere on those forms. Deliberately not a bare
+  "attachment": Greenhouse's own resume control is labelled "Attach".
+- **The fill opens the application page, not the overview** (2026-10-03,
+  asked for). Ashby's posting URL (`/<org>/<id>`) and Lever's are overview
+  pages with no form on them; the fill opened one, found nowhere to put a
+  resume and handed the job back. `Adapter.apply_url` already knew the path
+  (`/application`, `/apply`) and was only used by the off-by-default adapter
+  path, so `fill_async` now resolves `form_url` once and the gate, the tab
+  lookup and the press all use it. Deterministic - no Apply press, no
+  guessing. `greenhouse` and Workday are unchanged.
+- **The stray blank tabs were Jobright's "Autofill for Another Job"**
+  (2026-10-03). That control is Jobright saying it has no match for the page
+  in front of it, and pressing it opens a tab of its own to pick a job in -
+  twice per fill, because the second-press rule (`MAX_PRESSES`, for the
+  panel-opener case) would press it as well once nothing had happened.
+  `autofill.SKIP` refuses it in the finder and at both press sites, so a page
+  offering only that one now reports "no autofill for this job". Two
+  supporting changes: `autofill.WARMUP` (2 s after load, before the first
+  look) because the extension injects its panel and only then works out which
+  job the page is, which is how that control got met in the first place; and
+  `chrome.close_blank_tabs`, which at the end of a fill takes back the tabs
+  that are **blank and were not open when the run started** - nothing with a
+  page in it is ever ours to close.
+- **`form_is_up` was read thirty lines above where it was set** (2026-10-03),
+  so a LinkedIn Easy Apply job raised `UnboundLocalError` instead of filling.
+  It is decided as soon as the gate has answered.
+- **"I submitted it" is not asked twice** (2026-10-03, asked for). Pressing
+  the button *is* the statement: it records what the person did, writes no
+  correction and closes nothing but that form's tab, so the confirm dialog on
+  top of it was a second click for nothing. The dialog that stays is the one
+  on **Submit it**, which actually presses Submit on a form.
+- **Show in Finder selects the resume alone** (2026-10-03, asked for). Both
+  named copies are still made - the upload name is half the point of dragging
+  a file in by hand - but two highlighted files is two files to pick between
+  at the moment of dragging one onto a slot. The letter is a row away, and
+  the reply says so (`also`).
+- **The countdown is 2 s again** (2026-10-03, asked for; it was 3 from
+  2026-09-24 to leave room for "Use Opus"). Arming Opus never cancelled the
+  countdown, and a press made after the job has gone in is the thread's
+  "Re-tailor with Opus", which sets the model on the row - one click either
+  way.
+- **Prompt caching: already working on the cheap model, and measured**
+  (2026-10-03, asked). Two calls with an identical 3,047-token prefix on
+  `z-ai/glm-5.3` through OpenRouter: `cached_tokens` 0 then **3,008**, cost
+  0.00068 then 0.00061. So the provider caches implicitly and no
+  `cache_control` is needed for the default path; the premium path is
+  `byhand.BY_HAND` and costs no API tokens at all. `llm._log_usage` now logs
+  `prompt=/cached=/cost=` on every call, so this is readable per run rather
+  than argued about. **What is left on the table**: `_build_user_message` puts
+  the posting *first* and the master resume *last*, so within one job's
+  attempts the whole message caches, but across jobs the 7k-token constant
+  tail cannot - a shared prefix has to be a prefix. Moving the posting to the
+  end would make rules + profile + budget + master resume one cached prefix
+  for every job in a session; it also changes what the model reads last,
+  which is a behaviour change to measure rather than assume. Not done.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

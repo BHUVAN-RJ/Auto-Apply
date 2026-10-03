@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -33,17 +34,34 @@ from . import guard
 log = logging.getLogger("autofill")
 
 LOAD_TIMEOUT = 30.0
+# After the page says it has loaded, before the first look for the button.
+# Jobright's extension injects its panel and then decides which job this is;
+# pressing into that gap gets the control it offers when it has not matched
+# the page yet - "Autofill for Another Job" - which opens a tab of its own
+# (2026-10-03, asked for: "give it a second or two to stop before it
+# actually clicks autofill"). `SKIP` is the other half, because a slow
+# extension is not the only way to meet that button.
+WARMUP = 2.0
 BUTTON_TIMEOUT = 20.0   # Jobright's extension injects the panel after load
 FINISH_TIMEOUT = 60.0
 POLL = 1.0
 SETTLE_POLLS = 3        # filled-field count unchanged this many polls = done
 MAX_PRESSES = 2         # the panel opener, then the control inside it
 
+# Never pressed. "Autofill for Another Job" is Jobright's way of saying it
+# has no match for the page in front of it: pressing it opens its own tab to
+# pick a job in, which is where the stray blank tabs came from - two or
+# three per job, because the second-press rule would then press it as well.
+# A page offering only this one has no autofill for this job, and saying so
+# is the honest answer.
+SKIP = r"another\s+(job|application)|other\s+job|pick\s+a\s+job|choose\s+a\s+job"
+
 # Finds the Autofill control, in the page and in every open shadow root.
 # Returns the text of what it found, or "" for nothing. Does not click.
 FIND_JS = r"""
 (() => {
   const AUTOFILL = /^\s*(auto-?fill)\b/i;
+  const SKIP = new RegExp(SKIP_PATTERN, "i");
   const out = [];
   const visible = (el) => {
     const r = el.getBoundingClientRect();
@@ -59,6 +77,8 @@ FIND_JS = r"""
       const own = (el.innerText || raw).trim();
       const text = AUTOFILL.test(own) && own.length < 40 ? own : AUTOFILL.test(label) ? label : "";
       if (!text || !visible(el)) continue;
+      // Jobright's "for another job" control is not this job's autofill.
+      if (SKIP.test(text) || SKIP.test(label)) continue;
       // The innermost match: a wrapper around the button matches too.
       if ([...el.children].some((c) => AUTOFILL.test((c.textContent || "").trim()))) continue;
       out.push({ el, text, tag: el.tagName.toLowerCase() });
@@ -75,7 +95,7 @@ FIND_JS = r"""
   out[0].el.setAttribute("data-autopilot-autofill", "1");
   return { text: out[0].text, tag: out[0].tag };
 })()
-"""
+""".replace("SKIP_PATTERN", json.dumps(SKIP))
 
 CLICK_JS = r"""
 (() => {
@@ -266,6 +286,9 @@ async def run(page: Session, target_id: str = "") -> AutofillResult:
     `press` so it can run against a fake page in tests."""
     result = AutofillResult(target_id=target_id)
     await wait_for_load(page)
+    # The extension needs a moment after the page to work out which job this
+    # is; pressing into that gap gets its "another job" control.
+    await asyncio.sleep(WARMUP)
 
     found = None
     deadline = time.monotonic() + BUTTON_TIMEOUT
@@ -278,6 +301,10 @@ async def run(page: Session, target_id: str = "") -> AutofillResult:
         result.note = "no Autofill button on the page"
         return result
     text = str(found.get("text", ""))
+    if re.search(SKIP, text, re.I):
+        # Cannot happen with the finder above, and is checked anyway.
+        result.note = f"refused: {text!r} is not this job's autofill"
+        return result
     if guard.describes_submit(text):
         # Cannot happen with the regex above, and is checked anyway: this
         # is the one click code makes on a form.
@@ -338,7 +365,9 @@ async def run(page: Session, target_id: str = "") -> AutofillResult:
         if (not signal.get("events") and not saw_busy and filled == result.filled_before
                 and len(pressed) < MAX_PRESSES):
             again = await page.evaluate(FIND_JS)
-            if again and again.get("text") not in pressed and not guard.describes_submit(str(again.get("text", ""))):
+            if (again and again.get("text") not in pressed
+                    and not re.search(SKIP, str(again.get("text", "")), re.I)
+                    and not guard.describes_submit(str(again.get("text", "")))):
                 if await page.evaluate(CLICK_JS):
                     pressed.append(str(again.get("text")))
                     idle_polls = 0

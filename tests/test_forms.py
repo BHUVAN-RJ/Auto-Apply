@@ -561,3 +561,69 @@ def test_an_occupied_slot_is_cleared_before_ours_goes_on():
     assert "replace" in engine.REMOVE_LABELS and "change" in engine.REMOVE_LABELS
     # And the fields are read again, so the upload uses the input that came back.
     assert "resume_input, cover_input = engine.file_inputs(fields)" in body
+
+
+# ------------------------------------------------- which slot takes what --
+
+
+def test_the_resume_never_goes_in_the_systems_own_autofill_slot(tmp_path):
+    """Ashby, Workday and Lever offer "upload a resume and we will fill the
+    form in". It usually sits above the real Resume field and usually has
+    "resume" in its label, so it won the slot on name alone - and what it
+    does is parse the file over the fields Jobright already filled rather
+    than attach it (2026-10-03, asked for)."""
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    page = FakePage([
+        gh_field("1", id="autofill_resume", type="file", kind="file", name="resume",
+                 label="Autofill with Resume"),
+        gh_field("2", id="resume", type="file", kind="file", name="resume", label="Resume/CV *"),
+    ])
+    report = run_documents(page, resume=resume)
+    assert page.fields["2"]["value"] == "Jane_Doe_Resume.pdf"
+    assert page.fields["1"]["value"] == "", "nothing of ours goes in the parse slot"
+    assert report.skipped_parse == ["Autofill with Resume"]
+
+
+def test_a_form_whose_only_file_slot_is_an_autofill_says_so(tmp_path):
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    page = FakePage([
+        gh_field("1", id="parse", type="file", kind="file", label="Autofill with Resume"),
+        gh_field("2", id="first_name", type="text", kind="text", label="First Name *"),
+        gh_field("3", id="last_name", type="text", kind="text", label="Last Name *"),
+        gh_field("4", id="email", type="text", kind="text", label="Email *"),
+        gh_field("5", id="phone", type="text", kind="text", label="Phone *"),
+    ])
+    report = run_documents(page, resume=resume)
+    assert not report.resume_uploaded and page.fields["1"]["value"] == ""
+    assert any("parse a resume into the form" in e for e in report.errors)
+
+
+def test_the_cover_letter_goes_on_an_additional_attachments_slot(tmp_path):
+    """Greenhouse boards word the second slot "Additional Attachments" or
+    "Other Documents", and nothing recognised either, so the letter went
+    nowhere on those forms (2026-10-03, asked for)."""
+    cover = tmp_path / "Jane_cover_letter.pdf"
+    cover.write_bytes(b"%PDF")
+    for label in ("Additional Attachments", "Other Documents", "Supporting documents"):
+        page = FakePage([
+            gh_field("5", id="resume", type="file", kind="file", name="resume", label="Resume/CV *"),
+            gh_field("6", id="extra", type="file", kind="file", name="extra", label=label),
+        ])
+        report = run_documents(page, cover=cover)
+        assert report.cover_letter_uploaded, label
+        assert page.fields["6"]["value"] == "Jane_cover_letter.pdf", label
+        assert page.fields["5"]["value"] == "", f"{label}: the resume slot stays empty"
+
+
+def test_an_additional_attachments_slot_never_takes_the_resume(tmp_path):
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    page = FakePage([
+        gh_field("6", id="extra", type="file", kind="file", label="Additional Attachments"),
+        gh_field("5", id="resume", type="file", kind="file", label="Resume/CV *"),
+    ])
+    report = run_documents(page, resume=resume)
+    assert page.fields["5"]["value"] == "Jane_Doe_Resume.pdf" and page.fields["6"]["value"] == ""
+    assert report.resume_uploaded

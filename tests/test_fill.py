@@ -597,3 +597,35 @@ def test_without_the_agent_a_missing_resume_upload_is_a_failed_fill(monkeypatch,
     result = asyncio.run(fill.fill_async("https://example.com/apply", resume, tmp_path / "shot.png"))
     assert not result.ok and not result.resume_uploaded
     assert result.errors[0].startswith("the tailored resume was never uploaded")
+
+
+def test_the_fill_works_on_the_application_page_not_the_overview():
+    """Ashby's and Lever's posting URLs are overview pages with no form on
+    them at all: the fill opened one, found nowhere to attach a resume and
+    handed the job back, while the application was one known path away
+    (2026-10-03, asked for). The adapter knows that path; no Apply press and
+    no guessing."""
+    import inspect
+
+    from browser import forms
+
+    ashby = "https://jobs.ashbyhq.com/evenup/19eb22cd-9540-49ed-840b-6422714413b5"
+    assert forms.adapter_for(ashby).apply_url(ashby) == ashby + "/application"
+    assert forms.adapter_for(ashby).apply_url(ashby + "/application?embed=true") == ashby + "/application"
+    lever = "https://jobs.lever.co/acme/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+    assert forms.adapter_for(lever).apply_url(lever).endswith("/apply")
+    body = inspect.getsource(fill.fill_async)
+    assert "form_url = adapter.apply_url(url) if adapter else url" in body
+    # Everything that opens, finds or presses a tab uses it.
+    for call in ("signin.ready_tab(cdp_url, form_url", "autofill.reuse(cdp_url, form_url",
+                 "_press_again(cdp_url, form_url"):
+        assert call in body, call
+
+
+def test_form_is_up_is_decided_before_anything_reads_it():
+    """It was set thirty lines below its first use, so a LinkedIn job raised
+    UnboundLocalError instead of filling (2026-10-03)."""
+    import inspect
+
+    body = inspect.getsource(fill.fill_async)
+    assert body.index("form_is_up = gate is None") < body.index("and form_is_up)")

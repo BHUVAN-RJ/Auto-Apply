@@ -13,6 +13,17 @@ from tailor.cover import CoverLetter
 from tailor.screen import Flag, Screen
 from tailor.tailor import TailorResult
 
+# Enough of a description to clear `quality.too_thin`: a stub that reads as a
+# login page is now, correctly, not tailored.
+POSTING_TEXT = (
+    "Responsibilities\n"
+    + "".join(f"Design and operate distributed system number {i} serving millions of requests.\n"
+              for i in range(20))
+    + "Requirements\n"
+    + "".join(f"Experience {i}: building backend services in Python or Go with production ownership.\n"
+              for i in range(20))
+)
+
 LETTER = "Dear Hiring Manager,\n\nOne paragraph.\n\nSincerely,\nJane Doe"
 
 
@@ -39,7 +50,7 @@ def isolated(tmp_path, monkeypatch):
 
 def stub_success(monkeypatch):
     monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: Posting(
-        url=url, text="Distributed systems role. " * 20,
+        url=url, text=POSTING_TEXT,
         title="Backend Engineer", company="Example Corp"))
     monkeypatch.setattr(pipeline, "base_page_count", lambda: 1)
     monkeypatch.setattr(pipeline.tailor, "tailor", lambda posting, **kwargs: TailorResult(
@@ -194,7 +205,7 @@ def test_one_failure_does_not_stop_the_batch(monkeypatch, capsys):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("first job explodes")
-        return Posting(url=url, text="x" * 500, title="Second", company="Example Corp")
+        return Posting(url=url, text=POSTING_TEXT, title="Second", company="Example Corp")
 
     monkeypatch.setattr(pipeline.fetch, "fetch", flaky)
     queue.add(Job(url="https://example.com/jobs/1"))
@@ -298,7 +309,7 @@ def test_the_folder_is_named_after_the_posting_company(monkeypatch):
     """
     stub_success(monkeypatch)
     monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: pipeline.fetch.Posting(
-        url=url, text="We need a backend engineer.", title="Backend Engineer",
+        url=url, text=POSTING_TEXT, title="Backend Engineer",
         company="Cherry Technologies, Inc."))
     job, _ = queue.add(Job(url="https://example.com/jobs/1", title="Backend Engineer"))
 
@@ -399,3 +410,59 @@ def test_company_falls_back_to_the_ats_slug_in_the_url():
 def test_a_title_with_no_employer_in_it_stays_unknown():
     assert pipeline.company_from("Software Engineer at a fast-growing startup", "") == ""
     assert pipeline.company_from("Junior AI Engineer (Open to remote) | Apply now!", "") == ""
+
+
+LOGIN_PAGE = (
+    "Login\nEmail Address:\nChoose Login Method:\nDon't Have An Email?\n"
+    "Any communication sent via email to you will be sent to the email address that you provide.\n"
+)
+
+
+def test_a_login_page_is_not_tailored(monkeypatch):
+    """Tailoring against a sign-in wall paid for up to five attempts and a
+    cover letter written to "Email Address:" (appone, c970). The job waits at
+    checkpoint 1 with the reason, and no model is called."""
+    stub_success(monkeypatch)
+    settings.save(auto_fill=True)
+    monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: Posting(
+        url=url, text=LOGIN_PAGE, title="Login", company="Example Corp"))
+    called = []
+    monkeypatch.setattr(pipeline.tailor, "tailor", lambda posting, **kwargs: called.append("tailor"))
+    monkeypatch.setattr(pipeline, "pick_stories", lambda app_dir, posting: called.append("pick") or [])
+    started = []
+    monkeypatch.setattr(pipeline.runner, "start_fill", lambda job_id, log_dir=None: started.append(job_id) or 1)
+    job, _ = queue.add(Job(url="https://example.com/login"))
+
+    app_dir = pipeline.process(job)
+
+    assert not called and not started
+    assert "words of posting text" in (app_dir / "thin_posting.md").read_text()
+    assert not (app_dir / "resume.tex").exists()
+    assert queue.get(job.id).status == Status.AWAITING_REVIEW
+
+
+def test_a_reviewer_instruction_tailors_a_thin_posting_anyway(monkeypatch):
+    """Approve on a thin posting is the person deciding to go on; the overrule
+    arrives as an instruction and must not be stopped by the same gate."""
+    stub_success(monkeypatch)
+    monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: Posting(
+        url=url, text=LOGIN_PAGE, title="Login", company="Example Corp"))
+    job, _ = queue.add(Job(url="https://example.com/login"))
+
+    app_dir = pipeline.process(job, extra_instruction="Tailor it anyway.")
+
+    assert (app_dir / "resume.tex").exists() and not (app_dir / "thin_posting.md").exists()
+
+
+@pytest.mark.parametrize("text, thin", [
+    (LOGIN_PAGE, True),
+    # Long enough, but nothing a description is made of.
+    ("".join(f"Please complete field {i} below before you continue to the next page.\n"
+             for i in range(15)), True),
+    (POSTING_TEXT, False),
+    # A real posting written as prose with no headings, like ASM's (448 words).
+    ("".join(f"We build tool {i} that engineers use to ship lithography software for fabs.\n"
+             for i in range(35)), False),
+], ids=["login", "form", "posting", "unheaded-prose"])
+def test_too_thin(text, thin):
+    assert (pipeline.quality.too_thin(text) is not None) is thin

@@ -41,6 +41,7 @@ ARTIFACTS = {
     "resume.diff": "text/plain",
     "suggestions.md": "text/markdown",
     "mismatch.md": "text/markdown",
+    "thin_posting.md": "text/markdown",
     "screen.json": "application/json",
     "rejection.md": "text/markdown",
     "fill_notes.md": "text/markdown",
@@ -131,6 +132,8 @@ def detail(job_id: str) -> dict:
         "diff": read("resume.diff"),
         "suggestions": read("suggestions.md"),
         "mismatch": read("mismatch.md"),
+        # The page was a sign-in wall or a bare form, so nothing was tailored.
+        "thin_posting": read("thin_posting.md"),
         # The fill found no form: the page keeps it behind Apply and a
         # sign-in. Not an error, and not a reason to close the job.
         "needs_sign_in": read("needs_sign_in.txt"),
@@ -250,9 +253,13 @@ def say(job_id: str, body: ThreadMessage) -> dict:
 
 @router.post("/{job_id}/reveal")
 def reveal(job_id: str) -> dict:
-    """Open the application folder in Finder with the two named PDFs
-    selected, for the forms whose questions never reach the assistant and
-    whose files are quicker dragged in by hand."""
+    """Open the application folder in Finder with the resume selected.
+
+    The resume alone (2026-10-03, asked for): selecting the letter beside it
+    meant two highlighted files to pick between at the moment of dragging
+    one onto a slot, and the resume is the file that is always wanted. The
+    letter is made under its upload name in the same folder, a row away.
+    """
     import subprocess
     import sys
 
@@ -262,10 +269,12 @@ def reveal(job_id: str) -> dict:
     # The named copies are made by the fill; a folder that was only
     # tailored has none yet, and the upload name is half the point of
     # dragging the file in by hand.
-    files = [p for p in (apply_script.upload_copy(app_dir, "resume.pdf"),
-                         apply_script.upload_copy(app_dir, "cover_letter.pdf",
-                                                  apply_script.cover_letter_filename()))
-             if p is not None]
+    # Both named copies are made, because the fill may not have run yet and
+    # the upload name is half the point of dragging a file in by hand; only
+    # the resume is selected.
+    letter = apply_script.upload_copy(app_dir, "cover_letter.pdf",
+                                      apply_script.cover_letter_filename())
+    files = [p for p in (apply_script.upload_copy(app_dir, "resume.pdf"),) if p is not None]
     if sys.platform != "darwin":
         return {"id": job_id, "folder": str(app_dir), "revealed": [], "opened": False,
                 "note": "Finder is macOS only; the folder is above."}
@@ -275,11 +284,12 @@ def reveal(job_id: str) -> dict:
         done = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
         if done.returncode == 0:
             return {"id": job_id, "folder": str(app_dir), "opened": True,
-                    "revealed": [p.name for p in files]}
+                    "revealed": [p.name for p in files],
+                    "also": letter.name if letter else ""}
     # No named copies yet, or Finder refused: the folder itself will do.
     subprocess.run(["open", str(app_dir)], capture_output=True, text=True)
     return {"id": job_id, "folder": str(app_dir), "opened": True,
-            "revealed": [p.name for p in files]}
+            "revealed": [p.name for p in files], "also": letter.name if letter else ""}
 
 
 def _fill_state(job_id: str) -> Optional[dict]:

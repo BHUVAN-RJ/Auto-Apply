@@ -41,7 +41,30 @@ BONUS_CAP = 400
 # is not the posting, whatever it is.
 GOOD_ENOUGH = 0.6
 
+# Below these, the text is not a posting and tailoring against it is paying for
+# a resume written to a login screen. Read off the 217 postings on disk
+# (2026-10-02): the twelve under the line were sign-in walls, bare forms and
+# "the form has expired" pages, one of them tailored five times; the shortest
+# real posting with no heading at all had 423 words, the shortest with one had
+# 165.
+MIN_WORDS = 150
+MIN_WORDS_UNHEADED = 300
+
 _WORD = re.compile(r"[a-z0-9]+")
+
+
+def too_thin(text: str) -> str | None:
+    """Why `text` is not worth tailoring against, or None when it is.
+
+    No model: cleaned words, and whether any section heading a description
+    is built from is there at all."""
+    cleaned = clean(text)
+    words = len(cleaned.split())
+    if words < MIN_WORDS:
+        return f"only {words} words of posting text"
+    if words < MIN_WORDS_UNHEADED and not SECTIONS.search(cleaned):
+        return f"only {words} words and no posting sections (requirements, responsibilities, ...)"
+    return None
 
 
 def clean(text: str) -> str:

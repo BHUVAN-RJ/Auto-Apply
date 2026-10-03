@@ -9,6 +9,7 @@ provider can be swapped by editing one file.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Iterator
 from pathlib import Path
@@ -20,6 +21,8 @@ import paths
 
 ROOT = Path(__file__).resolve().parent.parent
 paths.load_env()
+
+log = logging.getLogger("llm")
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "z-ai/glm-5.3"
@@ -160,6 +163,7 @@ def chat(
     if "choices" not in data or not data["choices"]:
         raise LLMError(f"OpenRouter returned no choices: {str(data)[:400]}")
 
+    _log_usage(data, model or tailor_model())
     choice = data["choices"][0]
     content = (choice.get("message") or {}).get("content")
     if not content:
@@ -180,6 +184,27 @@ def chat(
             detail += f", refusal={refusal!r}"
         raise LLMError(f"{model or tailor_model()} returned no content: {detail}")
     return content
+
+
+# Prompt caching, asked about 2026-10-03: nothing here asks for it. The
+# question is first whether it is already happening - OpenRouter passes a
+# provider's automatic cache straight through, and only Anthropic and
+# Gemini need explicit `cache_control` breakpoints - so the counts are
+# logged rather than guessed at. A tailoring run sends the rules, the master
+# resume, the posting and the stories (11k tokens measured) up to four times
+# for one job and again for the next, so the repeated prefix is most of
+# every call; `cached_tokens` on a second attempt is what says whether that
+# prefix is being charged twice.
+def _log_usage(data: dict, model: str) -> None:
+    usage = data.get("usage") or {}
+    if not usage:
+        return
+    details = usage.get("prompt_tokens_details") or {}
+    cached = details.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0
+    prompt = usage.get("prompt_tokens") or 0
+    log.info("%s: prompt=%s cached=%s (%s%%) completion=%s cost=%s", model, prompt, cached,
+             round(100 * cached / prompt) if prompt else 0,
+             usage.get("completion_tokens"), usage.get("cost"))
 
 
 def stream(

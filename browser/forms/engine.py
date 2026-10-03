@@ -516,7 +516,11 @@ DELETE_LABELS = r"remove|delete|clear|^[×✕x]$"
 
 # The slot labels `remove_attached` looks for, as regex sources for the page.
 RESUME_SLOT = r"\b(resume|r[ée]sum[ée]|cv|curriculum)\b"
-COVER_SLOT = r"cover"
+COVER_SLOT = r"cover|\b(additional|other|supporting|supplemental)\s+(attachments?|documents?|files?|materials?)\b"
+# Never cleared and never filled: the system's own "upload a resume and we
+# will fill the form in". `guard.describes_parse_slot` is the same question
+# asked of a field; this is the regex source the page gets.
+PARSE_SLOT = r"auto\s*-?\s*fill|\bparse\b|\bprefill\b|\bquick\s*apply\b"
 
 CLICK_REMOVE_FN = r"""
 (function () {
@@ -627,6 +631,10 @@ class Report:
     corrected: list[str] = field(default_factory=list)  # fields set from the correction store, over autofill
     resume_uploaded: bool = False
     resume_name: str = ""
+    # File inputs left alone because they parse a resume into the form
+    # rather than hold one. Recorded so "no resume file input found" on a
+    # page that plainly had one is explainable.
+    skipped_parse: list[str] = field(default_factory=list)
     cover_letter_uploaded: bool = False
     errors: list[str] = field(default_factory=list)
     note: str = ""
@@ -1104,8 +1112,31 @@ class Engine:
     def file_inputs(self, fields: list[Field]) -> tuple[Optional[Field], Optional[Field]]:
         """(resume input, cover letter input). The adapter's selector first,
         then whichever file input's label reads as one or the other. A slot
-        that reads as a cover letter never takes the resume."""
-        files = [f for f in fields if f.kind == "file"]
+        that reads as a cover letter never takes the resume.
+
+        The system's own "autofill from my resume" input is dropped before
+        any of that (2026-10-03, asked for). It usually sits above the real
+        Resume field and usually has "resume" in its label, so it would win
+        the slot on name alone - including through the adapter's own
+        selector, since Ashby's reads `_systemfield_resume|resume` - and
+        what it does is parse the file over the fields Jobright has already
+        filled rather than attach it. A form whose only file input is that
+        one has nowhere for the resume to go, and saying so is the honest
+        answer.
+        """
+        files = []
+        for f in fields:
+            if f.kind != "file":
+                continue
+            if guard.describes_parse_slot(*f.identifiers()):
+                # `file_inputs` is asked more than once in a run (the slots
+                # are read again after one is cleared), so the record is a
+                # set in list's clothing.
+                what = f.question or f.label or f.name or f.id
+                if what not in self.report.skipped_parse:
+                    self.report.skipped_parse.append(what)
+                continue
+            files.append(f)
         resume = cover = None
         for f in files:
             hay = f"{f.id}|{f.name}|{f.label}"
@@ -1165,7 +1196,10 @@ class Engine:
         report = self.report
         if self.resume:
             if resume_input is None:
-                report.errors.append("no resume file input found")
+                report.errors.append(
+                    "no resume file input found"
+                    + (f" (the only file slot(s) here parse a resume into the form: "
+                       f"{', '.join(report.skipped_parse[:3])})" if report.skipped_parse else ""))
             else:
                 try:
                     name = await self.upload(resume_input, self.resume)
@@ -1404,10 +1438,16 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     # here yet, and nothing on the page is ours to touch.
     if resume is not None and resume_input is None and cover_input is None:
         report.errors.append(NOT_A_FORM)
+        if report.skipped_parse:
+            # Not an empty page: a page whose only file slots parse a resume
+            # into the form. Worth saying, because "no form here" over a form
+            # with an upload box on it reads as the fill being blind.
+            report.errors.append("the only file slot(s) here parse a resume into the form: "
+                                 + ", ".join(report.skipped_parse[:3]))
         return report
     for wanted, have, pattern, exclude, what in (
-        (resume, resume_input, RESUME_SLOT, COVER_SLOT, "resume"),
-        (cover_letter, cover_input, COVER_SLOT, "", "cover letter"),
+        (resume, resume_input, RESUME_SLOT, f"{COVER_SLOT}|{PARSE_SLOT}", "resume"),
+        (cover_letter, cover_input, COVER_SLOT, PARSE_SLOT, "cover letter"),
     ):
         if not wanted:
             continue

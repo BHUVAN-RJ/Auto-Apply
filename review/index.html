@@ -949,7 +949,7 @@ async function show(id) {
     ${resumeDoc || letterDoc ? `
       <div class="actions">
         <button class="act" id="reveal">Show the files in Finder</button>
-        <span class="hint" id="revealNote">The resume and the letter under their upload names, selected, ready to drag onto a form.</span>
+        <span class="hint" id="revealNote">The resume under its upload name, selected, ready to drag onto a form. The letter is beside it.</span>
       </div>
       <div class="docs">${resumeDoc}${letterDoc}</div>` : ""}
 
@@ -1162,6 +1162,11 @@ function banners(data) {
         ? "Tailored anyway, because you added it. Read it before you send it."
         : "Nothing was tailored. It is still your call."}</div>`;
   }
+  if (data.thin_posting && !(data.artifacts || []).includes("resume.pdf")) {
+    html += `<div class="banner warn"><strong>Not tailored: this page is not the job description.</strong>
+      ${escape(data.thin_posting.replace(/^#.*\n/, "").split("\n\n")[0].trim())}
+      <br>Add the posting's own page again, or approve to tailor against this text anyway.</div>`;
+  }
   // The folder's error.txt belongs to this attempt; the queue's error field
   // is only current while the job is actually failed.
   const failure = (data.status === "failed" && data.error_detail) || (data.error || "").split("\n")[0];
@@ -1333,7 +1338,8 @@ function wireReveal(id) {
     const note = $("revealNote");
     try {
       const r = await api(`/review/${id}/reveal`, { method: "POST", body: "{}" });
-      note.textContent = r.revealed?.length ? `Selected in Finder: ${r.revealed.join(", ")}.`
+      note.textContent = r.revealed?.length
+        ? `Selected in Finder: ${r.revealed.join(", ")}${r.also ? ` (${r.also} is in the same folder)` : ""}.`
         : r.note || `Opened ${r.folder}.`;
     } catch (err) { note.textContent = err.message || "Finder would not open"; }
   };
@@ -1354,9 +1360,12 @@ async function fillAgain(id) {
   });
 }
 
+// Pressing this button *is* the statement that the form was submitted, so
+// it is not asked again (2026-10-03, asked for). Nothing here is
+// destructive: the job is marked done, its folder and its history stay, and
+// the only other effect is that autopilot stops working on it. The dialog
+// that does stay is the one on "Submit it", which presses Submit on a form.
 async function markSubmitted(id) {
-  if (!confirm("Only confirm this after you submitted the form yourself.\n\n"
-    + "Autopilot marks the job done and stops working on it.")) return;
   await act(id, async () => {
     await api(`/review/${id}/submitted`, { method: "POST", body: "{}" });
   });

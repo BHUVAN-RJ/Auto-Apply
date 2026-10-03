@@ -128,8 +128,35 @@ def describes_protected(*fields: str | None) -> bool:
     return False
 
 
-COVER_LETTER_PATTERNS = [r"\bcover\s*letter\b", r"\bcover\b", r"\bletter\b"]
+# Where a cover letter goes. "Additional attachments" and "other documents"
+# are the same slot by another name - Greenhouse and Plaid's board call it
+# that, and the letter was going nowhere on those forms because nothing here
+# recognised the words (2026-10-03, asked for). Deliberately not a bare
+# "attachment": Greenhouse's own resume control is labelled "Attach".
+COVER_LETTER_PATTERNS = [
+    r"\bcover\s*letter\b", r"\bcover\b", r"\bletter\b",
+    r"\b(additional|other|supporting|supplemental)\s+(attachments?|documents?|files?|materials?)\b",
+]
 _COVER_LETTER = [re.compile(pattern, re.I) for pattern in COVER_LETTER_PATTERNS]
+
+# A file input that is not a slot on the application at all: the system's own
+# "upload your resume and we will fill the form in for you". Ashby, Workday
+# and Lever all offer one, usually above the real Resume field and usually
+# with the word "resume" in its label, so it would win the resume slot on
+# name alone. Putting the tailored resume there is not an attachment - it is
+# a parse that overwrites the fields Jobright has already filled, and the
+# form ends up with no resume on it (2026-10-03, asked for).
+PARSE_SLOT_PATTERNS = [
+    r"auto\s*-?\s*fill",
+    r"\bparse\b",
+    r"\bprefill\b|\bpre-fill\b",
+    r"\bimport\b.{0,20}\bresume\b|\bresume\b.{0,20}\bimport\b",
+    r"\bquick\s*apply\b",
+    r"fill\s+(in\s+|out\s+)?(the\s+)?(form|application|fields)",
+    r"\bapply\s+with\s+(your\s+)?(resume|cv)\b",
+    r"\buse\s+my\s+(last|previous|saved)\b",
+]
+_PARSE_SLOT = [re.compile(pattern, re.I) for pattern in PARSE_SLOT_PATTERNS]
 
 
 _RESUME = [re.compile(p, re.I) for p in (r"\bresume\b", r"\bcv\b", r"\bcurriculum\b")]
@@ -142,6 +169,18 @@ def describes_resume(*fields: str | None) -> bool:
             continue
         text = " ".join(re.sub(r"[_\-./]+", " ", str(field)).split())
         if text and len(text) <= 200 and any(p.search(text) for p in _RESUME):
+            return True
+    return False
+
+
+def describes_parse_slot(*fields: str | None) -> bool:
+    """True when a file input is the system's own "autofill from my resume"
+    rather than a slot on the application. Nothing of ours goes there."""
+    for field in fields:
+        if not field:
+            continue
+        text = " ".join(re.sub(r"[_\-./]+", " ", str(field)).split())
+        if text and len(text) <= 200 and any(p.search(text) for p in _PARSE_SLOT):
             return True
     return False
 
