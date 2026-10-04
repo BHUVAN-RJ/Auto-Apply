@@ -2151,6 +2151,20 @@ a throwaway form — the dot survived a label redraw, vanished when the
 textarea was rewritten, left its neighbour alone, and came off a file slot
 when another file was put on it.
 
+**A slot the page filled carries the logo too.** The banner's file chips can
+set the form's own file input (`putFile`), which is the same outcome as the
+fill's upload with the person's hand on it, and it was the one path that left
+no mark - so a form filled that way read as untouched. The chip tags the
+input it set and asks `POST /review/{id}/mark`; the mark is placed by
+`forms.mark_put`, the same `MARK_FN` the fill runs, in that tab. Deliberately
+not a logo drawn in the banner: one implementation means the put mark
+promises what every other mark promises and goes the same way. The page sends
+only which document and where - the ref, the wording and the filename come
+from the job's folder - so nothing it says is written onto the form's page as
+text. A drag-and-drop of the same chip gets no mark: a drop is
+indistinguishable from the person dropping their own file, so there is
+nothing honest to hang one on.
+
 **Prompt caching is already happening on the cheap model.** Measured: an
 identical 3,047-token prefix on `z-ai/glm-5.3` through OpenRouter came back
 `cached_tokens` 0, then 3,008. `llm._log_usage` logs the counts per call.

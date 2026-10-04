@@ -160,8 +160,12 @@ label â€” including a slot you filled yourself with the banner's **put** chip â€
 and that logo vouches for the value: it survives the page redrawing itself and
 disappears the moment you change the answer or swap the file, so what is still
 marked is still ours. The Simplify new-grad list is tracked on
-its own GitHub page, a day of postings at a time. Next: the same code fill for Workday, Oracle, iCIMS and
-SmartRecruiters, where Jobright's autofill is still step one. See
+its own GitHub page, a day of postings at a time. Workday and LinkedIn Easy
+Apply are walked page by page to their review pages, and a form behind a
+sign-in is waited out rather than handed back: sign in, and the fill carries
+on from the first page. Next: the same page-by-page walk for Oracle and
+iCIMS, and a learning store for LinkedIn's screening questions, which have no
+stable field ids for the correction loop to key on. See
 [PLAN.md](PLAN.md) for the design and what is deliberately deferred.
 
 ```sh
