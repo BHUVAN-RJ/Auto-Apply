@@ -272,7 +272,7 @@ def process_now(job_id: str) -> dict:
 
 @app.get("/jobs")
 def jobs() -> list[dict]:
-    """Every row, with the moment a decided one was decided.
+    """Every row, with the moment a closed one was submitted, rejected or failed.
 
     `added_at` is when the posting was noticed; the closed shelves are read
     as a record of what was sent and when, and two applications can go out
@@ -285,8 +285,8 @@ def jobs() -> list[dict]:
     out = []
     for job in queue.all_jobs():
         row = job.model_dump(mode="json") | {"id": job.id}
-        wanted = (Status.SUBMITTED if job.status is Status.SUBMITTED
-                  else Status.SKIPPED if job.status is Status.SKIPPED else None)
+        wanted = (job.status if job.status in
+                  (Status.SUBMITTED, Status.SKIPPED, Status.FAILED) else None)
         if wanted and job.app_dir:
             row["decided_at"] = store.reached_at(Path(job.app_dir), wanted) or job.added_at
         out.append(row)

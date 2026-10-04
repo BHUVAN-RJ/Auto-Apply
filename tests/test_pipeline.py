@@ -13,7 +13,7 @@ from tailor.cover import CoverLetter
 from tailor.screen import Flag, Screen
 from tailor.tailor import TailorResult
 
-LETTER = "Dear Hiring Manager,\n\nOne paragraph.\n\nSincerely,\nJane Doe"
+LETTER = "Dear Hiring Team,\n\nOne paragraph.\n\nBest,\nJane Doe"
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +41,6 @@ def stub_success(monkeypatch):
     monkeypatch.setattr(pipeline.fetch, "fetch", lambda url: Posting(
         url=url, text="Distributed systems role. " * 20,
         title="Backend Engineer", company="Example Corp"))
-    monkeypatch.setattr(pipeline, "base_page_count", lambda: 1)
     monkeypatch.setattr(pipeline.tailor, "tailor", lambda posting, **kwargs: TailorResult(
         tex="\\documentclass{article}\\begin{document}x\\end{document}",
         suggestions="- reordered experience",
@@ -62,8 +61,22 @@ def test_happy_path_stops_at_awaiting_review(monkeypatch):
                      "suggestions.md", "resume.pdf", "status.json",
                      "cover_letter.md", "cover_letter.tex", "cover_letter.pdf"):
         assert (app_dir / artifact).exists(), artifact
-    assert (app_dir / "cover_letter.md").read_text().startswith("Dear Hiring Manager")
-    assert "Sincerely, \\\\\nJane Doe" in (app_dir / "cover_letter.tex").read_text()
+    assert (app_dir / "cover_letter.md").read_text().startswith("Dear Hiring Team")
+    assert "Best, \\\\\nJane Doe" in (app_dir / "cover_letter.tex").read_text()
+
+
+def test_the_final_compiled_resume_must_be_one_page(monkeypatch):
+    """The model-side page callback is not the authority: every path,
+    including a pasted handoff, meets the same final compiled-PDF gate."""
+    stub_success(monkeypatch)
+    monkeypatch.setattr(pipeline.texc, "page_count", lambda path: 2)
+    job, _ = queue.add(Job(url="https://example.com/jobs/1", title="Backend Engineer"))
+
+    assert pipeline.process_safely(job) is False
+    failed = queue.get(job.id)
+    assert failed.status == Status.FAILED
+    assert "compiled to 2 pages, must be 1" in failed.error
+    assert not (pipeline.Path(failed.app_dir) / "cover_letter.pdf").exists()
 
 
 def test_screen_verdict_is_archived_and_changes_nothing(monkeypatch):

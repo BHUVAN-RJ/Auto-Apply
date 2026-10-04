@@ -38,7 +38,7 @@ Only these sections:
 - Company names, job titles, employment dates, project names, and project URLs,
   except when a whole `PROJECTS` entry is swapped for a story (below).
 - The number of bullets under any heading, and the order of the sections.
-- The number of printed lines any bullet takes (see "Length is lines").
+- No bullet may use more printed lines than it does now (see "Length is lines").
 
 ## The profile is evidence, not decoration
 
@@ -50,8 +50,8 @@ written from it is work the candidate actually did; it is not on the
 one-page master because a page holds ten bullets and a career holds more.
 
 Three ways it may enter the resume. All three keep the shape of the
-document: same sections, same number of bullets, same number of printed
-lines per bullet.
+document: same sections, same number of bullets, and no bullet grows past
+its current printed-line count.
 
 ### Swapping a project
 
@@ -96,7 +96,7 @@ term and the bullet on the page proves nothing in the posting:
   `Candidate bullets`, its numbers, its stack. Nothing from another role
   goes under this one — a bullet under STYLEBOT describes work done at
   Stylebot.
-- Keep the bullet's printed line count.
+- Never grow past the bullet's printed line count.
 - The weakest bullet goes first: the one with no measure, or the one
   whose terms the posting never mentions.
 - One line in the rationale, as
@@ -234,8 +234,9 @@ Go through the tailored text once more:
 - Every number appears on the master resume or in the profile. A figure is
   a claim about this candidate, so the posting is not a source for one: the
   checker names any figure it cannot find and rejects the attempt.
-- Every bullet, the summary, and every skills line prints on the same
-  number of lines it did (below). Words may come and go; lines may not.
+- Every bullet, the summary, and every skills line prints on no more
+  lines than it did (below). Words may come and go; lines may be freed
+  when an exact PDF compile needs room.
 - Every bullet opens with a past-tense verb, carries a measure, and names
   the method.
 - At least half of the `EXPERIENCE` bullets are rewritten, not left as they
@@ -300,17 +301,19 @@ first costs no length at all and is almost always available.
 The resume must compile to exactly one page, and what fills a page is
 printed lines. So the rule is the line count, not the character count:
 
-- **Every `EXPERIENCE` bullet comes back on the same number of printed
-  lines.** The request carries the budget: how many lines each bullet
+- **Every `EXPERIENCE` bullet comes back on no more than its current
+  number of printed lines.** The request carries the budget: how many lines each bullet
   takes now, how many characters it uses, and how many characters are
-  spare before it takes another line. Write to that budget.
+  spare before it takes another line. Write to that budget. A shorter
+  bullet may free a line when the exact PDF compile says the estimate was
+  too generous.
 - **The spare is the part of the last line that is empty**, counted down
   rather than up. An item whose spare is 0 is already full: it may be
   rewritten, but only by trading a word for a shorter one.
 - **`PROJECTS` is measured as one block.** The entries may move lines
   between themselves — a story swapped in may deserve a line the entry it
   replaced did not, and another entry pays for it — but the section comes
-  back the same height, to the line. The request gives the block's total
+  back no taller. The request gives the block's total
   characters, what each entry uses, and the spare across the whole
   section: that pool, not the entry, is what a swapped-in project is
   written against.
@@ -322,8 +325,9 @@ printed lines. So the rule is the line count, not the character count:
   200 and is still two lines — that is room for the measure and the
   method, and using it is the point. A bullet that would run onto a
   third line is rejected.
-- The summary and each skills line keep their printed lines the same way.
-- Never add a line, a bullet, an entry or a category. Never delete one.
+- The summary and each skills line may use fewer printed lines, never more.
+- Never add a printed line. Never add or delete a bullet, entry or category;
+  shortening may free a printed line when the PDF needs room.
 
 A bullet that reads slightly less smoothly but holds its lines is
 correct; a better-written bullet that pushes the resume to two pages is a

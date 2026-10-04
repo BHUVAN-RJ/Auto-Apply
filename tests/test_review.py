@@ -303,6 +303,23 @@ def test_the_job_list_carries_the_rejection_reason(client):
     assert row["reject_note"] == "onsite NYC"
 
 
+def test_closed_jobs_carry_the_time_they_closed(client):
+    """The sidebar timeline sorts by the outcome, not when the job was added."""
+    job_id, app_dir = reviewable_job()
+    store.set_status(app_dir, Status.FAILED, "tailor failed")
+    queue.update(job_id, status=Status.FAILED)
+
+    row = next(j for j in client.get("/jobs").json() if j["id"] == job_id)
+    assert row["decided_at"] == store.reached_at(app_dir, Status.FAILED)
+
+
+def test_closed_shelves_render_as_newest_first_timelines(client):
+    page = client.get("/").text
+    assert ".sort(DECIDED_NEWEST)" in page
+    assert 'class="timeline-day"' in page
+    assert 'days === 0 ? "Today"' in page
+
+
 def test_approving_does_not_launch_the_browser_by_default(client, monkeypatch):
     """Filling is started explicitly, so a run can be repeated at will."""
     job_id, _ = reviewable_job()

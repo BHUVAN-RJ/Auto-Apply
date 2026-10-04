@@ -13,6 +13,7 @@ __pycache__/
 *.log
 *.out
 base/applicant.md
+base/cover.md
 base/stories*/
 .DS_Store
 base/form.json

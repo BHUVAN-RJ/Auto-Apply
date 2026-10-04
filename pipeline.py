@@ -32,23 +32,6 @@ from tex import mark
 ROOT = Path(__file__).resolve().parent
 
 
-def base_page_count() -> int:
-    """Page count of the master resume, which the tailored one must match.
-
-    Falls back to 1, since a one-page resume is the assumption this project is
-    built around.
-    """
-    base_pdf = paths.BASE / "resume.pdf"
-    if base_pdf.exists():
-        return texc.page_count(base_pdf) or 1
-    base_tex = paths.BASE / "resume.tex"
-    if not base_tex.exists():
-        return 1
-    with tempfile.TemporaryDirectory() as tmp:
-        pdf = texc.compile_pdf(base_tex, Path(tmp) / "base.pdf")
-        return texc.page_count(pdf) or 1
-
-
 def make_page_check(base_tex: Path):
     """Compile a candidate resume and report its page count.
 
@@ -246,7 +229,7 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
     write_screen(app_dir, job, posting)
 
     base_tex = paths.BASE / "resume.tex"
-    target = base_page_count()
+    target = tailor.TARGET_PAGES
     stories = pick_stories(app_dir, posting)
 
     # "Use Opus" without the API bill: the prompt is built here exactly as the
@@ -326,7 +309,7 @@ def process(job: Job, extra_instruction: str = "", keep_status: bool = False) ->
         )
 
     return finish(app_dir, job, posting, result, extra_instruction, stories,
-                  base_tex, target, held, keep_status, revive)
+                  base_tex, held, keep_status, revive)
 
 
 def read_posting(app_dir: Path, job: Job) -> fetch.Posting:
@@ -343,7 +326,7 @@ def read_posting(app_dir: Path, job: Job) -> fetch.Posting:
 
 
 def finish(app_dir: Path, job: Job, posting, result, extra_instruction: str,
-           stories, base_tex: Path, target, held, keep_status: bool, revive: bool) -> Path:
+           stories, base_tex: Path, held, keep_status: bool, revive: bool) -> Path:
     """Everything after a tailored resume exists: the documents, the compile,
     the cover letter, the status and checkpoint 1.
 
@@ -352,6 +335,7 @@ def finish(app_dir: Path, job: Job, posting, result, extra_instruction: str,
     letter, same approval. A second copy of this would be a second set of
     rules about what a finished application is.
     """
+    target = tailor.TARGET_PAGES
     store.write(app_dir, "resume.tex", result.tex)
     store.write(app_dir, "resume.diff", result.diff or "(no changes)\n")
     store.write(
@@ -379,11 +363,13 @@ def finish(app_dir: Path, job: Job, posting, result, extra_instruction: str,
 
     pdf = texc.compile_pdf(app_dir / "resume.tex", app_dir / "resume.pdf")
     pages = texc.page_count(pdf)
+    if pages is None:
+        raise tailor.TailorError("could not verify that the compiled resume is one page")
+    if pages != target:
+        raise tailor.TailorError(f"compiled to {pages} pages, must be {target}")
+
     write_marked(app_dir, base_tex.read_text(), result.tex)
     note = f"{pages} page(s)"
-    if pages is not None and pages != target:
-        note += f" — master is {target}; the page-count gate did not hold"
-
     note += "; " + write_cover_letter(app_dir, posting, result.tex, extra_instruction, stories,
                                       model=job.tailor_model)
 

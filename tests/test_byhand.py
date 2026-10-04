@@ -93,6 +93,23 @@ def test_a_good_paste_comes_back_as_an_ordinary_result(monkeypatch):
     assert result.diff
 
 
+def test_a_two_page_paste_is_refused(monkeypatch):
+    """The handoff used to bypass the compiler gate and only leave a note
+    after accepting a two-page resume."""
+    monkeypatch.setattr(tailor_module, "under_tailored", lambda *a: None)
+    monkeypatch.setattr(tailor_module, "unused_swap", lambda *a: None)
+
+    good = tailored(r"\resumeItem{Cut latency 40\% in Python and Redis.}")
+    with pytest.raises(tailor_module.TailorError, match="compiled to 2 pages, must be 1"):
+        byhand.accept(
+            good,
+            POSTING,
+            MASTER,
+            profile="",
+            page_check=lambda tex: 2,
+        )
+
+
 def test_a_reply_with_no_rationale_still_lands(monkeypatch):
     monkeypatch.setattr(tailor_module, "under_tailored", lambda *a: None)
     monkeypatch.setattr(tailor_module, "unused_swap", lambda *a: None)

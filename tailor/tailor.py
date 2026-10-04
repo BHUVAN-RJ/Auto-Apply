@@ -6,7 +6,7 @@ blocks rather than JSON, because LaTeX is full of backslashes and braces that
 JSON escaping mangles in practice.
 
 Two things are enforced in code rather than left to the prompt, because prompt
-rules leak: the resume must still compile to its original page count, and the
+rules leak: the resume must compile to exactly one page, and the
 tailored source must not have touched any section outside the allowed set.
 """
 
@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BASE_RESUME = paths.BASE / "resume.tex"
 PROFILE = paths.BASE / "profile.md"
 RULES = Path(__file__).resolve().parent / "rules.md"
+TARGET_PAGES = 1
 
 # Sections the model is allowed to rewrite. Anything else must come back
 # byte-identical, and _check_frozen_sections verifies that.
@@ -36,7 +37,7 @@ EDITABLE_SECTIONS = ("SUMMARY", "EXPERIENCE", "PROJECTS", "TECHNICAL SKILLS")
 
 # What has to hold is the page, and what fills a page is lines, not
 # characters (2026-09-24). A bullet may be rewritten with more words or
-# fewer as long as it still prints on the same number of lines; the line
+# fewer as long as it does not print on more lines; the line
 # width is measured off the compiled master in `layout.py`. Growing by a
 # line rejects the attempt, since that is what pushes the resume to two
 # pages; coming back a line shorter is only a warning.
@@ -487,9 +488,11 @@ def overrun_report(original: str, tailored: str) -> str:
 
     if not grew and not blocks:
         return (
-            "No bullet grew past its line budget, so the overflow is elsewhere: "
-            "check the summary and the skills lines, which must also keep the "
-            "number of printed lines they have."
+            "No bullet grew past its estimated line budget, so the character "
+            "estimate missed a real wrap; the compiled page count is authoritative. "
+            "Free at least one whole printed line by shortening the longest changed "
+            "EXPERIENCE bullet, the summary, a skills line, or the PROJECTS block "
+            "until it loses a line. A shorter item is allowed here; no item may grow."
         )
     if not grew:
         return "This section runs onto an extra line:\n" + "\n".join(blocks)
@@ -822,11 +825,13 @@ def _build_user_message(posting: Posting, resume: str, profile: str) -> str:
     sections.append(
         "## The line budget — what keeps this resume on one page\n\n"
         f"One printed line of this resume holds about {width} characters. Each "
-        "EXPERIENCE bullet must print on the same number of lines as it does now. "
-        "The word count is yours to change: write to the budget, not around it.\n\n"
+        "EXPERIENCE bullet may print on fewer lines but never more than it does now. "
+        "The word count is yours to change: write to the budget, not around it. If "
+        "an exact PDF compile still reaches page two, shorten one changed item enough "
+        "to free a whole line; the compiler outranks this character estimate.\n\n"
         "The last line of an item is usually only part full, and the spare below "
         "is what is left on it, counted down rather than up: spend it and the item "
-        "still prints on the same number of lines. The numbers are this resume's "
+        "still prints within the same line cap. The numbers are this resume's "
         "own bullet numbering, which is how a rejection will name one; a bullet "
         "missing from the list is in a frozen section or measured below as the "
         "summary or a skills line."
@@ -866,7 +871,7 @@ def block_budgets(resume: str, width: Optional[int] = None) -> str:
         out.append(
             f"\n\n{name} is measured as one block, not entry by entry: its "
             f"{len(bodies)} entries take {lines} printed lines together today and "
-            f"must take exactly that many when you return them. Together they hold "
+            f"must take no more than that many when you return them. Together they hold "
             f"{fits} characters and use {used} ({entries}), so there are "
             f"{fits - used} spare to move between them. An entry may grow as far as "
             f"the others are cut to pay for it: that is how a project worth more "
@@ -899,7 +904,7 @@ def tailor(
     posting: Posting,
     resume_tex: Optional[str] = None,
     page_check: Optional[Callable[[str], Optional[int]]] = None,
-    target_pages: int = 1,
+    target_pages: int = TARGET_PAGES,
     max_attempts: int = 4,
     extra_instruction: str = "",
     profile: Optional[str] = None,
@@ -934,12 +939,15 @@ def tailor(
     last_error: Optional[str] = None
     rejected: list[dict] = []
     preamble_notes: list[str] = []
+    page_overflowed = False
+    last_verdict = ""
     for attempt in range(1, max_attempts + 1):
         reply = llm.complete(system, message + feedback, model=model)
 
         verdict = _extract_block(reply, ("verdict",)) or ""
         if verdict.strip().upper().startswith("MISMATCH"):
             raise Mismatch(verdict.strip())
+        last_verdict = verdict.strip()
 
         tailored = _extract_block(reply, ("tex", "latex"))
         if tailored is not None:
@@ -1029,6 +1037,7 @@ def tailor(
         if page_check is not None:
             pages = page_check(tailored)
             if pages is not None and pages != target_pages:
+                page_overflowed = True
                 last_error = f"compiled to {pages} pages, must be {target_pages}"
                 rejected.append({"attempt": attempt, "reason": last_error, "tex": tailored})
                 feedback = (
@@ -1050,6 +1059,27 @@ def tailor(
             verdict=verdict.strip(),
             attempts=attempt,
             warnings=warnings + preamble_notes,
+            rejections=[f"attempt {r['attempt']}: {r['reason']}" for r in rejected],
+        )
+
+    # The one-page document is more important than pretending a failed rewrite
+    # succeeded. If every tailored candidate overflowed but the master itself
+    # still compiles to the target, keep that verified safe document and say so.
+    # This follows the same last-attempt policy as the soft tailoring floors: a
+    # thin resume is useful; a failed job is not.
+    if page_overflowed and page_check is not None and page_check(original) == target_pages:
+        warning = (
+            f"no tailored attempt fit {target_pages} page(s); kept the verified "
+            "master resume"
+        )
+        return TailorResult(
+            tex=original,
+            suggestions="_No tailored attempt passed the page limit; the master resume was kept._",
+            diff="",
+            model=model,
+            verdict=last_verdict,
+            attempts=max_attempts,
+            warnings=[warning] + preamble_notes,
             rejections=[f"attempt {r['attempt']}: {r['reason']}" for r in rejected],
         )
 

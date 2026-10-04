@@ -636,13 +636,15 @@ def handoff_reply(job_id: str, pasted: Pasted) -> dict:
     base_tex = paths.BASE / "resume.tex"
     try:
         result = byhand.accept(pasted.reply, posting, base_tex.read_text(),
-                               profile=tailor_module.load_profile(stories=stories))
+                               profile=tailor_module.load_profile(stories=stories),
+                               page_check=pipeline_module.make_page_check(base_tex),
+                               target_pages=tailor_module.TARGET_PAGES)
     except tailor_module.TailorError as exc:
         raise HTTPException(422, str(exc)) from exc
 
     try:
-        pipeline_module.finish(app_dir, job, posting, result, "", stories, base_tex,
-                               pipeline_module.base_page_count(), None, False, False)
+        pipeline_module.finish(
+            app_dir, job, posting, result, "", stories, base_tex, None, False, False)
     except Exception as exc:  # noqa: BLE001 - a bad compile is the person's to see
         raise HTTPException(422, f"the resume did not compile: {exc}") from exc
     # The prompt has been answered; leaving it would offer the Copy button

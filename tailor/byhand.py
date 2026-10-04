@@ -29,7 +29,7 @@ Two things make this safe rather than a side door:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from . import tailor as tailor_module
 from .fetch import Posting
@@ -115,7 +115,9 @@ def extract(reply: str) -> Optional[str]:
 
 
 def accept(reply: str, posting: Posting, resume_tex: Optional[str] = None,
-           profile: Optional[str] = None) -> tailor_module.TailorResult:
+           profile: Optional[str] = None,
+           page_check: Optional[Callable[[str], Optional[int]]] = None,
+           target_pages: int = tailor_module.TARGET_PAGES) -> tailor_module.TailorResult:
     """Take a pasted reply and hold it to every rule the API path applies.
 
     Raises `TailorError` with the reason in plain words when it fails, which
@@ -137,6 +139,15 @@ def accept(reply: str, posting: Posting, resume_tex: Optional[str] = None,
 
     tailored, restored = tailor_module.restore_preamble(original, tailored)
     warnings = tailor_module._validate(original, tailored, profile, posting.text)
+    if page_check is not None:
+        pages = page_check(tailored)
+        if pages is None:
+            raise tailor_module.TailorError(
+                "could not verify that the compiled resume is one page")
+        if pages != target_pages:
+            raise tailor_module.TailorError(
+                f"compiled to {pages} pages, must be {target_pages}. "
+                "Shorten the pasted resume and try again.")
     if restored:
         warnings = warnings + ["the preamble was restored from the master"]
     for soft in (tailor_module.under_tailored(original, tailored),

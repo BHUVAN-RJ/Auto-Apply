@@ -48,6 +48,7 @@ copy_template() {  # template, destination: only when the destination is missing
 copy_template base/applicant.example.md "$HOME_DIR/base/applicant.example.md"
 copy_template base/form.example.json "$HOME_DIR/base/form.example.json"
 copy_template base/resume.template.tex "$HOME_DIR/base/resume.template.tex"
+copy_template base/cover.example.md "$HOME_DIR/base/cover.example.md"
 if [ ! -f "$HOME_DIR/.env" ]; then
   grep -v '^OPENROUTER_API_KEY=' .env.example | sed 's/^AUTOPILOT_AGENT=1/AUTOPILOT_AGENT=0/' > "$HOME_DIR/.env"
   echo "OPENROUTER_API_KEY=" >> "$HOME_DIR/.env"

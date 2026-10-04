@@ -413,9 +413,11 @@ what closes that form's tab. The browser stays.
 
 The file is uploaded as `<AUTOPILOT_RESUME_FILENAME>.pdf` (spaces become
 underscores; default `Resume.pdf`). Set it in `.env` to whatever you want the
-recruiter to see. A cover letter is written alongside the resume, from the
-tailored resume and `tailor/cover_rules.md`, shown on the review page as text
-and PDF, and uploaded as `<AUTOPILOT_COVER_LETTER_FILENAME>.pdf` wherever the
+recruiter to see. A cover letter is written alongside the resume from your
+standing letter in `base/cover.md`: the greeting and most of the prose stay
+yours, and the model fills only the company- and role-specific slots. It is
+shown on the review page as text and PDF, and uploaded as
+`<AUTOPILOT_COVER_LETTER_FILENAME>.pdf` wherever the
 form offers a cover letter upload. A form with only a text box gets nothing
 typed into it. A letter that fails to generate does not fail the job; the
 error shows on the review page and re-tailoring tries again.
@@ -551,9 +553,10 @@ because prompt rules leak:
   one outside the editable set must come back unchanged, ignoring whitespace.
 - **Bullet count.** The layout is tuned for exactly the bullets that are there,
   so adding or dropping one is rejected.
-- **Page count.** The candidate is compiled before it is accepted. If it does
-  not match the master's page count, the model is told what it did and asked
-  again, up to three attempts.
+- **Page count.** The candidate is compiled before it is accepted and must be
+  exactly one page. An overflow is sent back with a request to free a full
+  printed line. After four unsuccessful rewrites, the verified one-page master
+  is kept instead of failing the job or accepting two pages.
 
 A rejection is fed back to the model with the specific problem named, so the
 retry is informed rather than a reroll.

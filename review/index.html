@@ -234,7 +234,13 @@
   nav .shelf .chev { color: var(--muted); }
   nav .shelf[aria-expanded="true"] { background: var(--ink); color: var(--bg); --muted: var(--bg); }
   nav .shelfrows { margin: 0 16px; border: 2px solid var(--line); border-top: 0; }
-  /* Room for the date sitting on the right of every closed row. */
+  nav .timeline-day {
+    display: flex; align-items: center; gap: .55rem; padding: .55rem 12px .35rem;
+    color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; background: var(--panel);
+  }
+  nav .timeline-day::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+  /* The date is the timeline heading; room for the decision time on the row. */
   nav .shelfrows .row { padding-right: 92px; }
   nav .shelfrows .row:last-child { border-bottom: 0; }
   nav .empty { padding: 1rem 16px; }
@@ -616,10 +622,12 @@ const VERB = {
 const LIVE = new Set(["tailoring", "approved", "filling"]);
 // "you" rows first, then the agent's, newest first inside each.
 const ORDER = ["awaiting_review", "filled", "filling", "approved", "tailoring", "queued"];
-// Newest first, everywhere. The shelves used to show the queue's own order,
-// which is oldest first: the job just submitted or just failed sat at the
-// bottom of a closed shelf and read as gone.
+// In-flight means when it entered Autopilot. Closed shelves are a history,
+// so they use the moment the job was submitted, rejected or failed instead.
 const NEWEST = (a, b) => (b.added_at || "").localeCompare(a.added_at || "");
+const decidedAt = (j) => j.decided_at || j.added_at || "";
+const DECIDED_NEWEST = (a, b) =>
+  (Date.parse(decidedAt(b)) || 0) - (Date.parse(decidedAt(a)) || 0) || NEWEST(a, b);
 
 const TONE = {
   awaiting_review: "wait", filled: "wait", approved: "agent", filling: "agent",
@@ -764,25 +772,36 @@ async function loadList() {
   const waiting = jobs.filter((j) => BUCKET[j.status] === "you");
   const inflight = jobs.filter((j) => ["you", "agent"].includes(BUCKET[j.status]))
     .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || NEWEST(a, b));
-  const applied = jobs.filter((j) => BUCKET[j.status] === "done").sort(NEWEST);
-  const rejected = jobs.filter((j) => BUCKET[j.status] === "stop").sort(NEWEST);
+  const applied = jobs.filter((j) => BUCKET[j.status] === "done").sort(DECIDED_NEWEST);
+  const rejected = jobs.filter((j) => BUCKET[j.status] === "stop").sort(DECIDED_NEWEST);
   $("count").textContent = jobs.length
     ? `${inflight.length} in flight · ${waiting.length} need you`
     : "";
   paintHold(jobs.filter((j) => j.status === "approved").length,
             jobs.some((j) => j.status === "filling"));
 
-  // A closed row's answer is when it happened. "done" / "stop" said what
-  // the shelf it is sitting on already says; the date is the thing that is
-  // not written anywhere else on the row, and two applications can go out
-  // on the same day, so the time goes with it.
+  // The timeline heading carries the day. The row carries the time because
+  // two applications can be decided minutes apart.
   const when = (j) => {
     if (!["done", "stop"].includes(BUCKET[j.status])) return "";
-    const at = new Date(j.decided_at || j.added_at || "");
+    const at = new Date(decidedAt(j));
     if (isNaN(at)) return "";
-    const day = at.toLocaleDateString([], { day: "numeric", month: "short" });
-    const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    return `${day} · ${time}`;
+    return at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+
+  const timelineDay = (j) => {
+    const at = new Date(decidedAt(j));
+    if (isNaN(at)) return { key: "unknown", label: "Date unknown" };
+    const key = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${
+      String(at.getDate()).padStart(2, "0")}`;
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const that = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+    const days = Math.round((start - that) / 86400000);
+    const label = days === 0 ? "Today" : days === 1 ? "Yesterday"
+      : at.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short",
+                                   year: "numeric" });
+    return { key, label };
   };
 
   const row = (j) => `
@@ -797,6 +816,15 @@ async function loadList() {
         ${when(j) ? `<span class="when">${escape(when(j))}</span>`
           : VERB[j.status] ? `<span class="verb">${VERB[j.status]}</span>` : ""}
       </button>`;
+  const timeline = (group) => {
+    let day = "";
+    return group.map((job) => {
+      const next = timelineDay(job);
+      const marker = next.key === day ? "" : `<div class="timeline-day">${escape(next.label)}</div>`;
+      day = next.key;
+      return marker + row(job);
+    }).join("");
+  };
   const shelf = (name, tone, group) => `
       <button class="shelf" data-shelf="${name}" data-tone="${tone}"
               aria-expanded="${openShelves.has(name)}">
@@ -804,7 +832,7 @@ async function loadList() {
         <span class="chev">${openShelves.has(name) ? "▾" : "▸"}</span>
       </button>
       ${openShelves.has(name) && group.length
-        ? `<div class="shelfrows">${group.map(row).join("")}</div>` : ""}`;
+        ? `<div class="shelfrows">${timeline(group)}</div>` : ""}`;
 
   let html = `<div class="group">In flight <span class="n">${inflight.length}</span></div>`;
   html += inflight.length ? inflight.map(row).join("")

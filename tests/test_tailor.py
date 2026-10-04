@@ -213,6 +213,29 @@ def test_retries_until_the_page_count_fits(monkeypatch):
     assert "Do not delete a bullet" in sent[1]
 
 
+def test_page_overflow_falls_back_to_the_verified_one_page_master(monkeypatch):
+    """Repeated attractive two-page rewrites must not fail the job or leak through.
+    The unchanged master is the safe last resort because its PDF is verified."""
+    changed = ORIGINAL.replace("scalable Python service", "scalable Python backend")
+    stub_model(monkeypatch, reply(changed))
+
+    def page_check(tex):
+        return 1 if tex == ORIGINAL else 2
+
+    result = tailor.tailor(
+        POSTING,
+        resume_tex=ORIGINAL,
+        page_check=page_check,
+        target_pages=1,
+        max_attempts=2,
+    )
+
+    assert result.tex == ORIGINAL
+    assert result.diff == ""
+    assert "kept the verified master resume" in result.warnings[0]
+    assert len(result.rejections) == 2
+
+
 def test_gives_up_after_max_attempts(monkeypatch):
     bad = ORIGINAL.replace("Early Career Innovator Award, 2025.", "Fake Award, 2025.")
     stub_model(monkeypatch, reply(bad))
