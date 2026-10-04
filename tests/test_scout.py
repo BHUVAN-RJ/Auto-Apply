@@ -374,6 +374,13 @@ def test_prescreen_rejects_the_hard_cases_in_code():
     assert level.prescreen("") is None
 
 
+def test_prescreen_passes_a_posting_that_needs_no_clearance():
+    """The words the clearance check looks for, negated (2026-10-04)."""
+    assert level.prescreen("No Clearance: Position does not require a security clearance.") is None
+    assert level.prescreen("This role does not require an active security clearance.") is None
+    assert level.prescreen("Hiring fast. Requires a security clearance.") == "needs a security clearance"
+
+
 def test_prescreen_runs_before_the_model(monkeypatch):
     from server import screen as screen_api
 

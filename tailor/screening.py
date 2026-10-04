@@ -125,6 +125,18 @@ CLEARANCE = [
     r"\b(?:able|ability)\s+to\s+obtain\s+(?:and\s+maintain\s+)?a?\s*(?:security\s+)?clearance\b",
     r"\bclearance\s+(?:is\s+)?required\b",
 ]
+# A posting that says no clearance is needed names the clearance to say so:
+# "No Clearance: Position does not require a security clearance." fired the
+# rule as a hard reject (2026-10-04). The lookahead keeps the cancel off a
+# sentence that also asks for one to be obtained or held later - "does not
+# require an active clearance, but must be able to obtain one" still fires.
+_CLEARANCE_STILL_WANTED = r"^(?!.*\b(?:obtain|eligib\w*|maintain|acquire)\b)"
+CLEARANCE_NOT_REQUIRED = [
+    _CLEARANCE_STILL_WANTED + r".*\bno\s+(?:\w+\s+){0,2}clearance\b",
+    _CLEARANCE_STILL_WANTED + r".*\b(?:does|do|will)\s+not\s+(?:require|need)\b[^.\n]{0,50}\bclearance\b",
+    _CLEARANCE_STILL_WANTED + r".*\bclearance\s+(?:is\s+)?not\s+(?:required|needed|necessary)\b",
+    _CLEARANCE_STILL_WANTED + r".*\bclearance(?:\s+level)?(?:\s+required)?\s*[:\-–—]\s*(?:none|no|n/?a|not\s+required)\b",
+]
 
 # Named regimes and the "U.S. Person" requirement are a block: an F-1 holder
 # is not a US person and no amount of willingness changes it.
@@ -191,8 +203,10 @@ STOCK: tuple[Rule, ...] = (
         label="A security clearance is required",
         category="clearance",
         severity="hard",
-        note="Including \"able to obtain\", which needs citizenship in practice.",
+        note=("Including \"able to obtain\", which needs citizenship in practice. "
+              "Cancelled when the same sentence says none is required."),
         patterns=CLEARANCE,
+        unless=CLEARANCE_NOT_REQUIRED,
     ),
     Rule(
         name="export_control",
