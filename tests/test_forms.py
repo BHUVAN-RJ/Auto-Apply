@@ -627,3 +627,49 @@ def test_an_additional_attachments_slot_never_takes_the_resume(tmp_path):
     report = run_documents(page, resume=resume)
     assert page.fields["5"]["value"] == "Jane_Doe_Resume.pdf" and page.fields["6"]["value"] == ""
     assert report.resume_uploaded
+
+
+# ------------------------------------------- the mark vouches for a value --
+
+
+def test_the_mark_records_what_it_vouches_for(tmp_path):
+    """A logo that stays after the person has rewritten the answer or
+    swapped the file is a claim that is no longer true, and telling at a
+    glance which values are ours is the only thing the mark is for
+    (2026-10-03, asked for). So every mark carries the value it was put
+    there for."""
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    cover = tmp_path / "Jane_cover_letter.pdf"
+    cover.write_bytes(b"%PDF")
+    page = FakePage([
+        gh_field("5", id="resume", type="file", kind="file", name="resume", label="Resume/CV *"),
+        gh_field("6", id="cover_letter", type="file", kind="file", name="cover_letter", label="Cover Letter"),
+        gh_field("7", tag="textarea", kind="textarea", label="Why us?"),
+    ])
+    report = run_documents(page, resume=resume, cover=cover,
+                           answerer=lambda q, **k: "Because of the work.")
+    # (ref, note, logo, value) - the fourth argument is the promise.
+    vouched = {args[0]: args[3] for args in page.mark_args}
+    assert vouched["5"] == "Jane_Doe_Resume.pdf"
+    assert vouched["6"] == "Jane_cover_letter.pdf"
+    assert vouched["7"] == "Because of the work."
+    assert report.resume_uploaded and report.answered
+
+
+def test_the_mark_goes_when_the_value_does_and_stays_when_it_cannot_be_read():
+    """Verified live against Chrome on a throwaway form: the dot survived a
+    redraw of its label, vanished the moment the textarea was rewritten and
+    the city box changed, left the other field's dot alone, and came off a
+    file slot when another file was put on it."""
+    js = engine.MARK_FN
+    # The value is checked on the page's own events, not only on a redraw.
+    assert 'document.addEventListener(kind, look, true)' in js
+    assert '["input", "change"]' in js
+    # A value that cannot be read is not a changed value.
+    assert "if (now === null) return true;" in js
+    # A dropped mark is forgotten, or the restore round would put it back.
+    assert "delete state.items[entry.ref]" in js
+    assert "if (!stillOurs(entry)) { drop(entry); continue; }" in js
+    # A file is matched by name, wherever the name shows.
+    assert 'if (entry.kind === "file") return now.indexOf(entry.value) >= 0;' in js

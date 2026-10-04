@@ -389,12 +389,61 @@ LOGO_SVG = (
 # MutationObserver puts back any that goes missing. A remount builds fresh
 # DOM without our `data-autopilot-ref`, so the label text is the anchor the
 # second time round.
+# **The mark vouches for a value, not for a moment** (2026-10-03, asked for).
+# A logo that stays after the person has rewritten the answer or swapped the
+# file is a claim that is no longer true, and the one thing the mark is for is
+# telling at a glance which values on the form are ours. So each mark
+# remembers what we put on the field, and goes the moment the field stops
+# holding it: an answer edited by hand, a resume replaced from the desktop, a
+# radio moved. Checked on the page's own `input`/`change` events and on every
+# restore round, and a mark whose value has gone is forgotten rather than put
+# back. A field whose value cannot be read at all (a remount with no ref
+# yet, a file slot whose name is not shown) keeps its mark: "I cannot see it"
+# is not "it changed".
 MARK_FN = r"""
-(function (ref, note, logo) {
+(function (ref, note, logo, value) {
   const FIND = FINDFN;
   const state = window.__autopilotMarks = window.__autopilotMarks || {items: {}, watching: false};
 
   const clean = (el) => ((el && el.innerText) || "").replace(/\s+/g, " ").trim().slice(0, 120);
+
+  // What the field holds now, as a string, or null when it cannot be read.
+  // A file is its name: Greenhouse drops the input once a file is on the
+  // slot, so the block's own text is where the name shows.
+  function valueNow(entry) {
+    const el = FIND(document, entry.ref);
+    if (el && el.type === "file") {
+      if (el.files && el.files.length) return el.files[0].name;
+    }
+    if (el && el.type !== "file") {
+      if (el.type === "radio" || el.type === "checkbox") {
+        const group = el.name ? document.querySelectorAll("input[name='" + CSS.escape(el.name) + "']") : [el];
+        for (const one of group) if (one.checked) return (one.value || "on") + "|checked";
+        return "|unchecked";
+      }
+      return el.value == null ? null : String(el.value);
+    }
+    // No input to read: a file slot that has lost its input, or a remount.
+    const block = document.querySelector("[data-autopilot-upload='" + CSS.escape(entry.ref) + "']");
+    const shown = clean(block);
+    if (shown && entry.value) return shown.indexOf(entry.value) >= 0 ? entry.value : shown;
+    return null;
+  }
+
+  function stillOurs(entry) {
+    if (!entry.value) return true;            // nothing was recorded to check
+    const now = valueNow(entry);
+    if (now === null) return true;            // cannot see it; not a change
+    if (entry.kind === "file") return now.indexOf(entry.value) >= 0;
+    return now === entry.value;
+  }
+
+  function drop(entry) {
+    for (const dot of document.querySelectorAll("[data-autopilot-mark='" + CSS.escape(entry.ref) + "']")) {
+      dot.remove();
+    }
+    delete state.items[entry.ref];
+  }
 
   function hostByRef(ref) {
     const el = FIND(document, ref);
@@ -439,6 +488,7 @@ MARK_FN = r"""
 
   function restore() {
     for (const entry of Object.values(state.items)) {
+      if (!stillOurs(entry)) { drop(entry); continue; }
       if (document.querySelector("[data-autopilot-mark='" + CSS.escape(entry.ref) + "']")) continue;
       place(entry);
     }
@@ -453,11 +503,21 @@ MARK_FN = r"""
       if (timer) return;
       timer = setTimeout(() => { timer = null; try { restore(); } catch (e) {} }, 200);
     }).observe(document.documentElement, {childList: true, subtree: true});
+    // The person typing over an answer, or picking another file, is the
+    // other way a mark stops being true. Both arrive as events on the
+    // control itself; the check is the same one.
+    const look = () => { try { restore(); } catch (e) {} };
+    for (const kind of ["input", "change"]) {
+      document.addEventListener(kind, look, true);
+    }
   }
 
   const entry = state.items[ref] || (state.items[ref] = {ref: ref, note: note, logo: logo, label: ""});
   entry.note = note;
   entry.logo = logo;
+  if (value !== undefined && value !== null && value !== "") entry.value = String(value);
+  const el = FIND(document, ref);
+  entry.kind = el && el.type === "file" ? "file" : (entry.kind || "");
   const ok = place(entry);
   if (!ok) delete state.items[ref];
   return ok;
@@ -864,7 +924,7 @@ class Engine:
             return
         if await self.set_value(f, value, OPTION_ALIASES.get(key, [])):
             self.report.filled.append(f.question or key)
-            await self.mark(f.ref, "from your profile")
+            await self.mark(f.ref, "from your profile", value)
 
     async def set_value(self, f: Field, value: str, aliases: Optional[list[str]] = None) -> bool:
         """Put `value` on the field the way its kind wants: the native
@@ -945,7 +1005,8 @@ class Engine:
             if done:
                 self.report.corrected.append(q)
                 was = str(record.get("was") or "")
-                await self.mark(f.ref, f"corrected: {value}" + (f" (autofill had {was})" if was else ""))
+                await self.mark(f.ref, f"corrected: {value}" + (f" (autofill had {was})" if was else ""),
+                                value)
             else:
                 self.report.errors.append(f"could not put the corrected value on {q[:60]!r}")
 
@@ -957,10 +1018,17 @@ class Engine:
                     return True
         return False
 
-    async def mark(self, ref: str, note: str) -> None:
-        """The purple dot in front of a field we set. Never fails a fill."""
+    async def mark(self, ref: str, note: str, value: str = "") -> None:
+        """The purple dot in front of a field we set. Never fails a fill.
+
+        `value` is what we put there. The mark vouches for that value: it
+        survives the page redrawing itself, and goes as soon as the field
+        stops holding it - an answer rewritten by hand, a resume swapped
+        from the desktop. Passing nothing keeps the old behaviour, a mark
+        that only the DOM can remove.
+        """
         try:
-            await self.call(MARK_FN, ref, note, LOGO_SVG)
+            await self.call(MARK_FN, ref, note, LOGO_SVG, value)
         except Exception:  # noqa: BLE001 - the logo is advice
             pass
 
@@ -1029,7 +1097,7 @@ class Engine:
                 done = await self.type_into(f, text)
             if done:
                 self.report.answered.append(q)
-                await self.mark(f.ref, "answer written by the assistant")
+                await self.mark(f.ref, "answer written by the assistant", text)
             else:
                 self.report.errors.append(f"could not write the answer into {q[:60]!r}")
 
@@ -1206,7 +1274,7 @@ class Engine:
                     report.resume_uploaded = name == self.resume.name
                     report.resume_name = name
                     if report.resume_uploaded:
-                        await self.mark(resume_input.ref, "the tailored resume")
+                        await self.mark(resume_input.ref, "the tailored resume", name)
                     if not report.resume_uploaded:
                         report.errors.append(f"resume upload did not take (input holds {name!r})")
                 except Exception as error:  # noqa: BLE001
@@ -1216,7 +1284,7 @@ class Engine:
                 name = await self.upload(cover_input, self.cover_letter)
                 report.cover_letter_uploaded = name == self.cover_letter.name
                 if report.cover_letter_uploaded:
-                    await self.mark(cover_input.ref, "the cover letter")
+                    await self.mark(cover_input.ref, "the cover letter", name)
             except Exception as error:  # noqa: BLE001
                 report.errors.append(f"cover letter upload: {error}")
 

@@ -116,7 +116,7 @@ job you ever considered.
 
 | Component | Role |
 |---|---|
-| `capture/` | `content.js`: the on-page banner (screen verdict, countdown, queue, already-seen, file chips, submission watch). Injected by `browser/inject.py` into the app's own Chrome; also loadable as an MV3 extension for an everyday Chrome |
+| `capture/` | `content.js`: the on-page banner (screen verdict, countdown, queue, already-seen, file chips, submission watch). `tracker.js`: the status column drawn over the Simplify new-grad list's own GitHub page. Both injected by `browser/inject.py` into the app's own Chrome; also loadable as an MV3 extension for an everyday Chrome |
 | `server/` | FastAPI on `localhost:8787` by default. Owns the queue, serves the review UI, holds checkpoint state |
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
@@ -154,7 +154,12 @@ voice mode and talk to the orb hands-free; speech runs on this machine
 (whisper.cpp in, Kokoro out) and the models download on first use. Ashby,
 Greenhouse and Lever forms are filled by code from the preliminary
 interview's answers, and what you correct on a form is offered back to
-you with a tick each: what you keep goes over autofill on the next form. Next: the same code fill for Workday, Oracle, iCIMS and
+you with a tick each: what you keep goes over autofill on the next form.
+Every field the automation set carries the assistant's logo in front of its
+label, and that logo vouches for the value: it survives the page redrawing
+itself and disappears the moment you change the answer or swap the file, so
+what is still marked is still ours. The Simplify new-grad list is tracked on
+its own GitHub page, a day of postings at a time. Next: the same code fill for Workday, Oracle, iCIMS and
 SmartRecruiters, where Jobright's autofill is still step one. See
 [PLAN.md](PLAN.md) for the design and what is deliberately deferred.
 
@@ -162,7 +167,7 @@ SmartRecruiters, where Jobright's autofill is still step one. See
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 525 tests
+pytest                        # 855 tests
 ```
 
 ## Setup
@@ -775,6 +780,37 @@ Mail is plain SMTP from a personal account: `AUTOPILOT_SMTP_USER`,
 `.env`. `python tools/scout_verify.py` checks every watched page from
 the terminal, or any URL passed to it, and exits with the number of
 broken pages.
+
+## The Simplify new-grad list, tracked on its own page
+
+[github.com/SimplifyJobs/New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions)
+is a README of tables: company, role, location, an Apply link to the
+employer's own form, an age in days. Open it in the app's Chrome and it
+gains a column of its own.
+
+Each row that is in autopilot says what happened with it — **APPLIED**,
+**FILLED**, **FILLING**, **REJECTED**, **FAILED** — and the badge is the way
+back to that job. Every other row gets an **Add** button. A row the screen
+turned down keeps its button and carries the reason in its tooltip: the page
+is a list of jobs, not a report on them.
+
+A bar in the corner lists the days the page is showing and works **one day at
+a time**: each posting of that day is screened, and the ones the screen does
+not reject are queued exactly as `/capture` queues a job you added yourself.
+With the hold on (the default) the whole day is tailored and stops at
+APPROVED, so letting go applies for them one tab at a time. A day's run
+covers the Software and AI/ML tables; the other three get badges and Add
+buttons but are not tailored in bulk.
+
+Nothing is read from GitHub by the server — the page is already open and
+sends its own rows — and nothing is queued without a press. "Applied" is not
+a second record: it is that posting's status in the queue, so the only things
+that can decide an application was sent are the same four that always could.
+
+Rows are matched by the posting's own id (the `simplify.jobs/p/<uuid>` link
+beside Apply), so a row is never guessed at. The list groups everything past
+a month into one age, and a month is not a day: those buckets say "by row
+only" rather than offering to apply to 169 postings at once.
 
 ## Fit assessment
 

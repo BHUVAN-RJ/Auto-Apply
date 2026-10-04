@@ -2096,3 +2096,71 @@ Next, agreed and not built:
   written when the person answers and replayed on the next LinkedIn job only.
 - A live verification pass over `linkedin_apply`'s selectors, which come from
   one real reading of the flow.
+
+## Phase 26 — a list of jobs, and what the logo promises (2026-10-03)
+
+Built.
+
+**The Simplify new-grad list is tracked on its own page.** `server/simplify.py`
+and `capture/tracker.js`. The obvious build was wrong: a scraper of our own, a
+mirror of the repo's 13 MB `listings.json`, a tab in this app repeating what
+the page already shows. The page is open in front of the person and every row
+carries the posting's own UUID beside its Apply link, so the overlay reads the
+page, the server fetches nothing from GitHub, and a row is matched to our
+queue exactly. A day at a time, `ok`/`caution` queued the same three steps as
+`/capture`, `hold_fills` landing the whole day at APPROVED. "Applied" is
+derived from the queue, never written here, so the four submission paths stay
+the only things that can decide an application was sent.
+
+Three things came out of replaying the live README before the overlay was
+trusted: the Age column turns to months past the first 30 days (which would
+have dated an August posting to yesterday, and put 169 postings behind one
+button); a day's run started a `pipeline.py` per row, because `hold_fills`
+holds *fills* and not tailoring (`MAX_PIPELINES`, 3); and the legend's own
+marks say "no sponsorship" and "citizens only" on the page, so those rows
+should never cost a fetch.
+
+**Each document goes in its own slot, and the system's own autofill slot is
+not one.** Ashby, Workday and Lever all offer "upload a resume and we will
+fill the form in": that input sits above the real Resume field, usually has
+"resume" in its label, and on Ashby matches the adapter's own selector, so it
+won the slot on name alone — and it parses the file over the fields Jobright
+has already filled rather than attaching it.
+`guard.describes_parse_slot` drops it before any matching. The other half:
+"additional attachments" and "other documents" are what Greenhouse boards
+call the letter's slot, and nothing recognised either.
+
+**The fill opens the application page.** Ashby's and Lever's posting URLs are
+overview pages with no form on them; `Adapter.apply_url` knew the one path to
+the application and only the off-by-default filler used it.
+
+**The stray blank tabs were Jobright's "Autofill for Another Job"** — its way
+of saying it has no match for the page — pressed twice per fill, because the
+second-press rule meant for its panel-opener would press it too. Refused by
+name, a two-second warm-up before the first look, and a blank tab that was
+not open when the fill started is closed at the end.
+
+**The logo vouches for a value, not for a moment.** A mark that stays after
+the person has rewritten the answer or swapped the file is a claim that is no
+longer true, and telling at a glance which values are ours is the only thing
+the mark is for. Each mark now remembers what we put on the field and goes
+when the field stops holding it, checked on the page's own `input`/`change`
+events as well as on the restore round. A value that cannot be read keeps its
+mark: "I cannot see it" is not "it changed". Verified live against Chrome on
+a throwaway form — the dot survived a label redraw, vanished when the
+textarea was rewritten, left its neighbour alone, and came off a file slot
+when another file was put on it.
+
+**Prompt caching is already happening on the cheap model.** Measured: an
+identical 3,047-token prefix on `z-ai/glm-5.3` through OpenRouter came back
+`cached_tokens` 0, then 3,008. `llm._log_usage` logs the counts per call.
+Left on the table: `_build_user_message` puts the posting first and the
+master resume last, so across jobs the constant tail cannot share a prefix —
+moving the posting to the end would cache rules + profile + budget + resume
+for a whole session, and also changes what the model reads last, which is a
+behaviour change to measure rather than assume.
+
+Next, agreed and not built:
+
+- The same status column on the repo's archive page.
+- A thread on a tracker row, so a job can be discussed before it is added.

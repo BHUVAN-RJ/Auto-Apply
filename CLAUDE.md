@@ -1353,6 +1353,24 @@ invariants first.
   end would make rules + profile + budget + master resume one cached prefix
   for every job in a session; it also changes what the model reads last,
   which is a behaviour change to measure rather than assume. Not done.
+- **The logo vouches for a value, not for a moment** (2026-10-03, asked for).
+  A mark that stays after the person has rewritten the answer or swapped the
+  file is a claim that is no longer true, and which values on the form are
+  ours is the only thing the mark says. `MARK_FN` now takes the value as a
+  fourth argument (`Engine.mark(ref, note, value)`, passed at all five call
+  sites: the resume by name, the letter by name, each answer, each profile
+  field, each correction), keeps it in `window.__autopilotMarks`, and drops
+  the mark - and forgets it, so the restore round cannot put it back - as
+  soon as `stillOurs` fails. Checked on the page's own `input` / `change`
+  events as well as on every MutationObserver round; a file is matched by
+  name wherever the name shows (Greenhouse drops the input, so the block's
+  text is the second place to look), and a radio by its group's checked
+  option. **A value that cannot be read keeps its mark**: "I cannot see it"
+  is not "it changed", which is what keeps the Ashby remount fix from
+  2026-09-25 working. Verified live against Chrome on a throwaway form
+  rather than only in the suite: dot survives a label redraw, vanishes the
+  moment the textarea is rewritten, leaves the neighbouring field's dot
+  alone, and comes off a file slot when another file is put on it.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
