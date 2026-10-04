@@ -323,6 +323,33 @@
   .docs iframe { display: block; aspect-ratio: 8.5 / 11; height: auto; margin: 0 auto;
                  width: min(100%, calc((100vh - 110px) * 8.5 / 11)); }
   .docs .card.letter { max-height: 78vh; overflow-y: auto; }
+  .outreach { padding: .8rem 1rem; margin-bottom: 1.4rem; }
+  .outreach-head { display: flex; gap: .6rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .outreach-contact { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 2fr);
+                      gap: .35rem 1rem; margin: .7rem 0; }
+  .outreach-contact .who { font-weight: 700; }
+  .outreach-contact .source { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .outreach-slide textarea.subject { min-height: 2.6rem; height: 2.6rem; }
+  .outreach-slide textarea.body { min-height: 12rem; line-height: 1.5; }
+  .outreach-slide label { display: block; color: var(--muted); font-size: 11px; margin: .55rem 0 .2rem; }
+  .outreach-nav { display: flex; align-items: center; justify-content: center; gap: .5rem; margin: .7rem 0 0; }
+  .outreach-dots { display: inline-flex; gap: .25rem; }
+  .outreach-dots button { width: .7rem; height: .7rem; padding: 0; border: 1px solid var(--ink);
+                          border-radius: 50%; background: transparent; cursor: pointer; }
+  .outreach-dots button.on { background: var(--ink); }
+  .outreach-contacts { display: grid; gap: .5rem; margin-top: .7rem; }
+  .outreach-person { display: grid; grid-template-columns: auto 1fr; gap: .55rem; align-items: start;
+                     border: 1px solid var(--line); padding: .55rem .7rem; }
+  .outreach-person .pick { margin-top: .15rem; }
+  .outreach-picks { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+  .outreach-setup { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .7rem; }
+  .outreach-setup input { width: 100%; padding: .55rem; border: 2px solid var(--line);
+                          background: var(--panel); color: inherit; font: inherit; box-sizing: border-box; }
+  .outreach-setup .wide { grid-column: 1 / -1; }
+  @media (max-width: 700px) {
+    .outreach-contact, .outreach-setup { grid-template-columns: 1fr; }
+    .outreach-setup .wide { grid-column: auto; }
+  }
 
   h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
        color: var(--muted); margin: 1.6rem 0 .5rem; font-weight: 600; }
@@ -593,6 +620,8 @@ window.addEventListener("hashchange", () => {
 // under the cursor jumps.
 let shownStatus = null;
 let reasons = [];
+const outreachSlide = {};
+let outreachKeyHandler = null;
 
 const LABEL = {
   queued: "queued", tailoring: "tailoring…", awaiting_review: "needs your review",
@@ -884,6 +913,13 @@ async function show(id) {
     $("detail").innerHTML = `${head(job)}<div class="banner stop">${escape(err.message)}</div>`;
     return;
   }
+  let outreach;
+  try {
+    outreach = await api(`/review/${id}/outreach`);
+  } catch (err) {
+    outreach = { contacts: [], drafts: [], error: err.message,
+                 apollo_configured: false, mail_configured: false };
+  }
 
   const reviewable = data.status === "awaiting_review";
   const filled = data.status === "filled";
@@ -917,6 +953,7 @@ async function show(id) {
             <div class="card"><pre class="posting">${escape(data.cover_letter_error)}</pre>
             <p class="note">The resume is unaffected. Re-tailor to try the letter again.</p></div></div>`
         : "";
+  const outreachDoc = outreachHtml(id, outreach);
 
   $("detail").innerHTML = `
     ${head(job, data)}
@@ -944,7 +981,8 @@ async function show(id) {
         <button class="act" id="reveal">Show the files in Finder</button>
         <span class="hint" id="revealNote">The resume and the letter under their upload names, selected, ready to drag onto a form.</span>
       </div>
-      <div class="docs">${resumeDoc}${letterDoc}</div>` : ""}
+      <div class="docs">${resumeDoc}${letterDoc}</div>
+      ${outreachDoc}` : ""}
 
     ${data.suggestions ? `<h3>What changed, and why</h3>
       <div class="card prose">${markdown(rationale(data.suggestions))}</div>` : ""}
@@ -1051,6 +1089,7 @@ async function show(id) {
   if ($("reveal")) wireReveal(id);
   if ($("askGo")) wireThread(id, data);
   if ($("rememberGo")) wireRemember(id);
+  wireOutreach(id, outreach);
   if (working) setTimeout(() => { if (current === id) show(id); }, working * 1000 + 200);
 
   if ($("posting")) {
@@ -1062,6 +1101,231 @@ async function show(id) {
     fetch(`/review/${id}/log`).then((r) => r.text())
       .then((text) => { if ($("filllog")) $("filllog").textContent = text; });
   }
+}
+
+function outreachContactActions(contact) {
+  const canJobright = !!contact.linkedin_url;
+  return `<div class="actions">
+    <button class="act" data-outreach-apollo="${escape(contact.id)}">Apollo email</button>
+    <button class="act" data-outreach-jobright="${escape(contact.id)}" ${canJobright ? "" : "disabled"}>Jobright guess</button>
+    <button class="act primary" data-outreach-draft="${escape(contact.id)}" ${contact.email ? "" : "disabled"}>Write email</button>
+  </div>`;
+}
+
+function outreachSetup(state) {
+  const key = state.apollo_configured ? "" : `
+    <div class="banner warn wide"><b>Connect Apollo</b>
+      <div class="actions"><input type="password" id="outreachApolloKey" placeholder="Apollo API key">
+      <button class="act" id="outreachSaveKey">Save key</button></div>
+      <span class="hint">Kept only in Autopilot's private .env on this Mac.</span>
+    </div>`;
+  const gmail = state.mail_configured ? "" : `
+    <div class="banner warn wide"><b>Connect Gmail</b>
+      <div class="outreach-setup">
+        <input type="email" id="outreachGmailUser" placeholder="you@gmail.com">
+        <input type="password" id="outreachGmailPass" placeholder="Gmail App Password">
+      </div>
+      <div class="actions"><button class="act" id="outreachSaveGmail">Save Gmail</button>
+        <span class="hint">Use a Google App Password, never your account password.</span></div>
+    </div>`;
+  const contacts = (state.contacts || []).map((contact) => `
+    <div class="outreach-person">
+      <label class="pick"><input type="checkbox" data-outreach-pick="${escape(contact.id)}"></label>
+      <div>
+      <b>${escape(contact.name)}</b> · ${escape(contact.role.replace("_", " "))}
+      <span class="hint">${escape(contact.title || "")}</span><br>
+      <span>${contact.email ? escape(contact.email) : "No email yet"}</span>
+      <span class="source">${escape(contact.source)} · ${escape(contact.verification)}</span>
+      ${contact.linkedin_url ? `<br><a href="${escape(contact.linkedin_url)}" target="_blank" rel="noreferrer">LinkedIn ↗</a>` : ""}
+      ${outreachContactActions(contact)}
+      </div>
+    </div>`).join("");
+  const picks = (state.contacts || []).length ? `
+      <div class="wide actions outreach-picks">
+        <label><input type="checkbox" id="outreachPickAll"> Select all</label>
+        <button class="act primary" id="outreachWriteSelected">Write emails</button>
+        <span class="hint">Drafts only. Each send still needs its own approve.</span>
+      </div>` : "";
+  return `
+    <div class="outreach-setup">
+      ${key}${gmail}
+      <div class="wide actions">
+        <button class="act primary" id="outreachDiscover" ${state.apollo_configured ? "" : "disabled"}>Find recruiter + manager</button>
+        <span class="hint">${escape(state.lookup_note || "Apollo search spends no email credit; enrichment is requested separately.")}</span>
+      </div>
+      <select id="outreachRole"><option value="recruiter">Recruiter</option><option value="hiring_manager">Hiring manager</option></select>
+      <textarea id="outreachName" rows="1" placeholder="contact name"></textarea>
+      <textarea id="outreachTitle" rows="1" placeholder="title (optional)"></textarea>
+      <textarea id="outreachEmail" rows="1" placeholder="email (optional)"></textarea>
+      <textarea class="wide" id="outreachLinkedIn" rows="1" placeholder="LinkedIn profile URL"></textarea>
+      <div class="wide actions"><button class="act" id="outreachAddContact">Add contact</button></div>
+      ${picks}
+    </div>
+    <div class="outreach-contacts">${contacts || `<p class="hint">No contacts yet.</p>`}</div>`;
+}
+
+function outreachHtml(id, state) {
+  const drafts = state.drafts || [];
+  let slide = Number.isInteger(outreachSlide[id]) ? outreachSlide[id] : 0;
+  slide = Math.max(0, Math.min(slide, Math.max(0, drafts.length - 1)));
+  outreachSlide[id] = slide;
+  const draft = drafts[slide];
+  let carousel = "";
+  if (draft) {
+    const contact = (state.contacts || []).find((row) => row.id === draft.contact_id) || {};
+    const needsVerify = contact.verification !== "verified";
+    const locked = draft.status !== "draft";
+    carousel = `<div class="outreach-slide" data-slide="${slide}">
+      <div class="outreach-head">
+        <div><b>${escape(contact.name || "Unknown contact")}</b>
+          <span class="hint"> · ${escape((contact.role || "").replace("_", " "))} · ${escape(contact.title || "")}</span></div>
+        <span class="source">${escape(contact.email || "")} · ${escape(contact.source || "")} · ${escape(contact.verification || "")}</span>
+      </div>
+      <label>Subject</label>
+      <textarea class="subject" id="outreachSubject" ${locked ? "disabled" : ""}>${escape(draft.subject)}</textarea>
+      <label>Email</label>
+      <textarea class="body" id="outreachBody" ${locked ? "disabled" : ""}>${escape(draft.body)}</textarea>
+      <div class="actions">
+        <label><input type="checkbox" id="outreachAttach" ${draft.attach_resume ? "checked" : ""} ${locked ? "disabled" : ""}> Attach tailored resume</label>
+        ${needsVerify ? `<label><input type="checkbox" id="outreachVerify" ${draft.verified_by_user ? "checked" : ""} ${locked ? "disabled" : ""}> I verified this address</label>` : ""}
+        ${locked ? `<span class="state ${draft.status === "sent" ? "go" : "stop"}">${escape(draft.status)}</span>`
+          : `<button class="act" id="outreachSave">Save</button>
+             <button class="act primary" id="outreachSend" ${state.mail_configured ? "" : "disabled"}>Approve and send</button>`}
+      </div>
+      ${draft.error ? `<div class="banner stop">${escape(draft.error)}</div>` : ""}
+      <div class="outreach-nav">
+        <button class="act" id="outreachPrev" ${slide === 0 ? "disabled" : ""}>←</button>
+        <span>${slide + 1} / ${drafts.length}</span>
+        <span class="outreach-dots">${drafts.map((_, index) =>
+          `<button class="${index === slide ? "on" : ""}" data-outreach-slide="${index}" aria-label="Email ${index + 1}"></button>`).join("")}</span>
+        <button class="act" id="outreachNext" ${slide === drafts.length - 1 ? "disabled" : ""}>→</button>
+      </div>
+    </div>`;
+  }
+  return `<h3>Outreach</h3>
+    <div class="card outreach">
+      ${state.error ? `<div class="banner stop">${escape(state.error)}</div>` : ""}
+      ${!state.mail_configured ? `<div class="banner warn">Gmail SMTP is not configured. Drafting works; sending stays disabled.</div>` : ""}
+      ${carousel}
+      <details ${drafts.length ? "" : "open"}>
+        <summary>${drafts.length ? "Contacts and new email" : "Find contacts"}</summary>
+        ${outreachSetup(state)}
+      </details>
+    </div>`;
+}
+
+function wireOutreach(id, state) {
+  if (outreachKeyHandler) document.removeEventListener("keydown", outreachKeyHandler);
+  const drafts = state.drafts || [];
+  const move = (next) => {
+    outreachSlide[id] = Math.max(0, Math.min(next, drafts.length - 1));
+    show(id);
+  };
+  $("outreachPrev")?.addEventListener("click", () => move((outreachSlide[id] || 0) - 1));
+  $("outreachNext")?.addEventListener("click", () => move((outreachSlide[id] || 0) + 1));
+  for (const dot of document.querySelectorAll("[data-outreach-slide]")) {
+    dot.onclick = () => move(Number(dot.dataset.outreachSlide));
+  }
+  outreachKeyHandler = (event) => {
+    if (current !== id || !drafts.length || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+    if (event.key === "ArrowLeft") move((outreachSlide[id] || 0) - 1);
+    if (event.key === "ArrowRight") move((outreachSlide[id] || 0) + 1);
+  };
+  document.addEventListener("keydown", outreachKeyHandler);
+
+  const run = async (path, body={}) => {
+    try {
+      await api(`/review/${id}/outreach${path}`, { method: "POST", body: JSON.stringify(body) });
+      await show(id);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+  if ($("outreachSaveKey")) $("outreachSaveKey").onclick = () => {
+    const key = $("outreachApolloKey").value.trim();
+    if (!key) { alert("Paste the Apollo API key first."); return; }
+    run("/apollo-key", { key });
+  };
+  if ($("outreachSaveGmail")) $("outreachSaveGmail").onclick = () => {
+    const user = $("outreachGmailUser").value.trim();
+    const app_password = $("outreachGmailPass").value.trim();
+    if (!user || !app_password) {
+      alert("Enter your Gmail address and the 16-character App Password.");
+      return;
+    }
+    run("/gmail", { user, app_password });
+  };
+  if ($("outreachDiscover")) $("outreachDiscover").onclick = () => run("/discover", { per_role: 3 });
+  if ($("outreachAddContact")) $("outreachAddContact").onclick = () => run("/contact", {
+    role: $("outreachRole").value,
+    name: $("outreachName").value.trim(),
+    title: $("outreachTitle").value.trim(),
+    email: $("outreachEmail").value.trim(),
+    linkedin_url: $("outreachLinkedIn").value.trim(),
+  });
+  for (const button of document.querySelectorAll("[data-outreach-apollo]")) {
+    button.onclick = () => run("/apollo", { contact_id: button.dataset.outreachApollo });
+  }
+  for (const button of document.querySelectorAll("[data-outreach-jobright]")) {
+    button.onclick = () => run("/jobright", { contact_id: button.dataset.outreachJobright });
+  }
+  for (const button of document.querySelectorAll("[data-outreach-draft]")) {
+    button.onclick = () => run("/draft", { contact_id: button.dataset.outreachDraft, attach_resume: true });
+  }
+  if ($("outreachPickAll")) $("outreachPickAll").onchange = () => {
+    const on = $("outreachPickAll").checked;
+    for (const box of document.querySelectorAll("[data-outreach-pick]")) box.checked = on;
+  };
+  if ($("outreachWriteSelected")) $("outreachWriteSelected").onclick = async () => {
+    const ids = [...document.querySelectorAll("[data-outreach-pick]:checked")]
+      .map((box) => box.dataset.outreachPick);
+    if (!ids.length) { alert("Select the people you want to email."); return; }
+    const needLookup = ids.filter((contactId) => {
+      const contact = (state.contacts || []).find((row) => row.id === contactId);
+      return contact && !contact.email;
+    }).length;
+    const message = needLookup
+      ? `Write drafts for ${ids.length} people? ${needLookup} need an Apollo lookup (about 1 credit each). Nothing is sent.`
+      : `Write drafts for ${ids.length} people? Nothing is sent until you approve each one.`;
+    if (!confirm(message)) return;
+    try {
+      const next = await api(`/review/${id}/outreach/drafts`, {
+        method: "POST", body: JSON.stringify({ contact_ids: ids, attach_resume: true }),
+      });
+      const index = (next.drafts || []).findIndex((row) => row.id === next.active_draft);
+      if (index >= 0) outreachSlide[id] = index;
+      await show(id);
+    } catch (err) { alert(err.message); }
+  };
+  const currentDraft = drafts[outreachSlide[id] || 0];
+  const draftBody = () => ({
+    subject: $("outreachSubject").value.trim(),
+    body: $("outreachBody").value.trim(),
+    attach_resume: $("outreachAttach").checked,
+    verified_by_user: $("outreachVerify")?.checked || false,
+  });
+  if ($("outreachSave") && currentDraft) $("outreachSave").onclick = async () => {
+    try {
+      await api(`/review/${id}/outreach/draft/${currentDraft.id}`, {
+        method: "PATCH", body: JSON.stringify(draftBody()),
+      });
+      await show(id);
+    } catch (err) { alert(err.message); }
+  };
+  if ($("outreachSend") && currentDraft) $("outreachSend").onclick = async () => {
+    const contact = (state.contacts || []).find((row) => row.id === currentDraft.contact_id) || {};
+    if (!confirm(`Send this email to ${contact.name || "this contact"} at ${contact.email || "the selected address"}?`)) return;
+    const body = draftBody();
+    try {
+      await api(`/review/${id}/outreach/draft/${currentDraft.id}`, {
+        method: "PATCH", body: JSON.stringify(body),
+      });
+      await api(`/review/${id}/outreach/draft/${currentDraft.id}/send`, {
+        method: "POST", body: JSON.stringify({ confirmed: true, verified_by_user: body.verified_by_user }),
+      });
+      await show(id);
+    } catch (err) { alert(err.message); }
+  };
 }
 
 function head(job, data) {

@@ -117,3 +117,19 @@ def test_the_guard_still_refuses_the_control_the_button_presses():
     for pattern in guard.SUBMIT_PATTERNS:
         assert json.dumps(pattern) in press_submit._SUBMIT_SOURCE
     assert press_submit._SUBMIT_SOURCE in press_submit.CANDIDATES_JS
+
+
+# 7. Outreach is sent only by the human-only server route.
+
+def test_automation_cannot_reach_outbound_mail():
+    paths = [ROOT / "pipeline.py", ROOT / "apply.py"]
+    paths += list((ROOT / "browser").rglob("*.py"))
+    paths += list((ROOT / "tailor").rglob("*.py"))
+    for path in paths:
+        source = path.read_text()
+        assert "import mailing" not in source and "from mailing" not in source, path
+        assert "send_message(" not in source, path
+
+    route = (ROOT / "server" / "outreach.py").read_text()
+    assert "confirmed" in route and "mailing.send_message(msg)" in route
+    assert "this message is already" in route, "a sent email must not be sent twice"

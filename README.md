@@ -82,6 +82,13 @@ of it and the window left open on it. Everything halts there.
 
 Checkpoint 2 always blocks. Nothing is ever submitted by anything but you.
 
+After the documents exist, the same review page can find a recruiter and a
+hiring manager, write a short email for each, and send it through Gmail
+with the tailored resume attached. Finding contacts and drafting is
+automatic; sending is not. A guessed or typed address needs you to tick
+that you verified it, then **Approve and send**. The pipeline and the
+browser agent cannot reach mail.
+
 ## The agent never submits
 
 This is enforced in the action layer, not in a prompt:
@@ -121,7 +128,8 @@ job you ever considered.
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
 | `tex/` | `lualatex` wrapper producing deterministic PDFs |
 | `browser/` | `browser-use` fill loop driving your real Chrome profile. `guard.py` is the never-submit deny-list; `signin.py` waits out a login wall and says when the form is back; `press_submit.py` is the only place a Submit control is ever pressed, and the agent cannot reach it |
-| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, and the Profile, Projects, Scout, Screening and Prompts tabs |
+| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, recruiter outreach, and the Profile, Projects, Scout, Screening and Prompts tabs |
+| `outreach/` | Per-job recruiter and hiring-manager contacts, drafts, and a Gmail send that only the review page can reach |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
