@@ -924,10 +924,20 @@ async function loadFiles(shadow, jobId) {
     });
   }
   for (const button of row.querySelectorAll(".chip.put")) {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const key = button.dataset.put;
       const result = putFile(files[key], key);
       button.innerHTML = `<b>${result.ok ? "✓" : "✕"}</b> ${esc(result.note)}`;
+      // A slot the person filled from here is as much ours as one the fill
+      // filled, and it was the one path with no logo in front of it, so a
+      // form done this way looked untouched (2026-10-04, asked for). The
+      // input is tagged above; the server evaluates the same MARK_FN the
+      // fill uses, in this tab, so the mark promises the same thing and
+      // goes the same way when the file changes.
+      if (!result.ok) return;
+      try {
+        await post(`/review/${jobId}/mark`, { url: location.href, key });
+      } catch { /* the logo is advice; the file is on the form either way */ }
     });
   }
 }
@@ -964,6 +974,9 @@ function putFile(file, key) {
     const dt = new DataTransfer();
     dt.items.add(file);
     target.el.files = dt.files;
+    // The tag the logo hangs off. Written before the events, so a form that
+    // re-renders on change still has it on the input that was set.
+    target.el.setAttribute("data-autopilot-ref", key === "resume" ? "put-resume" : "put-cover-letter");
     target.el.dispatchEvent(new Event("input", { bubbles: true }));
     target.el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true, note: `put in “${target.text.slice(0, 30) || "file input"}”` };

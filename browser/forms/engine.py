@@ -1553,6 +1553,30 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     return report
 
 
+async def mark_put(cdp_url: str, target_id: str, ref: str, note: str, value: str) -> bool:
+    """Put the logo on a slot the *page* filled, in the tab it filled.
+
+    The banner's file chips carry a "put" button, which sets the form's own
+    file input from the page (`putFile` in `capture/content.js`) - the same
+    outcome as the fill's upload, by the person's hand, and until 2026-10-04
+    the only one with no logo in front of it. The chip tags the input it set
+    with a `data-autopilot-ref`; this evaluates the real `MARK_FN` against
+    it, so the mark and everything it promises - surviving a re-render,
+    going when the value changes - are one implementation and not two.
+    Nothing on the form is touched.
+    """
+    async with attached(cdp_url, target_id=target_id) as (page, _):
+        await page.send("DOM.enable")
+        engine = Engine(page, Adapter(), Profile({}))
+        await engine.call(MARK_UPLOAD_FN, ref)
+        return bool(await engine.call(MARK_FN, ref, note, LOGO_SVG, value))
+
+
+def mark_put_now(cdp_url: str, target_id: str, ref: str, note: str, value: str) -> bool:
+    """`mark_put` from ordinary (non-async) server code."""
+    return asyncio.run(mark_put(cdp_url, target_id, ref, note, value))
+
+
 async def upload_documents(cdp_url: str, target_id: str, adapter: Adapter,
                            resume: Optional[Path] = None, cover_letter: Optional[Path] = None,
                            answerer=None, corrections: Optional[Profile] = None) -> Report:

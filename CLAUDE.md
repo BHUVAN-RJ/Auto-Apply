@@ -1371,6 +1371,26 @@ invariants first.
   rather than only in the suite: dot survives a label redraw, vanishes the
   moment the textarea is rewritten, leaves the neighbouring field's dot
   alone, and comes off a file slot when another file is put on it.
+- **A slot the "put" chip filled gets the logo too** (2026-10-04, asked
+  for). The banner's file chips carry a `put` button that sets the form's own
+  file input from the page (`putFile` in `content.js`) - the same outcome as
+  the fill's upload, by the person's hand - and it was the one path with no
+  mark in front of it, so a form done that way read as untouched. `putFile`
+  now tags the input it set (`data-autopilot-ref=put-resume` /
+  `put-cover-letter`, written **before** the input/change events, so a form
+  that re-renders on change still carries it) and the chip then asks
+  `POST /review/{id}/mark`, which runs `forms.mark_put` - the same `MARK_FN`
+  and `MARK_UPLOAD_FN` the fill runs - in that tab over CDP. One
+  implementation, so the mark promises the same thing and goes the same way
+  when the file changes. The page sends only *which* document and *where*:
+  the ref, the note ("… (you put it there)") and the filename are built
+  server-side from the job's own folder (`PUT_REFS`), so nothing the page
+  says is written onto the form's page as text, and a document the folder
+  does not have is a 409. The tab is found by the page's own URL first,
+  because a form opened by hand is exactly where "put" is wanted. Verified
+  live: mark lands on the slot, title reads "Filled by Autopilot: the
+  tailored resume (you put it there)", and swapping the file afterwards
+  takes it off.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

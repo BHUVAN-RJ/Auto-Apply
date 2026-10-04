@@ -156,9 +156,10 @@ Greenhouse and Lever forms are filled by code from the preliminary
 interview's answers, and what you correct on a form is offered back to
 you with a tick each: what you keep goes over autofill on the next form.
 Every field the automation set carries the assistant's logo in front of its
-label, and that logo vouches for the value: it survives the page redrawing
-itself and disappears the moment you change the answer or swap the file, so
-what is still marked is still ours. The Simplify new-grad list is tracked on
+label — including a slot you filled yourself with the banner's **put** chip —
+and that logo vouches for the value: it survives the page redrawing itself and
+disappears the moment you change the answer or swap the file, so what is still
+marked is still ours. The Simplify new-grad list is tracked on
 its own GitHub page, a day of postings at a time. Next: the same code fill for Workday, Oracle, iCIMS and
 SmartRecruiters, where Jobright's autofill is still step one. See
 [PLAN.md](PLAN.md) for the design and what is deliberately deferred.

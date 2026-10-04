@@ -318,3 +318,17 @@ def test_i_submitted_it_is_not_asked_twice():
     marked = page.split("async function markSubmitted(")[1].split("\n}")[0]
     assert "confirm(" not in marked
     assert "confirm(" in page.split("async function submitNow(")[1].split("\n}")[0]
+
+
+def test_the_put_chip_tags_the_input_and_asks_for_the_logo():
+    """The chip sets the form's own file input; the tag is what the logo
+    hangs off, written before the events so a form that re-renders on change
+    still has it on the input that was set (2026-10-04, asked for)."""
+    content = (runner.ROOT / "capture" / "content.js").read_text()
+    put = content.split("function putFile(")[1].split("\nfunction ")[0]
+    assert 'setAttribute("data-autopilot-ref"' in put
+    assert put.index("data-autopilot-ref") < put.index('new Event("change"')
+    chip = content.split('for (const button of row.querySelectorAll(".chip.put"))')[1][:900]
+    assert "/mark`" in chip and "key" in chip
+    # Only after the file is actually on the slot.
+    assert "if (!result.ok) return;" in chip

@@ -901,3 +901,61 @@ def test_a_dialogs_buttons_are_never_left_disabled():
     # And a dialog opens usable whatever happened before it.
     opener = page.split("function openReject(id)")[1].split("\n}")[0]
     assert "disabled = false" in opener
+
+
+def test_a_slot_the_put_chip_filled_gets_the_logo(client, monkeypatch):
+    """The banner's "put" chip sets the form's own file input from the page -
+    the same outcome as the fill's upload, by the person's hand - and it was
+    the one path with no logo in front of it, so a form done that way looked
+    untouched (2026-10-04, asked for). The mark is placed by the same
+    `MARK_FN` the fill uses, in the tab the chip was pressed in."""
+    from browser import forms
+    from server import corrections as corrections_module
+
+    job_id, app_dir = reviewable_job()
+    store.write(app_dir, "cover_letter.pdf", b"%PDF letter")
+    monkeypatch.setattr(forms, "find_target", lambda cdp, url, target_id="": "TAB99")
+    monkeypatch.setattr(corrections_module, "cdp_url", lambda: "http://127.0.0.1:9333")
+    calls = []
+    monkeypatch.setattr(forms, "mark_put_now",
+                        lambda cdp, tab, ref, note, value: calls.append((cdp, tab, ref, note, value)) or True)
+
+    body = client.post(f"/review/{job_id}/mark",
+                       json={"url": "https://boards.example.com/apply", "key": "resume"}).json()
+    assert body["marked"] is True and body["ref"] == "put-resume"
+    cdp, tab, ref, note, value = calls[0]
+    assert (tab, ref) == ("TAB99", "put-resume")
+    assert "you put it there" in note and value.endswith(".pdf")
+
+    body = client.post(f"/review/{job_id}/mark", json={"key": "cover_letter"}).json()
+    assert body["ref"] == "put-cover-letter"
+    assert "cover" in calls[1][4].lower()
+
+
+def test_the_page_cannot_choose_the_words_or_the_file(client, monkeypatch):
+    """The ref, the note and the filename are built here. The page says only
+    which document it put and where it put it, so nothing it sends is
+    written onto the form's own page as text."""
+    from browser import forms
+    from server import corrections as corrections_module
+
+    job_id, app_dir = reviewable_job()
+    monkeypatch.setattr(forms, "find_target", lambda cdp, url, target_id="": "TAB99")
+    monkeypatch.setattr(corrections_module, "cdp_url", lambda: "http://127.0.0.1:9333")
+    monkeypatch.setattr(forms, "mark_put_now", lambda *a: True)
+    assert client.post(f"/review/{job_id}/mark", json={"key": "resume", "note": "anything"}).status_code == 200
+    assert client.post(f"/review/{job_id}/mark", json={"key": "../../etc/passwd"}).status_code == 422
+    # The letter is not in this folder, so there is nothing to vouch for.
+    assert client.post(f"/review/{job_id}/mark", json={"key": "cover_letter"}).status_code == 409
+
+
+def test_a_put_with_no_tab_open_is_refused(client, monkeypatch):
+    from browser import forms
+    from server import corrections as corrections_module
+
+    job_id, _ = reviewable_job()
+    monkeypatch.setattr(forms, "find_target", lambda cdp, url, target_id="": "")
+    monkeypatch.setattr(corrections_module, "cdp_url", lambda: "http://127.0.0.1:9333")
+    monkeypatch.setattr(forms, "mark_put_now",
+                        lambda *a: pytest.fail("marked without a tab"))
+    assert client.post(f"/review/{job_id}/mark", json={"key": "resume"}).status_code == 409

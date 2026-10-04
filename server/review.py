@@ -713,6 +713,55 @@ def files_for_the_page(job_id: str) -> dict:
     return out
 
 
+# What the page may ask to be marked. The ref is the tag the chip put on the
+# input it set, and the key says which document it was; the note and the
+# filename are built here, so nothing the page sends is written onto the
+# form's own page as text.
+PUT_REFS = {"resume": ("put-resume", "the tailored resume (you put it there)"),
+            "cover_letter": ("put-cover-letter", "the cover letter (you put it there)")}
+
+
+class Put(BaseModel):
+    url: str = ""
+    key: str = "resume"
+
+
+@router.post("/{job_id}/mark")
+def mark_put(job_id: str, put: Put) -> dict:
+    """Put the logo on a slot the page's "put" chip filled.
+
+    The chip sets the form's own file input from the page, which is the same
+    outcome as the fill's upload by the person's hand - and it was the one
+    path with no logo in front of it, so a form filled that way looked
+    untouched (2026-10-04, asked for). The mark is placed by `forms.mark_put`,
+    which evaluates the same `MARK_FN` the fill uses, in the tab the chip was
+    pressed in: one implementation, and the mark goes when the file changes
+    like any other. Nothing on the form is touched here.
+    """
+    from browser import forms
+
+    import apply as apply_script  # lazy: apply.py pulls in the browser stack
+
+    job, app_dir = _job_and_dir(job_id)
+    if put.key not in PUT_REFS:
+        raise HTTPException(422, f"unknown document {put.key!r}")
+    ref, note = PUT_REFS[put.key]
+    source, stem = (("resume.pdf", apply_script.resume_filename()) if put.key == "resume"
+                    else ("cover_letter.pdf", apply_script.cover_letter_filename()))
+    if not (app_dir / source).exists():
+        raise HTTPException(409, f"{source} is not in this job's folder")
+    # The tab the chip was pressed in, which is not always the job's own URL:
+    # a form opened by hand is exactly where "put" is wanted.
+    target_id = forms.find_target(corrections.cdp_url(), put.url or job.url) or _form_tab(job, app_dir)
+    if not target_id:
+        raise HTTPException(409, "that tab is not open any more")
+    try:
+        marked = forms.mark_put_now(corrections.cdp_url(), target_id, ref, note, f"{stem}.pdf")
+    except Exception as exc:  # noqa: BLE001 - the logo is advice, never the fill
+        raise HTTPException(502, f"could not place the logo: {exc}") from exc
+    return {"id": job_id, "marked": bool(marked), "ref": ref}
+
+
 class Confirmation(BaseModel):
     url: str = ""
     quote: str = ""
