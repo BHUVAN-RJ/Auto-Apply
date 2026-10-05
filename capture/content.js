@@ -953,7 +953,16 @@ function putFile(file, key) {
     for (const host of root.querySelectorAll("*")) if (host.shadowRoot) walk(host.shadowRoot);
   };
   walk(document);
-  if (!inputs.length) return { ok: false, note: "no file input on this page" };
+  if (!inputs.length) {
+    // Greenhouse (and Ashby) drop the input once a file is on the slot, so
+    // "no file input on this page" is usually not an empty page at all - it
+    // is a slot that is already taken, which is a different instruction to
+    // the person. The remove control is theirs to press: nothing here
+    // presses anything on a form.
+    const taken = [...document.querySelectorAll("button, a, [role=button]")]
+      .some((el) => /^\s*(remove|delete|clear)\b/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
+    return { ok: false, note: taken ? "a file is already on the slot — remove it, then put" : "no file input on this page" };
+  }
   const describe = (el) => {
     const label = el.labels && el.labels.length ? [...el.labels].map((l) => l.innerText).join(" ") : "";
     const near = el.closest("label, fieldset, section, div")?.innerText?.slice(0, 80) || "";

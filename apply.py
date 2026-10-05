@@ -150,7 +150,10 @@ def fill_one(job: Job) -> bool:
                   "the form again")
         store.set_status(app_dir, Status.AWAITING_REVIEW, detail)
         queue.update(job.id, status=Status.AWAITING_REVIEW, error=None)
-        store.write(app_dir, "needs_sign_in.txt", detail + "\n")
+        # Appended, not written: the second attempt on a job still behind
+        # the account is part of the record, and `store.write` refusing to
+        # clobber it crashed the run after the status had already been set.
+        store.write_or_append(app_dir, "needs_sign_in.txt", detail + "\n")
         print(f"  no form yet: {detail}")
         return False
 

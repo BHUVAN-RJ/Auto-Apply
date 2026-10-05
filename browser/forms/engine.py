@@ -1505,6 +1505,26 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     # Nowhere to attach a resume and almost no fields means the form is not
     # here yet, and nothing on the page is ours to touch.
     if resume is not None and resume_input is None and cover_input is None:
+        # Greenhouse drops the file input once a file is on the slot, and
+        # Jobright's autofill attaches its own resume before this runs - so a
+        # perfectly good Greenhouse application has no file input anywhere on
+        # it, read as "not a form", and went back to the person as a job
+        # behind a sign-in with its tailored resume never attached (Skild AI,
+        # 2026-10-04). An attachment that can be cleared *is* a slot: clear it
+        # and look again before concluding the form is not here. The clearing
+        # below (the one this early return stood in front of) is the same
+        # step, and the labels it presses are read and guarded first.
+        for pattern, exclude in ((RESUME_SLOT, f"{COVER_SLOT}|{PARSE_SLOT}"),
+                                 (COVER_SLOT, PARSE_SLOT)):
+            try:
+                if await engine.remove_attached(pattern, exclude):
+                    fields = await engine.wait_for_fields()
+                    resume_input, cover_input = engine.file_inputs(fields)
+            except Exception as error:  # noqa: BLE001 - then it reads as no form
+                report.errors.append(f"clearing an attached file: {error}")
+            if resume_input is not None or cover_input is not None:
+                break
+    if resume is not None and resume_input is None and cover_input is None:
         report.errors.append(NOT_A_FORM)
         if report.skipped_parse:
             # Not an empty page: a page whose only file slots parse a resume

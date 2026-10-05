@@ -415,6 +415,30 @@ def test_a_slot_already_holding_jobrights_resume_is_cleared_first(tmp_path):
     assert page.fields["6"]["value"] == "", "the resume never lands on the cover letter input"
 
 
+def test_a_greenhouse_form_whose_only_slot_is_occupied_is_still_a_form(tmp_path):
+    """Greenhouse drops the file input once a file is on the slot, and
+    Jobright's autofill attaches its own resume before this runs - so the
+    whole form has no file input on it. That read as "no application form on
+    this page", and a perfectly good Greenhouse application went back to the
+    person as a job behind a sign-in, its tailored resume never attached
+    (Skild AI, 2026-10-04). The attachment is the slot: clear it, and the
+    input comes back."""
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    page = FakePage([
+        gh_field("1", kind="text", label="First Name"),
+        gh_field("2", kind="text", label="Last Name"),
+        gh_field("3", kind="text", label="Email"),
+    ])
+    page.attached = ("Resume/CV *", "generic_jobright_resume.pdf", "5",
+                     gh_field("5", id="resume", type="file", kind="file", name="resume",
+                              label="Resume/CV *"))
+    report = run_documents(page, resume=resume)
+    assert engine.NOT_A_FORM not in report.errors
+    assert page.removed == "generic_jobright_resume.pdf"
+    assert report.resume_uploaded and page.fields["5"]["value"] == "Jane_Doe_Resume.pdf"
+
+
 def test_a_remove_button_that_reads_as_submit_is_never_pressed(tmp_path):
     resume = tmp_path / "Jane_Doe_Resume.pdf"
     resume.write_bytes(b"%PDF")

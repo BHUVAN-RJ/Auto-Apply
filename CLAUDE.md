@@ -1409,6 +1409,23 @@ invariants first.
   `APPLY_WAIT_MS` (6 s), lets it settle `APPLY_SETTLE_MS` (1.5 s), re-reads
   it and presses that. The fill's own side already waited
   (`autofill.wait_for_load` plus `WARMUP` 2 s), so nothing changed there.
+- **A Greenhouse form whose only slot is occupied is still a form**
+  (2026-10-04, found live on Skild AI `1a65`). Greenhouse drops the file
+  input once a file is on the slot, and Jobright's autofill attaches its own
+  resume before `run_documents` runs - so the whole form had no file input on
+  it, `resume_input is None and cover_input is None` returned `NOT_A_FORM`
+  before reaching the `remove_attached` step written for exactly this case,
+  and the job went back to checkpoint 1 with `needs_sign_in.txt` and "press
+  Apply and sign in" on a page that was the application, fully autofilled,
+  with nothing behind any account. The early return now clears an occupied
+  resume (then cover letter) slot and looks again; only a page with no slot
+  and nothing to clear is not a form. The banner's `put` chip said the same
+  thing from the other side ("no file input on this page") and now says "a
+  file is already on the slot - remove it, then put"; the remove control is
+  the person's to press there. And **a second `needs_sign_in.txt` crashed the
+  run**: `store.write` refuses to clobber, so a second attempt on the same
+  job raised `ArchiveError` after the status had already been set
+  (`write_or_append` now, the way `fill_notes.md` accumulates).
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
