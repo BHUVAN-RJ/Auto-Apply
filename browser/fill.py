@@ -164,6 +164,8 @@ FORM_FILLED_STEP = """1. The form in this tab has already been filled by code ({
 
 # Set to 0 to skip the code fill and use Jobright's Autofill everywhere.
 FORM_FILL_ENV = "AUTOPILOT_FORM_FILL"
+# The contact fields in code when Jobright had no autofill for the form.
+PROFILE_FALLBACK_ENV = "AUTOPILOT_PROFILE_FALLBACK"
 CORRECTIONS_ENV = "AUTOPILOT_CORRECTIONS"   # 0: the correction store is not applied
 
 # Autofill has written the wrong country before; the agent corrects to this.
@@ -590,7 +592,9 @@ async def fill_async(
     form_url = adapter.apply_url(url) if adapter else url
     if form_url != url:
         log.info("the form is on %s, not the posting page", form_url)
-    profile = forms.load() if adapter else None
+    # Loaded whatever the system: the adapter path below wants one, and so
+    # does the contact-field fallback, which is not adapter-specific.
+    profile = forms.load()
     if adapter and profile and os.environ.get(FORM_FILL_ENV, "1") != "0":
         try:
             filled = await forms.fill(cdp_url, form_url, adapter, profile, resume_pdf, cover_letter_pdf)
@@ -730,12 +734,27 @@ async def fill_async(
             # values by exact label; the store is empty when nothing was.
             # Only while the auto-learn switch on the page is on.
             corrections = _corrections_store()
+            # The contact fields, when Jobright never pressed. Its autofill
+            # is step one everywhere, and on a form it has no button for -
+            # Ashby serves its application on a page of its own, where the
+            # panel is not always there - *nothing* filled the name, email or
+            # phone: the tailored resume went on, five questions were
+            # answered, and the first four boxes of the form were empty
+            # (Deepgram `957e`, 2026-10-04). `base/form.json` has those
+            # answers already; only an empty field is written, so Jobright's
+            # values and the person's still stand, and a visa question is
+            # refused before anything as always.
+            fallback = profile if (profile and not pressed.clicked
+                                   and os.environ.get(PROFILE_FALLBACK_ENV, "1") != "0") else None
+            if fallback is not None:
+                log.info("no autofill on this form; filling the empty profile fields by code")
             try:
                 docs = await _twice(
                     "documents",
                     lambda: forms.upload_documents(cdp_url, pressed.target_id,
                                                    adapter or forms.Adapter(), resume_pdf,
-                                                   cover_letter_pdf, answerer, corrections))
+                                                   cover_letter_pdf, answerer, corrections,
+                                                   fallback))
             except Exception as error:  # noqa: BLE001 - the agent is the fallback
                 # In the report's `note`, which nothing logged, so a job that
                 # died here said only "resume NOT attached" with no errors
@@ -747,6 +766,7 @@ async def fill_async(
             filled.cover_letter_uploaded = docs.cover_letter_uploaded
             filled.answered = docs.answered
             filled.corrected = docs.corrected
+            filled.filled.extend(docs.filled)
             filled.errors.extend(docs.errors)
             log.info("documents by code: resume %s, cover letter %s, %d field(s) corrected, %d question(s) answered%s",
                      "attached" if docs.resume_uploaded else "NOT attached",

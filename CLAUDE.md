@@ -1426,6 +1426,20 @@ invariants first.
   run**: `store.write` refuses to clobber, so a second attempt on the same
   job raised `ArchiveError` after the status had already been set
   (`write_or_append` now, the way `fill_notes.md` accumulates).
+- **A form Jobright has no autofill for still gets its contact fields**
+  (2026-10-04, found live on Deepgram `957e`, Ashby). Jobright's autofill is
+  step one everywhere and the code form filler is the fallback that
+  `AUTOPILOT_FORM_FILL=0` turns off, so on an Ashby application page where
+  Jobright's panel never appeared ("no Autofill button on the page")
+  *nothing* filled the name, the email, the phone or the location: the
+  tailored resume went on, five questions were answered, and the first four
+  boxes of the form were empty. `Engine.fill_profile` (through
+  `run_documents(profile=)` and `upload_documents(profile=)`) writes those
+  from `base/form.json`, and `fill.py` passes it only when `pressed.clicked`
+  is false. Only an **empty** field is written, so Jobright's values and the
+  person's own stand; `fill_field` still refuses a visa question and writes
+  nothing the profile has no answer for; each field it sets carries the logo
+  as before. `AUTOPILOT_PROFILE_FALLBACK=0` turns it off.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

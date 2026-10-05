@@ -908,18 +908,22 @@ class Engine:
 
     # -- one field ---------------------------------------------------------
 
-    async def fill_field(self, f: Field) -> None:
+    async def fill_field(self, f: Field, profile: Optional[Profile] = None) -> None:
+        """One field from a profile - this engine's by default, another when
+        the caller has one of its own (`fill_profile`, where the engine's own
+        profile is the corrections store)."""
+        source = profile if profile is not None else self.profile
         if f.kind == "file":
             return
         if f.protected():
             if f.question and f.question not in self.report.protected:
                 self.report.protected.append(f.question)
             return
-        value = self.profile.answer(f.question) or self.profile.answer(f.label)
+        value = source.answer(f.question) or source.answer(f.label)
         key = ""
         if not value:
             key = match_key(f, self.adapter)
-            value = self.profile.get(key) if key else ""
+            value = source.get(key) if key else ""
         if not value:
             return
         if await self.set_value(f, value, OPTION_ALIASES.get(key, [])):
@@ -1259,6 +1263,27 @@ class Engine:
         await asyncio.sleep(POLL * 4)
         return True
 
+    async def fill_profile(self, fields: list[Field], profile: Profile) -> None:
+        """The contact fields, in code, on a form nothing else has filled.
+
+        Jobright's autofill is step one everywhere, and on a form it has no
+        button for ("no Autofill button on the page" - Ashby renders its own
+        application page and Jobright's panel is not always on it) nothing
+        filled the name, the email or the phone at all: the tailored resume
+        went on and the questions were answered over a form whose first four
+        boxes were empty (Deepgram, 2026-10-04). Only a field that is empty
+        is written, so whatever Jobright or the person put there stands, and
+        `fill_field` still refuses a visa question and anything the profile
+        has no answer for.
+        """
+        for f in fields:
+            if f.kind == "file" or str(f.value).strip():
+                continue
+            try:
+                await self.fill_field(f, profile)
+            except Exception as error:  # noqa: BLE001 - one field never stops the pass
+                self.report.errors.append(f"{f.question[:60]!r}: {error}")
+
     async def upload_files(self, fields: list[Field]) -> None:
         resume_input, cover_input = self.file_inputs(fields)
         report = self.report
@@ -1474,7 +1499,8 @@ NOT_A_FORM = ("no application form on this page: press Apply and sign in, "
 
 async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
                         resume: Optional[Path] = None, cover_letter: Optional[Path] = None,
-                        answerer=None, corrections: Optional[Profile] = None) -> Report:
+                        answerer=None, corrections: Optional[Profile] = None,
+                        profile: Optional[Profile] = None) -> Report:
     """The files, the corrections and the open questions, on a form
     something else has filled: the tailored resume over whatever Jobright
     attached, the cover letter where there is a slot for one, every field
@@ -1565,6 +1591,10 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     await engine.upload_files(fields)
     # The uploads may have re-rendered the form; read it again.
     fields = await engine.scan() or fields
+    # The contact fields, when the caller says nothing else filled them.
+    if profile is not None and profile:
+        await engine.fill_profile(fields, profile)
+        fields = await engine.scan() or fields
     if corrections is not None and corrections.corrections:
         await engine.apply_corrections(fields)
         fields = await engine.scan() or fields
@@ -1599,9 +1629,11 @@ def mark_put_now(cdp_url: str, target_id: str, ref: str, note: str, value: str) 
 
 async def upload_documents(cdp_url: str, target_id: str, adapter: Adapter,
                            resume: Optional[Path] = None, cover_letter: Optional[Path] = None,
-                           answerer=None, corrections: Optional[Profile] = None) -> Report:
+                           answerer=None, corrections: Optional[Profile] = None,
+                           profile: Optional[Profile] = None) -> Report:
     """`run_documents` in the tab `target_id`, attached over CDP. The tab
     stays open; the agent takes over in it afterwards."""
     async with attached(cdp_url, target_id=target_id) as (page, _):
         await page.send("DOM.enable")
-        return await run_documents(page, adapter, target_id, resume, cover_letter, answerer, corrections)
+        return await run_documents(page, adapter, target_id, resume, cover_letter, answerer,
+                                   corrections, profile)

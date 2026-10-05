@@ -285,10 +285,44 @@ def test_the_engine_never_clicks_a_submit_control():
     assert "kill" not in source and "Target.closeTarget" not in source and "Page.close" not in source
 
 
-def run_documents(page, resume=None, cover=None, adapter=None, answerer=None, corrections=None):
+def run_documents(page, resume=None, cover=None, adapter=None, answerer=None, corrections=None,
+                  profile=None):
     return asyncio.run(engine.run_documents(page, adapter or forms.Greenhouse(), "TARGET1234",
                                             resume=resume, cover_letter=cover, answerer=answerer,
-                                            corrections=corrections))
+                                            corrections=corrections, profile=profile))
+
+
+def test_the_contact_fields_are_filled_when_nothing_else_filled_them():
+    """Jobright's autofill is step one everywhere, and on a form it has no
+    button for - Ashby serves its application on a page of its own - nothing
+    filled the name, the email or the phone: the tailored resume went on,
+    five questions were answered, and the first four boxes were empty
+    (Deepgram, 2026-10-04). Only an empty field is written, so Jobright's
+    values and the person's own stand, and a visa question is still refused."""
+    page = FakePage([
+        gh_field("1", id="_systemfield_name", name="_systemfield_name", label="Full Name *"),
+        gh_field("2", id="_systemfield_email", name="_systemfield_email", label="Email *"),
+        gh_field("3", id="_systemfield_phone", name="_systemfield_phone", label="Phone",
+                 value="+1 555 999 8888"),
+        gh_field("4", id="_systemfield_visa", name="visa",
+                 label="Will you now or in the future require sponsorship? *"),
+        gh_field("5", tag="textarea", kind="textarea", label="What excites you about us?",
+                 value="already answered"),
+    ])
+    report = run_documents(page, adapter=forms.Ashby(), profile=PROFILE)
+    assert page.fields["1"]["value"] == "Jane Doe"
+    assert page.fields["2"]["value"] == "jane@example.com"
+    assert page.fields["3"]["value"] == "+1 555 999 8888", "what was already there stands"
+    assert page.fields["4"]["value"] == "", "a visa question is never answered"
+    assert page.fields["5"]["value"] == "already answered"
+    assert any(ref == "1" for ref, _ in page.marked), "a field we set carries the logo"
+
+
+def test_the_contact_fallback_is_off_unless_the_caller_asks():
+    page = FakePage([gh_field("1", id="_systemfield_name", name="_systemfield_name",
+                              label="Full Name *")])
+    assert run_documents(page, adapter=forms.Ashby()).filled == []
+    assert page.fields["1"]["value"] == ""
 
 
 def test_corrected_fields_go_over_what_autofill_left_by_label_only():
