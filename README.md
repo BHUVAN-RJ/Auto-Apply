@@ -384,7 +384,13 @@ pipeline: the injector makes it the moment the employer's tab has loaded,
 before the job is even queued, and the fill later works in that same tab.
 Once Jobright is done, the documents go on in code: Jobright's resume is
 removed from its slot, the tailored one set, the cover letter where there
-is a slot (`AUTOPILOT_DOCS_BY_CODE=0` leaves that to the agent). From Add
+is a slot (`AUTOPILOT_DOCS_BY_CODE=0` leaves that to the agent). When
+Jobright had no Autofill button for the form at all — Ashby serves its
+application on a page of its own, where Jobright's panel is not always
+there — the contact fields are written from `base/form.json` in the same
+pass, but only the ones that are **empty**, so whatever Jobright or you
+put there stands (`AUTOPILOT_PROFILE_FALLBACK=0` turns it off). A visa
+question is never answered, by either path. From Add
 until the fill ends, the corner badge's core stays purple and pulses,
 with a line in the bar saying what is happening; green when the documents
 are on, red when the resume did not attach. With `AUTOPILOT_AGENT=1` the

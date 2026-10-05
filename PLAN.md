@@ -2178,3 +2178,64 @@ Next, agreed and not built:
 
 - The same status column on the repo's archive page.
 - A thread on a tracker row, so a job can be discussed before it is added.
+
+## Phase 27 — three steps that each looked like "it is broken" (2026-10-04)
+
+Built. All three were found on live pages, none of them by a test, and each
+one read from the outside as the whole pipeline failing on that employer.
+
+**Jobright's Apply is pressed like a person, once the page is ready.** The
+banner's countdown pressed the first element in document order whose text
+began with "apply" — hidden, disabled and zero-sized controls included, and a
+collapsed filter panel's "Apply filters" begins with it too — and then called
+`el.click()`, which React ignores on a primary control while `openJob()`
+returned true regardless, so the bar said "Opened, waiting for the job
+page…" over a press that never landed. It also pressed the instant the
+countdown ended, before Jobright's extension had mounted its own panel over
+the posting; a press into that gap is the other half of the stray blank tabs
+that `autofill.WARMUP` addressed from the fill's side. The label must now
+match the whole label of a visible, enabled control, `NOT_APPLY` disqualifies
+a filter, a save, a sign-in and anything that reads as *finishing* an
+application, the press is real pointer and mouse events at the control's
+centre (the way `browser/open_apply.py` and the submit presser do it), and
+the control is waited for and allowed to settle first.
+
+**An occupied resume slot is a slot, not a missing form.** Greenhouse drops
+the file input once a file is on the slot, and Jobright's autofill attaches
+its own resume before the documents step runs — so a Greenhouse application
+has no file input anywhere on it. `run_documents` read that as "no
+application form on this page" and returned *before* reaching the clearing
+step written for exactly this case, so a fully autofilled form sitting in a
+tab, behind no account at all, went back to checkpoint 1 telling the person
+to press Apply and sign in, with the tailored resume never attached (Skild
+AI, `1a65`). An attachment that can be cleared is a slot: it is cleared and
+the fields are read again, and only a page with no slot and nothing to clear
+is not a form. The banner's `put` chip said the same thing from the page's
+side ("no file input on this page") and now names the real reason, leaving
+the remove control to the person. A second attempt on such a job also crashed
+writing `needs_sign_in.txt` a second time, which archive files refuse by
+design; that one appends now, the way `fill_notes.md` does.
+
+**A form Jobright has no autofill for still gets its contact fields.**
+Jobright's autofill is step one on every form and the code form filler is the
+fallback `AUTOPILOT_FORM_FILL=0` switches off, so on an Ashby application
+page where Jobright's panel never appeared ("no Autofill button on the page")
+*nothing* filled the name, the email, the phone or the location: the tailored
+resume went on, five questions were answered, and the first four boxes of the
+form were empty (Deepgram, `957e`). `Engine.fill_profile` writes those from
+`base/form.json`, and the fill passes the profile only when Jobright did not
+press. Only an **empty** field is written, so Jobright's values and the
+person's own stand; a visa question is refused as always; each field set
+carries the logo. `AUTOPILOT_PROFILE_FALLBACK=0` turns it off.
+
+What the three have in common is worth saying once: each was a *second* step
+assuming the first had happened — a press assuming the panel had mounted, a
+file input assuming nothing had been attached, a documents pass assuming
+somebody had filled the form. The fix in each case is to read the page again
+rather than to trust the sequence.
+
+Next, agreed and not built:
+
+- The same contact-field fallback when Jobright pressed but left fields
+  empty: it reports them (`Jobright left empty: …`) and nothing acts on it.
+- A line on the review page saying which of the two filled each field.
