@@ -725,7 +725,7 @@ function render(result, { pending = false } = {}) {
     let result = null;
     if (onJobright) {
       label("Opening job page…");
-      if (openJob()) {
+      if (await openJob()) {
         label("Opened, waiting for the job page…");
         queuedId = await waitQueued();
         label(queuedId ? "Added" : "Job page did not add it");
@@ -1081,11 +1081,84 @@ function post(path, body) {
 // Presses Jobright's own Apply button. That is a user-level click on the
 // posting page, the same as the person pressing it: it opens the employer's
 // page and nothing more. Nothing here ever presses anything on a form.
-function openJob() {
-  const button = [...document.querySelectorAll("button, a")]
-    .find((el) => /^\s*apply\b/i.test(el.innerText || ""));
+//
+// Three things the old one-liner got wrong, each of which looked like
+// "clicking Apply is broken":
+//
+// - It took the first element in document order whose text began with
+//   "apply", including one that is hidden, disabled, zero-sized or off in a
+//   collapsed filter panel ("Apply filters" starts with "apply" too), so the
+//   press went somewhere nothing happens. The label now has to read as the
+//   whole label of a visible, enabled control, and `NOT_APPLY` disqualifies a
+//   filter, a save, a sign-in and anything that reads as *finishing* an
+//   application.
+// - `el.click()` is ignored by React on a primary control. The press is real
+//   pointer and mouse events at the control's centre, the same way
+//   `browser/open_apply.py` and the submit presser do it.
+// - It pressed the moment the countdown ended. Jobright renders the posting
+//   and then its own extension mounts the Apply panel over it, so the button
+//   either was not there yet or was replaced right after the press - and a
+//   press into a half-mounted panel is where the stray blank tabs came from.
+//   `openJob` now waits for the control and settles before pressing.
+const APPLY_LABEL = /^\s*(apply|apply now|apply online|apply externally|apply on company site|apply for this job|apply to this job|easy apply|start (your )?application)\s*[.>\u00bb\u2192]*\s*$/i;
+// Never these, whatever else the label says: a filter, a saved search, a
+// sign-in, or anything that reads as sending an application rather than
+// starting one.
+const NOT_APPLY = /filter|search|sort|reset|clear|save|later|sign ?in|log ?in|submit|send|finish|withdraw|cancel|another job|other job/i;
+// How long to wait for the Apply control to mount, and how long to let the
+// page settle once it has, before pressing it.
+const APPLY_WAIT_MS = 6000;
+const APPLY_POLL_MS = 250;
+const APPLY_SETTLE_MS = 1500;
+
+function applyControl() {
+  const controls = document.querySelectorAll(
+    'button, a, input[type=button], input[type=submit], [role=button]');
+  for (const el of controls) {
+    const label = (el.innerText || el.getAttribute("aria-label") || el.value || "").trim();
+    if (!APPLY_LABEL.test(label) || NOT_APPLY.test(label)) continue;
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) continue;
+    const style = getComputedStyle(el);
+    if (style.visibility === "hidden" || style.display === "none" || style.pointerEvents === "none") continue;
+    return el;
+  }
+  return null;
+}
+
+// A real press, because a scripted `click()` on a React primary control
+// does nothing at all and reports success.
+function pressControl(el) {
+  el.scrollIntoView({ block: "center", behavior: "instant" });
+  const rect = el.getBoundingClientRect();
+  const at = {
+    bubbles: true, cancelable: true, composed: true, view: window,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+    button: 0, buttons: 1,
+  };
+  el.dispatchEvent(new PointerEvent("pointerdown", at));
+  el.dispatchEvent(new MouseEvent("mousedown", at));
+  el.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));
+  el.dispatchEvent(new MouseEvent("mouseup", { ...at, buttons: 0 }));
+  el.dispatchEvent(new MouseEvent("click", { ...at, buttons: 0 }));
+}
+
+async function openJob() {
+  const until = performance.now() + APPLY_WAIT_MS;
+  let button = applyControl();
+  while (!button && performance.now() < until) {
+    await new Promise((r) => setTimeout(r, APPLY_POLL_MS));
+    button = applyControl();
+  }
   if (!button) return false;
-  button.click();
+  // Jobright's extension mounts its own panel over the posting; pressing
+  // into that while it is still arriving is how a blank tab opens.
+  await new Promise((r) => setTimeout(r, APPLY_SETTLE_MS));
+  button = applyControl() || button;
+  if (!document.contains(button)) return false;
+  pressControl(button);
   return true;
 }
 

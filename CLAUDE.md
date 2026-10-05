@@ -1391,6 +1391,24 @@ invariants first.
   live: mark lands on the slot, title reads "Filled by Autopilot: the
   tailored resume (you put it there)", and swapping the file afterwards
   takes it off.
+- **Jobright's Apply is pressed properly, and only once the page is ready**
+  (2026-10-04). The countdown's press was `[...querySelectorAll("button, a")]
+  .find(text starts with "apply")` plus `el.click()`, which fails three ways:
+  it takes the first match in document order, hidden, disabled or zero-sized
+  included ("Apply filters" starts with "apply" too); React ignores a
+  scripted `click()` on a primary control, and the function returned true
+  anyway, so the banner said "Opened, waiting for the job page…" over
+  nothing; and it pressed the instant the countdown ended, before Jobright's
+  own extension had mounted its panel over the posting - a press into that
+  gap is the other half of the stray blank tabs (`autofill.WARMUP` was the
+  first). `APPLY_LABEL` must match the whole label of a visible, enabled
+  control and `NOT_APPLY` disqualifies a filter, a save, a sign-in and
+  anything that reads as finishing an application; the press is real pointer
+  and mouse events at the control's centre, the way `browser/open_apply.py`
+  and the submit presser do it; and `openJob` polls for the control for
+  `APPLY_WAIT_MS` (6 s), lets it settle `APPLY_SETTLE_MS` (1.5 s), re-reads
+  it and presses that. The fill's own side already waited
+  (`autofill.wait_for_load` plus `WARMUP` 2 s), so nothing changed there.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

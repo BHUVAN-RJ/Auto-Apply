@@ -332,3 +332,29 @@ def test_the_put_chip_tags_the_input_and_asks_for_the_logo():
     assert "/mark`" in chip and "key" in chip
     # Only after the file is actually on the slot.
     assert "if (!result.ok) return;" in chip
+
+
+def test_the_jobright_apply_press_waits_and_is_a_real_press():
+    """Clicking Jobright's Apply was broken three ways: the first element in
+    document order whose text began with "apply" (a hidden control, or
+    "Apply filters"), a scripted `el.click()` React ignores on a primary
+    control, and a press made the instant the countdown ended, before
+    Jobright's own panel had mounted - which is where the stray blank tabs
+    came from."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    # The label is the whole label of a visible, enabled control.
+    assert "const APPLY_LABEL = /^" in script
+    assert "const NOT_APPLY = /filter|" in script
+    assert "if (!APPLY_LABEL.test(label) || NOT_APPLY.test(label)) continue;" in script
+    assert 'if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;' in script
+    assert "if (rect.width < 2 || rect.height < 2) continue;" in script
+    # A real press, not el.click().
+    assert 'el.dispatchEvent(new PointerEvent("pointerdown", at));' in script
+    assert 'el.dispatchEvent(new MouseEvent("click", { ...at, buttons: 0 }));' in script
+    assert "button.click();" not in script
+    # Waited for, then settled, then pressed.
+    assert "const APPLY_WAIT_MS = 6000;" in script
+    assert "const APPLY_SETTLE_MS = 1500;" in script
+    assert "while (!button && performance.now() < until) {" in script
+    assert "await new Promise((r) => setTimeout(r, APPLY_SETTLE_MS));" in script
+    assert "if (await openJob()) {" in script
