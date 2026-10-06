@@ -334,6 +334,21 @@ def test_the_put_chip_tags_the_input_and_asks_for_the_logo():
     assert "if (!result.ok) return;" in chip
 
 
+def test_the_put_chip_never_puts_the_resume_in_the_autofill_slot():
+    """Ashby, Workday and Lever all offer "upload a resume and we will fill
+    the form in for you". On Ashby that input is the *first* file input on
+    the page and the sentence beside it says "resume" twice, so the chip's
+    own describe-and-match picked it every time (2026-10-06, asked for).
+    `guard.describes_parse_slot` is the same question on the Python side."""
+    content = (runner.ROOT / "capture" / "content.js").read_text()
+    put = content.split("function putFile(")[1].split("\nfunction ")[0]
+    assert "parse" in put and "auto" in put
+    # The filter runs before anything is chosen, and a page with nothing but
+    # a parse slot says so rather than using it.
+    assert put.index("filter((d) => !parse.test(d.text))") < put.index("let target =")
+    assert "not the resume slot" in put
+
+
 def test_the_jobright_apply_press_waits_and_is_a_real_press():
     """Clicking Jobright's Apply was broken three ways: the first element in
     document order whose text began with "apply" (a hidden control, or

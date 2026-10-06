@@ -1466,6 +1466,47 @@ invariants first.
   form. Over the corpus it flags 14 of 293 folders and nothing else: the
   four form-only captures, and the Eightfold pages (Microsoft 49,425 words,
   Autodesk 11,402) that dump their theme JSON into the page as text.
+- **Four things wrong on the form, found by reading the live pages**
+  (2026-10-06, asked for). (1) **Ashby's autofill slot was taking the
+  resume.** Read off the live Deepgram form: the "Autofill from resume"
+  input has **no id, no name and no aria-label**, and the label walk reaches
+  past it to the next field's - it scans as `label: ''`, so
+  `guard.describes_parse_slot`, which reads identifiers, saw nothing to
+  refuse. The real `_systemfield_resume` wins on name while it is there, so
+  the damage is on the *second* pass: once a file is on the real slot Ashby
+  drops its input, the parse slot is the only file input left, and
+  `file_inputs`' one-input fallback handed it the resume. `Field.context` -
+  the words round a file input, from the scan - is what the page actually
+  says ("Autofill from resume - upload your resume here to autofill key
+  application fields"), and the parse check now reads it. The **put chip had
+  the same bug from the other side** (`putFile` in `content.js`): its
+  `describe` includes the surrounding text, so "resume" twice in that
+  sentence made the parse slot the best match, first in document order, every
+  time. It filters parse slots out before choosing and says so when there is
+  nothing else. (2) **The old resume was never removed on Workday.**
+  `FIND_REMOVE_FN` climbed from the Delete button looking for the slot's
+  heading and `break`ed the moment an ancestor contained an
+  `input[type=file]` - which on Workday is the first step, because Workday
+  keeps the input beside the attachment. The 2026-09-30 "delete first, then
+  upload" change was failing on the one system it was written for. It climbs
+  properly now and stops only where a second attachment begins, so a resume's
+  Delete can never borrow the cover letter's heading. (3) **The review page
+  carried no logo.** Every Workday page replaces the last, so by the review
+  the input, the block `MARK_UPLOAD_FN` tagged and the ref the mark was
+  placed against are all gone - and the review is exactly where "is this my
+  tailored resume?" gets asked. `engine.mark_named_file` tags whatever is
+  showing the filename and runs the same `MARK_FN`; the walk calls it on the
+  review page for each document. (4) **Jobright's autofill was pressed into a
+  half-drawn page.** A Workday step is not a navigation - `readyState` never
+  leaves "complete" - and `advance` returned the *first* look whose shape
+  differed, which is the page before its fields exist: three runs on disk say
+  "pressed by code, 0 - 13 fields" on pages two, three and four, and an
+  autofill pressed with no job matched is the "Autofill for Another Job"
+  control, which opens a tab. `workday.settled` waits for the shape to hold
+  still `STABLE_LOOKS` (2) looks; `advance` returns a settled page and the
+  walk settles before it reads the first one. All four verified against
+  Chrome, two on the live Ashby form and two on hand-made DOMs in the shapes
+  the real pages have.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

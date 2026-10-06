@@ -731,3 +731,65 @@ def test_the_mark_goes_when_the_value_does_and_stays_when_it_cannot_be_read():
     assert "if (!stillOurs(entry)) { drop(entry); continue; }" in js
     # A file is matched by name, wherever the name shows.
     assert 'if (entry.kind === "file") return now.indexOf(entry.value) >= 0;' in js
+
+
+# -- the system's own "upload a resume and we'll fill the form in" ---------
+
+def _file_field(**kw):
+    base = dict(ref="1", kind="file", label="", group="", id="", name="",
+                autocomplete="", placeholder="", context="")
+    base.update(kw)
+    return engine.Field(**base)
+
+
+def test_a_parse_slot_known_only_by_the_words_round_it_is_skipped():
+    """Ashby's "Autofill from resume" input has no id, no name and no label:
+    the label walk reaches past it to the next field's ("Full Name"), so a
+    check that reads identifiers saw nothing at all. Read off the live form
+    2026-10-06."""
+    parse = _file_field(ref="1", context="Autofill from resume Upload your resume here to "
+                                         "autofill key application fields. Upload file")
+    real = _file_field(ref="5", id="_systemfield_resume", label="Resume")
+    page = FakePage([])
+    eng = engine.Engine(page, engine.Adapter(), engine.Profile({}))
+    resume, cover = eng.file_inputs([parse, real])
+    assert resume is real and cover is None
+    assert eng.report.skipped_parse and "Autofill from resume" in eng.report.skipped_parse[0]
+
+
+def test_the_only_file_input_left_is_not_given_the_resume_when_it_parses():
+    """The second pass is where this bit: a file is on the real slot, Ashby
+    has dropped its input, and the parse slot is the only one left - so the
+    one-input fallback handed it the tailored resume."""
+    parse = _file_field(ref="1", context="Autofill from resume Upload your resume here to "
+                                         "autofill key application fields.")
+    page = FakePage([])
+    eng = engine.Engine(page, engine.Adapter(), engine.Profile({}))
+    resume, cover = eng.file_inputs([parse])
+    assert resume is None and cover is None
+
+
+def test_the_only_file_input_left_is_still_the_resume_when_it_is_a_slot():
+    plain = _file_field(ref="1", context="Resume Upload File or drag and drop here")
+    page = FakePage([])
+    eng = engine.Engine(page, engine.Adapter(), engine.Profile({}))
+    resume, _ = eng.file_inputs([plain])
+    assert resume is plain
+
+
+def test_the_remove_walk_does_not_give_up_on_seeing_the_input():
+    """Workday keeps the file input beside the attachment it already holds,
+    so the old walk - which abandoned the search at the first ancestor
+    containing an `input[type=file]`, and gave up after the first ancestor
+    with any heading - never found the Delete button, and the old resume
+    stayed on the form beside ours. Verified against Chrome on a
+    Workday-shaped page; this guards the shape of the script."""
+    body = engine.FIND_REMOVE_FN
+    assert 'if (block.querySelector("input[type=file]")) break;' not in body
+    # It climbs, and it stops only where a second attachment begins.
+    assert "others.length) break" in body
+
+
+def test_a_named_file_can_carry_the_logo_with_no_input_left():
+    assert "TAG_NAMED_FILE_FN" in dir(engine)
+    assert "data-autopilot-ref" in engine.TAG_NAMED_FILE_FN

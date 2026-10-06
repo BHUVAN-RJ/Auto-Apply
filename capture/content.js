@@ -970,7 +970,17 @@ function putFile(file, key) {
   };
   const want = key === "resume" ? /resume|\bcv\b|curriculum/i : /cover\s*letter/i;
   const other = key === "resume" ? /cover\s*letter/i : /resume|\bcv\b|curriculum/i;
-  const described = inputs.map((el) => ({ el, text: describe(el) }));
+  // Ashby, Workday and Lever all offer "upload a resume and we will fill the
+  // form in for you". That input is not a slot: what it does is parse the
+  // file over the fields rather than attach it, and it is the *first* file
+  // input on an Ashby form with "resume" twice in the sentence beside it, so
+  // it won every time (2026-10-06). `guard.describes_parse_slot` is the same
+  // question asked on the Python side; this is the same answer in the page.
+  const parse = /auto\s*-?\s*fill|\bparse\b|\bprefill\b|\bquick\s*apply\b|apply\s+with\s+(your\s+)?(resume|cv)/i;
+  const described = inputs.map((el) => ({ el, text: describe(el) })).filter((d) => !parse.test(d.text));
+  if (!described.length) {
+    return { ok: false, note: "the only upload here fills the form in for you — not the resume slot" };
+  }
   let target = described.find((d) => want.test(d.text) && !other.test(d.text))
     || (described.length === 1 && !other.test(described[0].text) ? described[0] : null);
   if (!target) {

@@ -62,6 +62,17 @@ MAX_PAGES = 10          # a Workday application is five or six; ten is a loop
 SETTLE = 1.0
 ADVANCE_TIMEOUT = 25.0  # how long a "Save and Continue" gets to change the page
 STAGE_TIMEOUT = 40.0    # how long a page gets to render after a navigation
+# A Workday step is not a navigation: `document.readyState` never leaves
+# "complete", so nothing the loader waits on fires, and `advance` used to
+# return the *first* look whose shape differed - which is the half-drawn
+# page, before its fields exist. Three runs on disk show what that cost:
+# "pressed by code, 0 - 13 fields" on pages two, three and four, meaning
+# Jobright's autofill was pressed against a page with no fields on it, and
+# with no job matched it offers "Autofill for Another Job", which opens a
+# tab of its own. The page is settled when its shape has held still this
+# many consecutive looks.
+STABLE_LOOKS = 2
+SETTLE_TIMEOUT = 15.0   # how long to wait for a page to stop changing
 
 
 def is_workday(url: str) -> bool:
@@ -230,6 +241,8 @@ class WorkdayResult:
     resume_uploaded: bool = False
     cover_letter_uploaded: bool = False
     answered: list = field(default_factory=list)
+    # The documents the review page was able to vouch for by name.
+    marked: list = field(default_factory=list)
     errors: list = field(default_factory=list)
 
     @property
@@ -382,9 +395,42 @@ async def click(page: Session, button: dict) -> None:
         })
 
 
+async def settled(page: Session, timeout: Optional[float] = None) -> dict:
+    """Look until the page stops changing, then return that look.
+
+    Nothing is pressed on a page that is still drawing itself. A Workday
+    step replaces the page's contents without a navigation, so there is no
+    load event to wait on and the first look after a step is of a page with
+    no fields yet; pressing Jobright's autofill into that gap is what the
+    stray blank tabs were (it has no job matched, offers "Autofill for
+    Another Job", and that control opens a tab).
+
+    The timeout is read here rather than frozen into the signature, which is
+    the trap this file has been bitten by before.
+    """
+    deadline = time.monotonic() + (SETTLE_TIMEOUT if timeout is None else timeout)
+    look: dict = {}
+    shape: Optional[tuple] = None
+    same = 0
+    while time.monotonic() < deadline:
+        await asyncio.sleep(SETTLE)
+        try:
+            look = await look_at(page)
+        except Exception:  # noqa: BLE001 - mid-render, look again
+            same = 0
+            continue
+        now = _shape(look)
+        same = same + 1 if now == shape else 0
+        shape = now
+        if same >= STABLE_LOOKS:
+            break
+    return look
+
+
 async def advance(page: Session, before: tuple, timeout: Optional[float] = None) -> dict:
-    """Wait for the page to become a different page. Returns the look it
-    settled on; the caller compares the shapes to see whether it moved.
+    """Wait for the page to become a different page, and then for it to
+    finish becoming one. Returns the look it settled on; the caller compares
+    the shapes to see whether it moved.
 
     The timeout is read here, not frozen into the signature: a module-level
     `Path`/float default is bound at import, so a test that lowers it changes
@@ -399,7 +445,9 @@ async def advance(page: Session, before: tuple, timeout: Optional[float] = None)
         except Exception:  # noqa: BLE001 - mid-navigation, look again
             continue
         if look and _shape(look) != before:
-            return look
+            # It has started changing; wait for it to stop before anybody
+            # reads it or presses anything on it.
+            return await settled(page) or look
     return look
 
 
@@ -418,12 +466,16 @@ async def walk(cdp_url: str, target_id: str, resume=None, cover_letter=None,
     """
     from . import autofill, open_apply, signin
     from .forms import Adapter
-    from .forms.engine import run_documents
+    from .forms.engine import mark_named_file, run_documents
 
     result = WorkdayResult(target_id=target_id)
     applies = 0
     async with autofill.attached(cdp_url, target_id=target_id) as (page, _):
         await page.send("DOM.enable")
+        # Nothing is read or pressed until the first page has stopped
+        # drawing itself; the tab has just been opened or has just come back
+        # from Apply, and a Workday page arrives in pieces.
+        await settled(page)
         for number in range(1, max_pages + 1):
             try:
                 look = await look_at(page)
@@ -465,6 +517,23 @@ async def walk(cdp_url: str, target_id: str, resume=None, cover_letter=None,
                 # The end of the line. Submit is the person's, from the page
                 # or from the review page's own button.
                 result.reached_review = True
+                # The documents went on three pages ago, and every page of a
+                # Workday application replaces the last - so the logo, the
+                # upload block it hung off and the ref it was placed against
+                # are all gone by here, and the review shows a filename with
+                # nothing to say whose it is. "I cannot tell if the resume
+                # has been changed" is the whole point of the mark, and the
+                # review is the page where it is asked. Named files only:
+                # nothing else on the page is touched.
+                for path, note in ((resume, "the tailored resume"),
+                                   (cover_letter, "the cover letter")):
+                    if path is None:
+                        continue
+                    try:
+                        if await mark_named_file(page, Path(path).name, note):
+                            result.marked.append(Path(path).name)
+                    except Exception as error:  # noqa: BLE001 - the logo is advice
+                        result.errors.append(f"marking {Path(path).name}: {error}")
                 break
             if stage != "form":
                 result.paused, result.detail = "stuck", PAUSES["stuck"]

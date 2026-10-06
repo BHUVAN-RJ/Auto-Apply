@@ -210,6 +210,18 @@ SCAN_JS = r"""
         ? [...el.options].slice(0, 400).map((o) => ({ value: o.value, text: text(o) }))
         : [];
       const [label, labelEl] = toggle ? [text(el), null] : labelOf(root, el);
+      // What is written round a file input, which is sometimes the only
+      // thing that says what it is for: Ashby's "Autofill from resume"
+      // input has no id, no name and no label of its own, and the label
+      // walk above reaches past it to the next field's ("Full Name").
+      const contextOf = (node) => {
+        let p = node.parentElement, out = "";
+        for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
+          out = text(p);
+          if (out.length > 20) break;
+        }
+        return out.slice(0, 200);
+      };
       const [group, groupEl] = kind === "radio" || kind === "checkbox" ? groupOf(el) : ["", null];
       const checked = toggle ? el.getAttribute("aria-pressed") === "true"
         : el.checked || el.getAttribute("aria-checked") === "true";
@@ -234,6 +246,7 @@ SCAN_JS = r"""
              : String(el.value || chosen() || ""),
         options,
         accept: el.getAttribute("accept") || "",
+        context: type === "file" ? contextOf(el) : "",
       });
     }
     for (const host of root.querySelectorAll("*")) if (host.shadowRoot) walk(host.shadowRoot);
@@ -453,6 +466,10 @@ MARK_FN = r"""
     if (!el && !block) return null;
     let host = null;
     if (!el || el.type === "file") host = block && (block.querySelector("label, legend, [class*='label' i]") || block);
+    // A mark placed on something that is not a control at all: the row on
+    // Workday's review page that shows the filename, where there is no
+    // input left to hang it off and the file is the only thing on screen.
+    if (!host && el && !("value" in el)) host = el;
     if (!host && el && el.labels && el.labels.length) host = el.labels[0];
     if (!host && el && el.getAttribute("aria-labelledby")) host = document.getElementById(el.getAttribute("aria-labelledby").split(/\s+/)[0]);
     if (!host && el) host = el.closest("label");
@@ -524,6 +541,29 @@ MARK_FN = r"""
 })
 """.replace("FINDFN", FIND_FN.strip())
 
+# Tag whatever is showing `name` on this page, so a mark can be hung off it.
+# Workday's application is several pages and its last one is a review: the
+# upload input, the block `MARK_UPLOAD_FN` tagged and the ref the mark was
+# placed against all belong to a page that has been replaced by then, so the
+# resume arrives at the review with no logo on it and no way for a reader to
+# tell whose file it is (2026-10-06, asked for). What the review page does
+# show is the filename, which is ours and nobody else's. The smallest
+# element holding it is the anchor.
+TAG_NAMED_FILE_FN = r"""
+(function (name, ref) {
+  if (!name) return false;
+  let best = null;
+  for (const el of document.querySelectorAll("div, span, a, p, li, td, label, h3, h4")) {
+    const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 200 || text.indexOf(name) < 0) continue;
+    if (best === null || text.length < best.length) { best = { el: el, length: text.length }; }
+  }
+  if (!best) return false;
+  best.el.setAttribute("data-autopilot-ref", ref);
+  return true;
+})
+"""
+
 # After: the name the input holds, else the name shown in its block.
 FILE_NAME_FN = r"""
 (function (ref, name) {
@@ -540,6 +580,16 @@ FILE_NAME_FN = r"""
 # whose label matches `pattern` (a regex source) and does not read as
 # `exclude`, and returns its remove button's label without clicking; the
 # click is `CLICK_REMOVE_FN`, after the guard has read the label.
+#
+# The ancestor walk used to stop on two things, and both were wrong on the
+# system this function matters most on (2026-10-06). It abandoned the search
+# the moment an ancestor contained an `input[type=file]` - which is Workday,
+# where the input stays on the page beside the attachment it already holds,
+# so the walk gave up on its first step and the old resume was never
+# removed; and it gave up after the first ancestor that had any heading at
+# all, so a heading that did not match ended the search instead of
+# continuing up. It now climbs the whole way and takes the first heading
+# that matches, which is what the comment above always claimed.
 FIND_REMOVE_FN = r"""
 (function (pattern, exclude, labels) {
   const want = new RegExp(pattern, "i");
@@ -551,16 +601,20 @@ FIND_REMOVE_FN = r"""
     if (!remove.test(label) || label.length > 40) continue;
     let block = btn.parentElement;
     for (let i = 0; i < 6 && block; i++, block = block.parentElement) {
-      if (block.querySelector("input[type=file]")) break;
-      const heading = block.querySelector("label, legend, [class*='label' i], [id*='label' i]");
-      const title = heading ? text(heading) : "";
-      if (!title || title.length > 80) continue;
-      if (want.test(title) && !(skip && skip.test(title))) {
+      // Climbing past the point where a second file lives would let this
+      // button borrow the other slot's heading: a resume and a cover letter
+      // sit a few levels apart, and "Resume" would answer for both.
+      const others = [...block.querySelectorAll("button, [role=button], a")]
+        .filter((b) => b !== btn && remove.test((b.getAttribute("aria-label") || b.getAttribute("title") || text(b)).trim()));
+      if (others.length) break;
+      for (const heading of block.querySelectorAll("label, legend, [class*='label' i], [id*='label' i], h2, h3, h4")) {
+        const title = text(heading);
+        if (!title || title.length > 80) continue;
+        if (!want.test(title) || (skip && skip.test(title))) continue;
         for (const old of document.querySelectorAll("[data-autopilot-remove]")) old.removeAttribute("data-autopilot-remove");
         btn.setAttribute("data-autopilot-remove", "1");
         return { label: label, title: title, file: text(block).replace(title, "").trim().slice(0, 120) };
       }
-      break;
     }
   }
   return null;
@@ -658,6 +712,10 @@ class Field:
     tag: str = ""
     type: str = ""
     accept: str = ""
+    # The words round a file input. Not in `identifiers()`: it is a block of
+    # prose, and the matchers that read identifiers (protected, the generic
+    # labels) must not be handed one. `file_inputs` is the only reader.
+    context: str = ""
 
     @classmethod
     def from_scan(cls, raw: dict) -> "Field":
@@ -1195,16 +1253,31 @@ class Engine:
         filled rather than attach it. A form whose only file input is that
         one has nowhere for the resume to go, and saying so is the honest
         answer.
+
+        **It is recognised by the words round it, not by its name**
+        (2026-10-06, read off the live Ashby form). Ashby's parse input has
+        no id, no name and no aria-label, and the label walk reaches past it
+        to the next field's, so it scanned as `label=''` - invisible to a
+        check that reads identifiers. What is on the page is the sentence
+        beside it: "Autofill from resume - upload your resume here to
+        autofill key application fields". That is `Field.context`. Nothing
+        was going wrong while the real `_systemfield_resume` input was on
+        the page, because it wins on name; the damage is on the second pass,
+        once a file is on the real slot and Ashby has dropped its input - the
+        parse slot is then the *only* file input left, and the one-input
+        fallback below handed it the resume.
         """
         files = []
         for f in fields:
             if f.kind != "file":
                 continue
-            if guard.describes_parse_slot(*f.identifiers()):
+            if guard.describes_parse_slot(*f.identifiers(), f.context):
                 # `file_inputs` is asked more than once in a run (the slots
                 # are read again after one is cleared), so the record is a
                 # set in list's clothing.
-                what = f.question or f.label or f.name or f.id
+                # Ashby's parse input has no name of any kind; the sentence
+                # beside it is what the person would call it.
+                what = f.question or f.label or f.name or f.id or f.context[:60]
                 if what not in self.report.skipped_parse:
                     self.report.skipped_parse.append(what)
                 continue
@@ -1601,6 +1674,21 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
     if answerer is not None:
         await engine.answer_questions(fields, answerer)
     return report
+
+
+async def mark_named_file(page, name: str, note: str, ref: str = "") -> bool:
+    """Put the logo on whatever is showing the file called `name`.
+
+    For a page that holds the file without holding the input: Workday's
+    review page, where the upload happened three pages ago. The same
+    `MARK_FN` as everywhere else, so the mark reads the same, survives a
+    redraw the same way, and goes when what it vouches for goes.
+    """
+    engine = Engine(page, Adapter(), Profile({}))
+    ref = ref or f"named:{name}"
+    if not await engine.call(TAG_NAMED_FILE_FN, name, ref):
+        return False
+    return bool(await engine.call(MARK_FN, ref, note, LOGO_SVG, name))
 
 
 async def mark_put(cdp_url: str, target_id: str, ref: str, note: str, value: str) -> bool:

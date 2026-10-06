@@ -106,6 +106,7 @@ def tenant(monkeypatch):
         monkeypatch.setattr(engine_mod, "run_documents", documents or run_documents)
         monkeypatch.setattr(workday, "SETTLE", 0)
         monkeypatch.setattr(workday, "ADVANCE_TIMEOUT", 0.05)
+        monkeypatch.setattr(workday, "SETTLE_TIMEOUT", 0.05)
         return t
     return build
 
@@ -170,3 +171,66 @@ def test_an_application_that_goes_round_for_ever_stops(tenant):
     tenant([forever] * 3)
     result = walk(max_pages=3)
     assert result.paused in ("too_many_pages", "blocked", "stuck")
+
+
+# -- nothing is pressed on a page that is still drawing itself ------------
+
+def test_settled_waits_for_the_shape_to_stop_changing():
+    """A Workday step replaces the page's contents without a navigation, so
+    `document.readyState` never leaves "complete" and the first look after a
+    step is of a page with no fields on it yet."""
+    half = page(["My Experience"], editable=0, files=0)
+    whole = page(["My Experience"], editable=12, files=1)
+    t = Tenant([half, half, whole, whole, whole, whole])
+
+    async def evaluate(expression):
+        got = t.looks[min(t.at, len(t.looks) - 1)]
+        t.at += 1
+        return got
+    t.evaluate = evaluate
+    workday.SETTLE, keep = 0, workday.SETTLE
+    try:
+        look = asyncio.run(workday.settled(t, timeout=5))
+    finally:
+        workday.SETTLE = keep
+    assert int(look["editable"]) == 12
+
+
+def test_advance_hands_back_the_finished_page_not_the_first_different_one(monkeypatch):
+    before = workday._shape(page(["My Information"], editable=9))
+    half = page(["My Experience"], editable=0)
+    whole = page(["My Experience"], editable=12, files=1)
+    t = Tenant([half, whole, whole, whole])
+
+    async def evaluate(expression):
+        got = t.looks[min(t.at, len(t.looks) - 1)]
+        t.at += 1
+        return got
+    t.evaluate = evaluate
+    monkeypatch.setattr(workday, "SETTLE", 0)
+    look = asyncio.run(workday.advance(t, before, timeout=5))
+    assert int(look["editable"]) == 12
+
+
+def test_the_review_page_says_which_resume_it_is_carrying(tenant, tmp_path, monkeypatch):
+    """Every page of a Workday application replaces the last, so the logo
+    the upload put on page two is gone by the review - and the review is
+    exactly where "is this my tailored resume?" is asked."""
+    resume = tmp_path / "Bhuvan_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+    t = tenant([
+        page(["My Information"], editable=9),
+        page(["My Experience"], editable=12, files=1),
+        page(["Review"], editable=1, buttons=("Submit",)),
+    ])
+    marked = []
+
+    async def mark_named_file(page_, name, note, ref=""):
+        marked.append((name, note))
+        return True
+    import browser.forms.engine as engine_mod
+    monkeypatch.setattr(engine_mod, "mark_named_file", mark_named_file)
+    result = walk(resume=resume)
+    assert result.reached_review
+    assert marked == [("Bhuvan_Resume.pdf", "the tailored resume")]
+    assert result.marked == ["Bhuvan_Resume.pdf"]
