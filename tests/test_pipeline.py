@@ -466,3 +466,32 @@ def test_a_reviewer_instruction_tailors_a_thin_posting_anyway(monkeypatch):
 ], ids=["login", "form", "posting", "unheaded-prose"])
 def test_too_thin(text, thin):
     assert (pipeline.quality.too_thin(text) is not None) is thin
+
+
+def test_a_bare_application_form_is_not_a_posting():
+    """ASM's Greenhouse embed: 524 words of form labels, not one section
+    heading, and it was tailored against five times."""
+    form = ("Apply for this job\n* indicates a required field\n"
+            "First Name* Last Name* Email* Phone\nResume/CV*\n"
+            "AttachAttach Dropbox Enter manually\n"
+            "Accepted file types: pdf, doc, docx, txt, rtf\n"
+            "Cover Letter\nEducation School* Degree* Discipline*\n"
+            "How did you hear about this job?\n" + "Select... " * 40)
+    assert pipeline.quality.looks_like_form(form)
+    assert pipeline.quality.too_thin(form)
+
+
+def test_a_posting_that_mentions_a_resume_is_still_a_posting():
+    """The gate wants the controls *and* no heading: a description's own
+    how-to-apply line says "upload your resume" too."""
+    posting = ("About the role\n" + "We are hiring a backend engineer. " * 40 +
+               "\nRequirements\n" + "You have shipped services at scale. " * 20 +
+               "\nTo apply, upload your resume and a cover letter.\n")
+    assert pipeline.quality.looks_like_form(posting) is None
+    assert pipeline.quality.too_thin(posting) is None
+
+
+def test_a_posting_with_no_heading_this_file_knows_is_kept():
+    """netic, 423 words, no heading the regex knows, no form control."""
+    text = "We build clinical agents. " * 80
+    assert pipeline.quality.looks_like_form(text) is None

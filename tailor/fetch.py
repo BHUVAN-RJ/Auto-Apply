@@ -44,6 +44,9 @@ class Posting:
     # Which copy of the text this is: the fetched page, what the browser
     # saw, or Jobright's copy. Set by the pipeline when it picked.
     text_source: str = ""
+    # Read from the board's own API rather than scraped off a page, so no
+    # other copy of the posting competes with it (`tailor.boards`).
+    authoritative: bool = False
 
     @classmethod
     def from_markdown(cls, text: str, url: str = "", title: str = "",
@@ -151,7 +154,14 @@ def fetch(url: str) -> Posting:
     # posting, and publishes the posting itself at a guest endpoint that needs
     # no login and no key. Ask there first; anything it cannot read falls
     # through to the ordinary fetch.
-    from . import linkedin
+    from . import boards, linkedin
+
+    # Ashby, Greenhouse, Lever and Workday publish the posting themselves,
+    # and a captured URL is usually the application form rather than the
+    # description. Ask the board before reading any page.
+    found = boards.posting(url)
+    if found is not None:
+        return found
 
     if linkedin.job_id(url):
         found = linkedin.posting(url)

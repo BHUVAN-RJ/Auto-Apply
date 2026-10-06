@@ -246,6 +246,7 @@ Specifically:
 | `browser/open_apply.py` | **the only place Apply is pressed** (2026-09-30). Apply is not Submit, and the difference is checked on the page: `safe_to_press` wants no file input, no password box and fewer than `signin.FORM_FIELDS` editable fields, so there is nothing on it that could be sent; `APPLY_START` must match the control's whole label (including LinkedIn's "Easy Apply") and `NOT_APPLY` disqualifies submit / send / finish / withdraw / save / sign in. `MAX_PRESSES` 3: posting → chooser → "Apply Manually". Does not import `guard`, may not name the submit presser (invariant #6 reads it as text), one gated `Input.dispatchMouseEvent` |
 | `browser/workday.py` | **Workday, page by page** (2026-09-30). `walk`: per page, Jobright's autofill, the tailored documents on the page that has a slot, corrections, open questions, then that page's own "Save and Continue", up to `MAX_PAGES`. Ends at the review page, never Submit; `PAUSES` names whose turn it is (account, email verification, a question `blocking()` found, a page that would not move). `stage_of` reads a posting *before* a review page, because `guard.describes_submit` answers yes to "Apply". Writes `workday.json` |
 | `browser/linkedin_apply.py` | **LinkedIn Easy Apply** (2026-09-30). Nothing selected by class - LinkedIn's rotate - so the anchors are `aria-label`, visible text and the `N/M pages` the flow prints; the flow is not a `[role=dialog]`, it replaces the page. The tailored resume goes on every time (`put_resume`, slot cleared, name read back); the screening questions are the person's, so it stops at the first unanswered control and lists them; ends at the review page. `linkedin.json`. **Not yet verified live** |
+| `tailor/boards.py` | **the four boards read from their own APIs** (2026-10-06). Jobright's Apply lands on the application, not the description: 109 of the 134 Ashby / Greenhouse / Lever / Workday URLs on disk are a form URL (`/embed/job_app`, `/apply`, `/application`). `identify(url)` names the board and the job from either shape; `posting(url)` reads Greenhouse `boards-api`, Lever `api.lever.co/v0/postings` (opening + each named list + additional, in order), the Ashby job-board feed and Workday `wday/cxs`, none of which needs a login or a key. `fetch.fetch` asks here first, before LinkedIn and before any page read. What it fixes, measured: Greenhouse's embed carried the whole form round the description (Axon 3,381 words of which 1,617 are the posting) or was the form alone (ASM, Pinterest, Tenable - 0 section headings, tailored anyway); a Lever `/apply` fetch read the whole board (Palantir, 10,832 words of other people's jobs); Ashby's `/application` truncates the description on some boards (Clay, Pinecone) and appends the self-identification form on all; and Workday, which renders client-side, fell back to a JSON-LD `description` Workday has already stripped of its own markup - 6,367 characters on **one line**, every bullet run into the sentence before it, now 27. A closed job 404s and the ordinary fetch runs as before. `Posting.authoritative` marks the board's own copy and `pipeline.fetch_posting` returns it without a contest, because the browser's copy of a form is longer than the description inside it |
 | `tailor/linkedin.py` | the posting behind a LinkedIn URL, from `jobs-guest/jobs/api/jobPosting/<id>` - no login, no key. A fetch of the job page is 1778 words of LinkedIn around 194 of posting. `fetch.fetch` asks here first for `/jobs/view/<id>` or `?currentJobId=` |
 | `browser/press_submit.py` | the only place a Submit control is pressed, and the agent cannot reach it: the review page's **Submit it** button, through `POST /review/{id}/submit`. `choose` picks the control, `confirmed` decides whether the page that came back is a receipt |
 | `browser/chrome.py` | launches and reuses the Chrome that browser-use attaches to |
@@ -1440,6 +1441,31 @@ invariants first.
   person's own stand; `fill_field` still refuses a visa question and writes
   nothing the profile has no answer for; each field it sets carries the logo
   as before. `AUTOPILOT_PROFILE_FALLBACK=0` turns it off.
+- **The posting comes from the board, not from the page it was captured
+  on** (2026-10-06, asked for). Measured over the 285 application folders
+  first: `applications/` holds 134 distinct Ashby / Greenhouse / Lever /
+  Workday URLs and **109 of them are the application form**, because that is
+  where Jobright's Apply lands. The scraper read the form. `tailor/boards.py`
+  asks each board's own public endpoint instead, and `fetch.fetch` asks it
+  before anything else. Replayed against the live boards: Greenhouse sheds
+  the form it had wrapped round the description (Axon 3,381 words to 1,617,
+  C3 1,517 to 430, and the four captures that were the form *alone* now
+  carry a description at all); Lever stops reading the whole board (Palantir
+  10,832 words to 1,118, seven section headings where there were two);
+  Workday comes back with its line breaks (one line to 27, since its own
+  JSON-LD block is the description with the markup taken out); Ashby gains
+  the half of the posting its `/application` page had truncated (Clay 524 to
+  1,024 words of real description, Pinecone likewise) and loses the
+  self-identification form. A closed job 404s on all four and the ordinary
+  fetch runs exactly as before - that is the one Lever and the five Workday
+  URLs that still fall back. **And a form is recognised as a form**
+  (`quality.looks_like_form`): three distinct application controls with no
+  section heading anywhere, which `too_thin` now refuses. A form control is
+  never read as a heading, because Greenhouse's own "How did you hear about
+  this job?" matches the heading pattern exactly and was vouching for the
+  form. Over the corpus it flags 14 of 293 folders and nothing else: the
+  four form-only captures, and the Eightfold pages (Microsoft 49,425 words,
+  Autodesk 11,402) that dump their theme JSON into the page as text.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

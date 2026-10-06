@@ -50,21 +50,64 @@ GOOD_ENOUGH = 0.6
 MIN_WORDS = 150
 MIN_WORDS_UNHEADED = 300
 
+# The controls an application form is made of, which a description is not.
+# A form page clears both word counts on its own labels: ASM's Greenhouse
+# embed is 524 words of "AttachAttach", "Accepted file types" and the
+# demographic questions, and was tailored against as though it were the job.
+FORM_CONTROLS = re.compile(
+    r"indicates a required field|accepted file types|enter manually|attach resume|"
+    r"resume/cv|submit application|how did you hear about|preferred first name|"
+    r"voluntary self[- ]identification|please select|dropbox|choose file|drop files|"
+    r"are you legally authoriz|upload (your )?resume",
+    re.I,
+)
+# Below this many *distinct* controls the page is a posting that happens to
+# mention one of them. Measured over the 285 folders on disk: at three, with
+# no section heading anywhere, it catches the four form-only captures and
+# nothing else - including a real posting whose headings this file does not
+# know (netic, 423 words, no heading, no control).
+FORM_CONTROLS_MIN = 3
+
 _WORD = re.compile(r"[a-z0-9]+")
+
+
+def looks_like_form(text: str) -> str | None:
+    """Why `text` reads as an application form, or None when it does not.
+
+    A form is recognised by its controls and by what it lacks: a job
+    description has a heading somewhere saying what the job is, and a form
+    has none. Both halves are needed - a real posting repeats "upload your
+    resume" in its how-to-apply line, and a long form clears every word
+    count on its labels alone.
+    """
+    controls = set(m.group(0).lower() for m in FORM_CONTROLS.finditer(text))
+    if len(controls) < FORM_CONTROLS_MIN:
+        return None
+    # A form control is not a heading, whatever it reads like: Greenhouse's
+    # own "How did you hear about this job?" matches the heading pattern
+    # `about (the|this) (role|job|...)` exactly, and would have vouched for
+    # the form as a description.
+    prose = "\n".join(line for line in clean(text).splitlines()
+                       if not FORM_CONTROLS.search(line))
+    if SECTIONS.search(prose):
+        return None
+    return (f"the page is an application form, not a description "
+            f"({len(controls)} form fields, no posting sections)")
 
 
 def too_thin(text: str) -> str | None:
     """Why `text` is not worth tailoring against, or None when it is.
 
-    No model: cleaned words, and whether any section heading a description
-    is built from is there at all."""
+    No model: cleaned words, whether any section heading a description is
+    built from is there at all, and whether what is there is the form.
+    """
     cleaned = clean(text)
     words = len(cleaned.split())
     if words < MIN_WORDS:
         return f"only {words} words of posting text"
     if words < MIN_WORDS_UNHEADED and not SECTIONS.search(cleaned):
         return f"only {words} words and no posting sections (requirements, responsibilities, ...)"
-    return None
+    return looks_like_form(text)
 
 
 def clean(text: str) -> str:

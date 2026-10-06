@@ -108,6 +108,13 @@ def fetch_posting(job: Job) -> fetch.Posting:
         candidates.append(("employer page", fetched))
     except Exception as exc:  # noqa: BLE001 - the fallbacks decide
         error = exc
+
+    # The board's own API answered: this is the employer's copy of the
+    # employer's posting, so there is nothing to score it against. The
+    # browser's copy of a Greenhouse application form is longer than the
+    # description it carries, and would have won.
+    if fetched is not None and fetched.authoritative:
+        return fetched
     for saved in postings.fallbacks(job.id, job.url):
         name = "Jobright's copy" if seen.is_source_page(saved.url) else "the page the browser saw"
         candidates.append((name, fetch.Posting(url=job.url, text=saved.text, title=saved.title,
