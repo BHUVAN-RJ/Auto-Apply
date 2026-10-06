@@ -585,7 +585,7 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest` collects 845 tests (790 without `test_fill.py`); `tests/test_invariants.py` is the short list
+`pytest` collects 899 tests (842 without `test_fill.py`); `tests/test_invariants.py` is the short list
 every copy runs after any change (`scripts/check.sh --quick`), and
 `tests/conftest.py` points prompt edits and the Workshop store at a
 temporary folder for every test. The suite stubs the model, browser, lualatex, and
@@ -602,7 +602,23 @@ and runs the real `SCAN_JS`, `FIND_REMOVE_FN`, `TAG_NAMED_FILE_FN` and
 real forms have; `ashby_application.html` is the live Deepgram form's own
 markup, class names and all. Each of the ten was checked against the code
 as it was before the fix: six fail there. No Chromium = skip, so a machine
-that has not run the app is not stopped by them. On the current
+that has not run the app is not stopped by them - and `scripts/check.sh`
+runs them under a heading of their own and **says the skip out loud**,
+because they are the only place the resume slots, the remove step and the
+logo are checked against a page, and a silent skip there is how a green
+suite stops meaning anything.
+
+**A test that reads a script's source cannot tell a rewrite from a
+regression** (2026-10-06). Three were deleted the day after they were
+written, for exactly that: two asserted the text of `FIND_REMOVE_FN` and of
+`putFile`'s filter expression, and one asserted that a name existed in a
+module (`TAG_NAMED_FILE_FN in dir(engine)`), which a mutation audit over all
+seven fixes showed caught nothing at all. The Workday bug reintroduced as
+`const slot = 'input[type="file"]'` rather than inline **passes** the source
+check and **fails** the browser one. The source-reading tests that stay are
+the ones asserting a *rule* rather than an implementation - invariant 6 (the
+agent may not import the submit presser), `open_apply` not naming it - where
+the text is the thing being promised. On the current
 macOS / Python 3.13 environment, the full process aborts inside browser-use's
 native display detection at `test_forbidden_actions_are_absent_from_the_agent`;
 run the focused files plus `pytest --ignore=tests/test_fill.py` until that

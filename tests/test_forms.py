@@ -777,19 +777,10 @@ def test_the_only_file_input_left_is_still_the_resume_when_it_is_a_slot():
     assert resume is plain
 
 
-def test_the_remove_walk_does_not_give_up_on_seeing_the_input():
-    """Workday keeps the file input beside the attachment it already holds,
-    so the old walk - which abandoned the search at the first ancestor
-    containing an `input[type=file]`, and gave up after the first ancestor
-    with any heading - never found the Delete button, and the old resume
-    stayed on the form beside ours. Verified against Chrome on a
-    Workday-shaped page; this guards the shape of the script."""
-    body = engine.FIND_REMOVE_FN
-    assert 'if (block.querySelector("input[type=file]")) break;' not in body
-    # It climbs, and it stops only where a second attachment begins.
-    assert "others.length) break" in body
-
-
-def test_a_named_file_can_carry_the_logo_with_no_input_left():
-    assert "TAG_NAMED_FILE_FN" in dir(engine)
-    assert "data-autopilot-ref" in engine.TAG_NAMED_FILE_FN
+# `FIND_REMOVE_FN` and `TAG_NAMED_FILE_FN` are scripts that read somebody
+# else's markup, so they are tested against markup, in a browser, by
+# `tests/test_dom.py`. Two tests stood here that read their source text
+# instead; they were deleted on 2026-10-06 for being unable to tell the
+# difference between a rewrite and a regression. The same Workday bug,
+# written `const slot = 'input[type="file"]'` instead of inline, passed the
+# source check and failed the browser one.

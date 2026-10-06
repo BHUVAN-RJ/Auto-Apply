@@ -26,4 +26,18 @@ echo "== invariants"
 
 echo "== whole suite"
 # test_fill.py needs browser-use, which the app no longer installs.
-"$PY" -m pytest -q -p no:warnings --ignore=tests/test_fill.py
+# test_dom.py runs below, under a heading of its own, so its skip is seen.
+"$PY" -m pytest -q -p no:warnings --ignore=tests/test_fill.py --ignore=tests/test_dom.py || exit 1
+
+# tests/test_dom.py runs the form scripts against real markup in a real
+# browser, and skips when there is no Chromium. That skip is the only place
+# the resume slots, the remove step and the logo are checked against a page,
+# so it is said out loud rather than counted as a pass: a silent skip here
+# is how a green suite stops meaning anything.
+echo "== the browser tests"
+if "$PY" -c 'import sys; sys.path.insert(0, "."); from browser import chrome; sys.exit(0 if chrome.find_browser() else 1)'; then
+  "$PY" -m pytest -q -p no:warnings tests/test_dom.py || exit 1
+else
+  echo "SKIPPED: no Chrome. The Ashby, Workday and Greenhouse form scripts" >&2
+  echo "         were NOT checked against a page. Install Chrome and run again." >&2
+fi

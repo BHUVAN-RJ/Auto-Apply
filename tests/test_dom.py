@@ -67,7 +67,17 @@ def _open(cdp: str, name: str) -> str:
 
 
 def on_page(cdp: str, name: str, work):
-    """Run `work(engine, page)` on a tab showing `name`, then close it."""
+    """Run `work(engine, page)` on a tab showing `name`, then close it.
+
+    Once more if the CDP socket drops. `attached` opens a websocket to the
+    browser for every call and these tests make twenty of them; one in
+    twenty comes back "no close frame received or sent", which is the drop
+    `browser/fill.py` already retries a real fill through. A test that fails
+    one run in twenty teaches nobody anything, and `fill.TRANSPORT` is the
+    one definition of what a dropped connection reads like.
+    """
+    from browser.fill import TRANSPORT
+
     async def go():
         target = _open(cdp, name)
         try:
@@ -77,7 +87,13 @@ def on_page(cdp: str, name: str, work):
                 return await work(Engine(page, Adapter(), Profile({})), page)
         finally:
             chrome.close_tab(target, int(cdp.rsplit(":", 1)[1]))
-    return asyncio.run(go())
+
+    for attempt in (1, 2):
+        try:
+            return asyncio.run(go())
+        except Exception as error:  # noqa: BLE001 - re-raised unless it is the socket
+            if attempt == 2 or not TRANSPORT.search(str(error)):
+                raise
 
 
 # -- Ashby: the slot that parses a resume is not a slot --------------------
