@@ -585,12 +585,24 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest` collects 816 tests (761 without `test_fill.py`); `tests/test_invariants.py` is the short list
+`pytest` collects 845 tests (790 without `test_fill.py`); `tests/test_invariants.py` is the short list
 every copy runs after any change (`scripts/check.sh --quick`), and
 `tests/conftest.py` points prompt edits and the Workshop store at a
 temporary folder for every test. The suite stubs the model, browser, lualatex, and
 speech binaries, so **passing tests do not mean it works** — every real bug so
-far survived a green suite and appeared on the first real run. On the current
+far survived a green suite and appeared on the first real run.
+**`tests/test_dom.py` is the exception, and exists because of that
+sentence** (2026-10-06): the scripts under `browser/forms/` and `putFile` in
+`capture/content.js` are JavaScript that reads somebody else's markup, and
+the only honest test of that is to run it against the markup. It launches a
+headless Chrome of its own (its own port, its own temporary profile —
+Chrome will not share one, and the person's browser is not ours to drive)
+and runs the real `SCAN_JS`, `FIND_REMOVE_FN`, `TAG_NAMED_FILE_FN` and
+`MARK_FN` against the fixtures in `tests/dom/`, which are the shapes the
+real forms have; `ashby_application.html` is the live Deepgram form's own
+markup, class names and all. Each of the ten was checked against the code
+as it was before the fix: six fail there. No Chromium = skip, so a machine
+that has not run the app is not stopped by them. On the current
 macOS / Python 3.13 environment, the full process aborts inside browser-use's
 native display detection at `test_forbidden_actions_are_absent_from_the_agent`;
 run the focused files plus `pytest --ignore=tests/test_fill.py` until that

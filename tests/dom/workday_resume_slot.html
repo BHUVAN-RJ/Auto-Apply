@@ -1,0 +1,29 @@
+<!doctype html><meta charset=utf-8><title>Workday - resume slot with a file already on it</title>
+<!-- The shape that matters: the file input stays on the page *beside* the
+     attachment it already holds, so the walk from the Delete button up to
+     the slot's heading meets an input[type=file] on its first step. The
+     cover letter section is here because the resume's Delete must never
+     borrow its heading. -->
+<body>
+<h2>My Experience</h2>
+<section data-automation-id="resumeSection">
+  <h3 class="css-label">Resume/CV</h3>
+  <div data-automation-id="attachment">
+    <span>Bhuvan_Rajanahally_Jayakumar_Resume.pdf</span>
+    <span>90.48 KB</span>
+    <button aria-label="Delete" data-automation-id="delete-file">Delete</button>
+  </div>
+  <div data-automation-id="attachmentUpload">
+    <label for="res">Upload</label>
+    <input id="res" type="file">
+  </div>
+</section>
+<section data-automation-id="coverLetterSection">
+  <h3 class="css-label">Cover Letter</h3>
+  <div data-automation-id="attachment">
+    <span>their_cover_letter.pdf</span>
+    <button aria-label="Delete" data-automation-id="delete-file">Delete</button>
+  </div>
+  <div data-automation-id="attachmentUpload"><input id="cov" type="file"></div>
+</section>
+</body>

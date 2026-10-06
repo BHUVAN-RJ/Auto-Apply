@@ -234,3 +234,52 @@ def test_the_review_page_says_which_resume_it_is_carrying(tenant, tmp_path, monk
     assert result.reached_review
     assert marked == [("Bhuvan_Resume.pdf", "the tailored resume")]
     assert result.marked == ["Bhuvan_Resume.pdf"]
+
+
+def _drip(t, blank, form, after=2):
+    """A page that arrives in pieces: `after` looks of nothing, then the
+    form, for as long as anybody keeps looking."""
+    calls = {"n": 0}
+
+    async def evaluate(expression):
+        if "elementFromPoint" in expression:
+            return True
+        if "START" in expression and "getBoundingClientRect" in expression:
+            return t.controls
+        calls["n"] += 1
+        return blank if calls["n"] <= after else form
+    t.evaluate = evaluate
+    return calls
+
+
+def test_the_first_page_is_read_only_once_it_has_finished_drawing(tenant, monkeypatch):
+    """The tab has just been opened, or has just come back from Apply. A
+    Workday page arrives in pieces, and the piece that arrives first has no
+    heading and no fields - which is not a page the walk can name."""
+    monkeypatch.setattr(workday, "SETTLE_TIMEOUT", 5.0)
+    t = tenant([page(["My Experience"], editable=12, files=1)])
+    _drip(t, page([], editable=0, buttons=()), page(["My Experience"], editable=12, files=1))
+    result = walk()
+    assert result.pages, "the walk gave up before it read a page"
+    assert result.pages[0].heading == "My Experience"
+
+
+def test_jobrights_autofill_is_not_pressed_into_a_half_drawn_page(tenant, monkeypatch):
+    """An autofill pressed with no job matched is the "Autofill for Another
+    Job" control, and that one opens a tab of its own - which is where the
+    blank tabs came from. Three runs on disk record "pressed by code,
+    0 - 13 fields" on pages two, three and four."""
+    monkeypatch.setattr(workday, "SETTLE_TIMEOUT", 5.0)
+    t = tenant([page(["My Experience"], editable=12, files=1)])
+    blank = page([], editable=0, buttons=())
+    form = page(["My Experience"], editable=12, files=1)
+    calls = _drip(t, blank, form)
+    pressed_at = []
+
+    async def in_tab(cdp_url, target_id):
+        pressed_at.append(blank["editable"] if calls["n"] <= 2 else form["editable"])
+        return None
+    import browser.autofill as autofill_mod
+    monkeypatch.setattr(autofill_mod, "in_tab", in_tab)
+    walk()
+    assert pressed_at and all(n > 0 for n in pressed_at), pressed_at
