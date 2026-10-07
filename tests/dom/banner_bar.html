@@ -1,0 +1,23 @@
+<!doctype html><meta charset=utf-8><title>The banner's own bar, at whatever width</title>
+<!-- The bar from `capture/content.js`: the verdict chip, the summary column
+     and the controls, in the order and with the classes the real one uses.
+     `tests/test_dom.py` reads the three layout rules out of content.js and
+     applies them here, so what is measured is the rule that ships. The
+     controls are the real labels: they are what does not shrink. -->
+<body style="margin:0">
+<div class="bar">
+  <span class="tag">OK</span>
+  <div class="body">
+    <span class="summary">No hard or soft flags found.</span>
+    <span class="about">No auto-reject found in the posting. Checked years of experience,
+      visa and sponsorship, export control, clearance and citizenship, start date and
+      graduation window, location, degree, seniority, PERM ads; facts from your profile.</span>
+  </div>
+  <div class="actions">
+    <label class="approve"><input type="checkbox" checked> auto-approve</label>
+    <button class="opus">Use Opus</button>
+    <button class="add">Adding to autopilot · click to stop</button>
+    <button class="fold">–</button>
+  </div>
+</div>
+</body>

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import socket
 import tempfile
 from pathlib import Path
@@ -250,3 +251,78 @@ def test_a_name_that_is_not_on_the_page_marks_nothing(browser):
     async def work(e, page):
         return await engine.mark_named_file(page, "somebody_elses.pdf", "the tailored resume")
     assert on_page(browser, "workday_review.html", work) is False
+
+
+# -- the banner at half a screen ------------------------------------------
+
+CONTENT_JS = Path(__file__).resolve().parent.parent / "capture" / "content.js"
+
+
+def bar_rules() -> str:
+    """The three layout rules out of `content.js`, so what is measured here
+    is the rule that ships rather than a copy of it. `${c.tone}` and the
+    like are the verdict's colour and say nothing about layout."""
+    # The interpolations go first: `${c.tone}` carries a `}` of its own, and
+    # slicing to the first one cut the `.bar` rule off at its border colour -
+    # so the rule under test had no `display: flex` in it at all.
+    source = re.sub(r"\$\{[^}]*\}", "#000", CONTENT_JS.read_text())
+    out = []
+    for name in (".bar {", ".body {", ".actions {"):
+        start = source.index("\n      " + name) + 1
+        end = source.index("}", start) + 1
+        out.append(source[start:end])
+    # And the narrow-width rule, which closes a brace later than the others.
+    start = source.index("\n      @media (max-width: 560px) {") + 1
+    out.append(source[start:source.index("\n      }", start) + 8])
+    return "\n".join(out)
+
+
+def measure_bar(browser, width: int) -> dict:
+    async def work(e, page):
+        await page.evaluate(
+            "(() => { const s = document.createElement('style');"
+            f" s.textContent = {json.dumps(bar_rules())};"
+            " document.head.appendChild(s); })()")
+        await asyncio.sleep(0.2)
+        return await page.evaluate(
+            "(() => { const r = (s) => document.querySelector(s).getBoundingClientRect();"
+            " const body = r('.body'), acts = r('.actions'), bar = r('.bar');"
+            " return {bodyW: Math.round(body.width), bodyH: Math.round(body.height),"
+            " actsTop: Math.round(acts.top), bodyTop: Math.round(body.top),"
+            " actsRight: Math.round(acts.right),"
+            " barH: Math.round(bar.height), scrollW: document.documentElement.scrollWidth,"
+            " clientW: document.documentElement.clientWidth}; })()")
+
+    async def go(e, page):
+        await page.send("Emulation.setDeviceMetricsOverride", {
+            "width": width, "height": 700, "deviceScaleFactor": 1, "mobile": False})
+        return await work(e, page)
+    return on_page(browser, "banner_bar.html", go)
+
+
+def test_the_banner_summary_is_never_squeezed_into_a_column(browser):
+    """In a half-screen window the controls do not shrink - their labels do
+    not break - so the verdict was crushed into a column one word wide
+    running the height of the page: "No hard or soft flags found" over nine
+    lines (2026-10-07, reported with a screenshot)."""
+    narrow = measure_bar(browser, 720)
+    assert narrow["bodyW"] >= 280, narrow
+    # Wrapped, not squeezed: the controls took a row of their own.
+    assert narrow["actsTop"] > narrow["bodyTop"], narrow
+    assert narrow["scrollW"] <= narrow["clientW"], narrow
+
+
+def test_the_banner_is_one_row_when_there_is_room(browser):
+    wide = measure_bar(browser, 1440)
+    assert wide["actsTop"] == wide["bodyTop"], wide
+    assert wide["bodyW"] > 280, wide
+
+
+def test_the_controls_do_not_run_off_a_narrow_window(browser):
+    """Narrower than any half of a normal screen. The longest label -
+    "Adding to autopilot - click to stop" - is wider than the window by
+    then, and a label over two lines beats one that runs off the edge."""
+    tiny = measure_bar(browser, 420)
+    assert tiny["bodyW"] >= 280, tiny
+    assert tiny["actsRight"] <= 420, tiny
+    assert tiny["scrollW"] <= tiny["clientW"] + 1, tiny

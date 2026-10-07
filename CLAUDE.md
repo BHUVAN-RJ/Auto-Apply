@@ -1574,6 +1574,26 @@ invariants first.
   injector restarted picks up the new rules instead of keeping the old.
   Still Jobright's and not ours: their extension's own panel takes about
   half of a 720px employer window.
+- **Both halves of the split read properly at half a screen** (2026-10-07,
+  reported with two screenshots). The banner's controls do not shrink -
+  their labels do not break - so the verdict column was squeezed to about
+  170px and "No hard or soft flags found" ran down the left edge of the
+  page in nine lines. `.bar` wraps now and `.body` has a floor
+  (`flex: 1 1 280px`), so below it the controls take a row of their own;
+  under 560px, narrower than any half of a normal screen, the longest label
+  ("Adding to autopilot · click to stop") is allowed to break rather than
+  run off the edge. Measured: 1440 one row, 720 wrapped with the summary
+  668 wide, 420 wrapped with nothing overflowing. The review page gets a
+  mode of its own under 900px: the tabs, the profile pill, Report, the job
+  pane and the fab all go, leaving the header on one line and the in-flight
+  list - what is tailoring, what is filling, what needs you - which is all
+  that window is for beside a list being scrolled. A job is read full
+  screen, and the list says so (`nav::after`) rather than leaving a click
+  that does nothing. Three tests in `tests/test_dom.py` measure the bar at
+  1440, 720 and 420 against the rules **read out of `content.js` itself**,
+  so what is asserted is the rule that ships; the extraction strips `${…}`
+  first, because `${c.tone}` carries a `}` and slicing to the first one cut
+  `.bar` off before its `display: flex`.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

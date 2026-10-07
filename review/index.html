@@ -181,6 +181,28 @@
     nav { border-right: 0; border-bottom: 2px solid var(--line); }
   }
 
+  /* Half a screen: the list, and nothing else (2026-10-07, asked for).
+     This window sits beside the job list the person is scrolling, and what
+     is wanted from it there is what is in flight, what is being tailored,
+     and whether anything needs them - not six tabs, not a Report button,
+     and not a job pane too narrow to read. A job is read full screen, and
+     the list says so rather than leaving a click that does nothing. */
+  @media (max-width: 900px) {
+    header { gap: .6rem; padding: .5rem 10px; }
+    header h1 { font-size: 11px; letter-spacing: .08em; }
+    body:not(.offjobs) header .tabs, header .pstat, header .report { display: none; }
+    header .count { margin-left: auto; font-size: 11px; white-space: nowrap; }
+    header .hold { font-size: 10px; padding: .25rem .5rem; }
+    body:not(.offjobs) main > section.detail,
+    body:not(.offjobs) .fab { display: none; }
+    nav { border-bottom: 0; padding-bottom: 1rem; }
+    body:not(.offjobs) nav::after {
+      content: "Open this window full screen to read a job.";
+      display: block; padding: 1rem 16px; color: var(--muted);
+      font-size: 11px; letter-spacing: .04em;
+    }
+  }
+
   /* The list: one open bucket (in flight) and two shelves that stay
      closed. Each in-flight row is washed in its bucket's colour and ends
      in one verb: what the agent is doing, or what you should do. */
@@ -652,6 +674,12 @@ function switchView(name) {
   view = name;
   try { localStorage.setItem("view", name); } catch (_) {}
   document.querySelector("main").classList.toggle("nonav", name === "screening");
+  // Half a screen shows the job list alone, so the pane the other tabs
+  // live in is hidden there - but not while another tab is open, or
+  // shrinking the window on Profile would leave a page with nothing on it.
+  // Named for the exception: the page has no `<body>` tag to carry a class
+  // from the markup, and Jobs is what it opens on.
+  document.body.classList.toggle("offjobs", name !== "jobs");
   $("tabJobs").setAttribute("aria-current", name === "jobs");
   $("tabProfile").setAttribute("aria-current", name === "profile");
   $("tabProjects").setAttribute("aria-current", name === "projects");

@@ -451,10 +451,17 @@ function render(result, { pending = false } = {}) {
   shadow.innerHTML = `
     <style>
       :host { all: initial; }
+      /* Wraps rather than squeezes. The controls do not shrink (their
+         labels do not break), so in a half-screen window the
+         verdict was crushed into a column one word wide running the whole
+         height of the page - "No hard or soft flags found" down the left
+         edge in nine lines (2026-10-07). Below the floor the buttons take a
+         row of their own instead. */
       .bar { position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
              background: #000; color: #fff; border-bottom: 3px solid ${c.tone};
              font: 12px/1.45 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-             padding: 8px 12px; display: flex; gap: 14px; align-items: flex-start; }
+             padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 8px 14px;
+             align-items: flex-start; }
       button.badge { position: fixed; top: 6px; left: 6px; z-index: 2147483647; width: 52px; height: 52px;
                      display: none; align-items: center; justify-content: center; padding: 0;
                      background: transparent; border: 0; box-shadow: none; cursor: pointer; }
@@ -486,7 +493,10 @@ function render(result, { pending = false } = {}) {
       @keyframes dots { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 -20% 0 0); } }
       @media (prefers-reduced-motion: reduce) { .tag.live::after { animation: none; } }
       .about { display: block; color: #a0a0a0; font-size: 11px; margin-top: 2px; }
-      .body { flex: 1; min-width: 0; padding-top: 4px; }
+      /* The floor the wrap is measured against: under this the summary
+         reads as a column of single words, which is worse than a second
+         row of buttons. */
+      .body { flex: 1 1 280px; min-width: 280px; padding-top: 4px; }
       .summary { color: #fff; }
       ul { margin: 4px 0 0; padding-left: 18px; }
       li { margin: 2px 0; }
@@ -561,7 +571,15 @@ function render(result, { pending = false } = {}) {
       button.open { background: #fff; color: #000; border-color: #fff; }
       button.open:hover { background: #000; color: #fff; }
       button:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
-      .actions { display: flex; gap: 6px; white-space: nowrap; align-items: center; }
+      .actions { display: flex; flex: 0 0 auto; gap: 6px; white-space: nowrap;
+                 align-items: center; margin-left: auto; flex-wrap: wrap; max-width: 100%; }
+      /* Narrower than any half of a normal screen. The longest label -
+         "Adding to autopilot - click to stop" - is wider than the window
+         by then, and a label that reads over two lines beats one that runs
+         off the edge. */
+      @media (max-width: 560px) {
+        .actions, .actions button { white-space: normal; }
+      }
       label.approve { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #fff; cursor: pointer; user-select: none; }
       label.approve input { accent-color: ${c.tone}; margin: 0; cursor: pointer; }
     </style>
