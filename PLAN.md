@@ -160,7 +160,7 @@ applications/
     status.json          filled | confirmed | submitted | skipped
 base/
   resume.tex             master resume, gitignored
-  profile.md             free-text profile, gitignored
+  profile.md             free-text profile, optional and superseded by stories/, gitignored
   applicant.md           hard facts (Facts) and form details, gitignored
   stories/               one document per role or project, Phase 7, gitignored
 data/
@@ -528,6 +528,7 @@ depend on the model's prose reasoning.
 | `review/index.html` | Flags shown above the tailoring verdict; the profile state in the header |
 | `server/settings.py` | `data/settings.json`, read by the server and the scripts it launched. `use_profile` is pinned on by the page; the models fall back to the resume on their own |
 | `tailor/profile.py` | What the models know about the applicant: profile.md, plus applicant facts and story documents when the switch is on; derived facts for the screen otherwise |
+| `tailor/boards.py` | The posting from Ashby, Greenhouse, Lever and Workday's own public endpoints, because the captured URL is usually the application form (Phase 28) |
 
 ### v3: no model at all (2026-09-26)
 
@@ -1904,10 +1905,14 @@ Agreed and not built, in this order:
    not a new pipeline. Needs the database above first, or a repo that lists
    400 jobs will queue what has already been applied for.
 
-## Phase 23 — when the posting is missing (raised 2026-09-30, not built)
+## Phase 23 — when the posting is missing (raised 2026-09-30, answered by Phase 28)
 
 Scaffolding only: what was measured, what the shape would be, and the
-questions that decide whether it is worth building.
+questions that decide whether it is worth building. **Read Phase 28 first.**
+The premise here turned out to be wrong in an instructive way: the posting
+was rarely missing, it was being fetched from the application form's URL
+rather than the description's, which is why so few pages looked like shells
+while so many tailoring runs read thin.
 
 ### What is actually wrong, measured over 179 postings on disk
 
@@ -2239,3 +2244,127 @@ Next, agreed and not built:
 - The same contact-field fallback when Jobright pressed but left fields
   empty: it reports them (`Jobright left empty: …`) and nothing acts on it.
 - A line on the review page saying which of the two filled each field.
+
+## Phase 28 — the posting from the board, and four things wrong on the form (2026-10-06)
+
+Built. Two halves, found the same way: by reading what is actually on disk
+and on the live pages rather than by reading the code.
+
+### The posting was being read off the application form
+
+Measured over all 285 application folders. Pressing Apply does not land on a
+job description — it lands on the application, and that is the URL `/capture`
+keeps. Of the 134 distinct Ashby, Greenhouse, Lever and Workday URLs on disk,
+**109 are a form URL** (`/embed/job_app`, `/apply`, `/application`). The
+scraper was reading the form, and the fallback chain could not help: a form
+page scores well on `quality.score`, because an EEO statement and a page of
+demographic questions are long lines of real prose.
+
+What that cost, replayed against the live boards:
+
+| | what was archived | what the board says |
+|---|---|---|
+| Greenhouse | the description wrapped in the whole form (Axon: 3,381 words, 1,617 of them the job), and on four captures the form **alone** — ASM, Tenable and two Pinterest postings reached the tailor with **no description and zero section headings**, and ASM was tailored against five times | the description |
+| Lever | a fetch of `/apply` read the whole board: Palantir came back as 10,832 words of other people's jobs, and the two section headings in it belonged to none of them | 1,118 words, seven headings |
+| Ashby | `/application` truncates the description on some boards (Clay, Pinecone) and appends the self-identification form on all of them | the whole description |
+| Workday | renders client-side, so the fetch fell back to the JSON-LD block — whose `description` Workday has already stripped of its own markup: 6,367 characters on **one line**, every bullet run into the sentence before it | 27 lines, structure intact |
+
+All four publish the posting over an endpoint that needs no login and no key.
+`tailor/boards.py` reads them, `fetch.fetch` asks it before LinkedIn and
+before any page read, and `Posting.authoritative` keeps
+`pipeline.fetch_posting` from scoring the employer's own copy against a
+browser's copy of a form — which is longer than the description inside it and
+would have won. A closed job 404s on all four and the ordinary fetch runs
+exactly as before; that is the one Lever, five Workday, five Greenhouse and
+six Ashby URLs on disk that still fall back.
+
+The other half is that **a form is now recognised as a form**:
+`quality.looks_like_form` wants three distinct application controls and no
+section heading anywhere, and `too_thin` refuses it. A form control is never
+read as a heading, because Greenhouse's own "How did you hear about this
+job?" matches the heading pattern `about (the|this) (role|job|…)` exactly and
+was vouching for the form. Over the corpus it flags 14 of 293 folders and
+nothing else.
+
+This is Phase 23's question answered from the other side. Phase 23 asked what
+to do when the posting is missing and measured 5 shells in 179; the answer
+turned out to be that the posting was rarely missing — it was being fetched
+from the wrong URL.
+
+### Still not read well, and known
+
+Not every system publishes. Eightfold (Microsoft, Autodesk, PayPal) dumps its
+theme JSON into the page as text — 49,425 words of CSS variables on one
+Microsoft posting; SuccessFactors, SmartRecruiters' one-click widget and
+iCIMS render client-side and leave 17 to 47 words in the fetched page. All of
+them now stop at checkpoint 1 with a note instead of producing a resume
+written to a login screen. Eightfold and SmartRecruiters both have public
+APIs that `scout/providers.py` already talks to; neither is wired into
+`fetch` yet.
+
+### Four things wrong on the form
+
+Each found by reading a live page, none by a test.
+
+**Ashby's autofill slot was taking the resume.** Read off the live Deepgram
+form: the "Autofill from resume" input has **no id, no name and no
+aria-label**, and the engine's label walk reaches past it to the next field's
+("Full Name"), so it scans as `label: ''` — invisible to
+`guard.describes_parse_slot`, which reads identifiers. The real
+`_systemfield_resume` input wins on name while it is on the page, so the
+damage is on the *second* pass: Ashby drops that input once a file is on the
+slot, the parser is then the only file input left, and the one-input fallback
+in `file_inputs` handed it the tailored resume. What identifies it is the
+sentence beside it, now `Field.context`. The banner's **put** chip had the
+same bug from the other side — its `describe()` includes the surrounding
+text, which says "resume" twice.
+
+**The old resume was never removed on Workday.** `FIND_REMOVE_FN` climbs from
+a Delete button looking for the slot's heading, and it abandoned the climb at
+the first ancestor containing an `input[type=file]` — which on Workday is the
+first step, because Workday keeps the input beside the attachment it already
+holds. The "delete first, then upload" change of 2026-09-30 was failing on
+the one system it was written for.
+
+**The review page carried no logo.** Every page of a Workday application
+replaces the last, so by the review the input, the block `MARK_UPLOAD_FN`
+tagged and the ref the mark was placed against are all gone — and the review
+is exactly where "is this my tailored resume or theirs?" gets asked.
+`engine.mark_named_file` tags whatever is showing the filename and runs the
+same `MARK_FN`.
+
+**Jobright's autofill was pressed into a half-drawn page.** A Workday step is
+not a navigation — `document.readyState` never leaves "complete" — and
+`advance` returned the *first* look whose shape differed, which is the page
+before its fields exist. Three runs on disk record "pressed by code, 0 → 13
+fields" on pages two, three and four; an autofill pressed with no job matched
+offers "Autofill for Another Job", and that control opens a tab, which is
+where the blank tabs come from. `workday.settled` waits for the shape to hold
+still.
+
+### The tests that go with it
+
+All four survived a green suite, which is the point. `tests/test_dom.py`
+launches a headless Chrome of its own and runs the real `SCAN_JS`,
+`FIND_REMOVE_FN`, `TAG_NAMED_FILE_FN`, `MARK_FN` and `putFile` against
+`tests/dom/` — the shapes the real forms have, with `ashby_application.html`
+being the live form's own markup, class names and all. Six of the ten fail
+against the code as it was before the fix; three more in `test_workday.py`
+cover the timing.
+
+Three tests written the same day were deleted the day after, for reading a
+script's **source** rather than running it: the same Workday bug written
+`const slot = 'input[type="file"]'` instead of inline passes a source check
+and fails the browser one. A mutation audit over all seven fixes confirmed
+one of them caught nothing at all. `scripts/check.sh` now runs the browser
+tests under a heading of their own and says the skip out loud when there is
+no Chromium, because they are the only place these paths are checked against
+a page.
+
+Next, agreed and not built:
+
+- A reader for Eightfold and SmartRecruiters in `fetch`, reusing what
+  `scout/providers.py` already knows.
+- A tool in `tools/` that drops `fill_screenshot.png` for closed jobs: they
+  are 229 MB of the 341 MB in `applications/`, and nobody reopens the
+  screenshot of a job already submitted.

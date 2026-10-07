@@ -99,7 +99,7 @@ Every application gets its own immutable folder:
 ```
 applications/2026-09-10_stripe_backend-engineer_a3f1/
   job.json             url, source, title, company, scraped_at
-  posting.md           full description snapshot
+  posting.md           full description snapshot, with the copy it came from
   resume.tex           tailored source
   resume.pdf           compiled artifact
   resume.diff          unified diff against base/resume.tex
@@ -118,13 +118,14 @@ job you ever considered.
 |---|---|
 | `capture/` | `content.js`: the on-page banner (screen verdict, countdown, queue, already-seen, file chips, submission watch). `tracker.js`: the status column drawn over the Simplify new-grad list's own GitHub page. Both injected by `browser/inject.py` into the app's own Chrome; also loadable as an MV3 extension for an everyday Chrome |
 | `server/` | FastAPI on `localhost:8787` by default. Owns the queue, serves the review UI, holds checkpoint state |
-| `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale |
-| `tex/` | `lualatex` wrapper producing deterministic PDFs |
-| `browser/` | `browser-use` fill loop driving your real Chrome profile. `guard.py` is the never-submit deny-list; `signin.py` waits out a login wall and says when the form is back; `press_submit.py` is the only place a Submit control is ever pressed, and the agent cannot reach it |
+| `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale. `boards.py` asks Ashby, Greenhouse, Lever and Workday for the posting over their own public endpoints, because the URL a capture keeps is usually the application form rather than the description |
+| `tex/` | TeX wrapper producing deterministic PDFs; the engine is chosen per document |
+| `browser/` | The fill, driving your real Chrome profile over CDP. `forms/` fills and attaches by code; `guard.py` is the never-submit deny-list; `signin.py` waits out a login wall and says when the form is back; `workday.py` and `linkedin_apply.py` walk their multi-page flows; `press_submit.py` is the only place a Submit control is ever pressed, and the agent cannot reach it |
 | `review/` | Local web page: diff view, PDF preview, approve / reject / chat, and the Profile, Projects, Scout, Screening and Prompts tabs |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
+| `tests/dom/` | The shapes real application forms have, kept so the page scripts can be run against them in a real browser (`tests/test_dom.py`) |
 
 The queue file is the seam between the capture half and the pipeline half,
 which keeps the two independently debuggable.
@@ -163,16 +164,20 @@ marked is still ours. The Simplify new-grad list is tracked on
 its own GitHub page, a day of postings at a time. Workday and LinkedIn Easy
 Apply are walked page by page to their review pages, and a form behind a
 sign-in is waited out rather than handed back: sign in, and the fill carries
-on from the first page. Next: the same page-by-page walk for Oracle and
-iCIMS, and a learning store for LinkedIn's screening questions, which have no
-stable field ids for the correction loop to key on. See
-[PLAN.md](PLAN.md) for the design and what is deliberately deferred.
+on from the first page. The posting itself comes from the board rather than
+from whatever page the capture landed on, which is usually the application
+form. Next: the same page-by-page walk for Oracle and
+iCIMS, a reader for Eightfold and SmartRecruiters (see
+"Where the posting comes from"), and a learning store for LinkedIn's
+screening questions, which have no stable field ids for the correction loop
+to key on. See [PLAN.md](PLAN.md) for the design and what is deliberately
+deferred.
 
 ```sh
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 855 tests
+pytest                        # 899 tests
 ```
 
 ## Setup
@@ -250,7 +255,8 @@ Put your master resume at `base/resume.tex`, along with any `.cls` or `.sty`
 it needs. `base/resume.example.tex` shows the shape and is what the test suite
 compiles. Optionally add `base/profile.md` with background that is not on the
 resume; the tailor reads it as extra context but is instructed never to invent
-anything it cannot support.
+anything it cannot support. The Profile interview supersedes it — once you
+have stories on file you do not need the file at all (see "Use profile").
 
 ## Checkpoint 1
 
@@ -597,6 +603,38 @@ because prompt rules leak:
 A rejection is fed back to the model with the specific problem named, so the
 retry is informed rather than a reroll.
 
+## Where the posting comes from
+
+Pressing Apply does not land you on a job description. It lands on the
+application, and that is the URL a capture keeps: of the 134 distinct Ashby,
+Greenhouse, Lever and Workday URLs in one real `applications/` folder, 109
+were a form URL. Reading those pages gave the tailor the form.
+
+All four publish the posting themselves, over an endpoint that needs no
+login and no key, so `tailor/boards.py` asks there first and the page is
+only read when the board has nothing to say. Measured against the live
+boards:
+
+| | before | after |
+|---|---|---|
+| Greenhouse | the description with the whole form round it (one posting: 3,381 words, of which 1,617 were the job), and on four captures the form *alone* — no description at all | the description |
+| Lever | a fetch of `/apply` read the entire board: 10,832 words of other people's jobs | 1,118 words, seven section headings |
+| Ashby | `/application` truncates the description on some boards and appends the self-identification form on all | the whole description |
+| Workday | renders client-side, so the fetch fell back to a JSON-LD block Workday has already stripped of its markup: 6,367 characters on **one line**, every bullet run into the sentence before it | 27 lines, structure intact |
+
+A job that has closed answers 404 on all four and the ordinary fetch runs as
+it did before. Which copy was used is written into `posting.md` as
+**Text from:**.
+
+A page that is an application form rather than a description is now
+recognised as one — three distinct form controls with no section heading
+anywhere — and is not tailored against. Two systems are still not read well
+and are known: Eightfold (Microsoft, Autodesk, PayPal) dumps its theme JSON
+into the page as text, and SuccessFactors, SmartRecruiters' one-click widget
+and iCIMS render client-side with nothing in the fetched page. Those stop at
+checkpoint 1 with a note rather than producing a resume written to a login
+screen.
+
 ## On-page screen
 
 Open a posting on Jobright, or click its Apply button, and the page it
@@ -730,6 +768,15 @@ answers, and the screen are given `base/applicant.md` and every document in
 interview). Until then everything runs on the resume and `base/profile.md`
 alone. Clicking the label opens the Profile tab.
 
+`base/profile.md` is **optional and predates the Profile interview**: free
+text about yourself that is not on the resume, which was the only extra
+context the tailor had before stories existed. It is not your contact
+details, your name or your work authorisation — those live in
+`base/form.json` (what the form filler types) and `base/applicant.md` (what
+the screen reads), and neither is something the tailor optimises against.
+Once you have stories on file, the file has nothing left to do: leaving it
+out costs nothing and that first section of the prompt is simply empty.
+
 ## Projects from GitHub
 
 The Projects tab takes a GitHub handle and reads every public repository
@@ -846,7 +893,10 @@ every non-default package so the test suite passes on a bare install.
 
 ## Stack
 
-Python 3.10+, FastAPI, [browser-use](https://github.com/browser-use/browser-use),
-OpenRouter, and a local TeX Live install. The model is configured in `.env` and
-defaults to `z-ai/glm-5.3`; anything OpenRouter serves works. No cloud services beyond the model
-API; the queue, the archive, and the review UI are all local.
+Python 3.13, FastAPI, OpenRouter, and Tectonic for the TeX. The browser is
+driven over CDP directly — `browser-use` is no longer installed, and the
+form work is code rather than a model (`AUTOPILOT_AGENT=0`). The model is
+configured in `.env` and defaults to `z-ai/glm-5.3`; anything OpenRouter
+serves works, and "Use Opus" hands you the prompt instead of spending on it.
+No cloud services beyond the model API; the queue, the archive, and the
+review UI are all local.
