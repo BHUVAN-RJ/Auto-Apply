@@ -1535,6 +1535,45 @@ invariants first.
   walk settles before it reads the first one. All four verified against
   Chrome, two on the live Ashby form and two on hand-made DOMs in the shapes
   the real pages have.
+- **Side by side: the list on the left, the job it opens on the right**
+  (2026-10-07, asked for). The complaint was that an employer tab takes the
+  screen while the screener runs on a posting nobody is reading - "there was
+  not really any point for me to wait for it". **The literal split is not
+  available and it is worth not trying again**: `jobs.ashbyhq.com` and
+  Workday answer `x-frame-options: DENY`, Greenhouse sends
+  `default-src 'self'`, and our own page cannot be framed either - an
+  `<iframe>` of `127.0.0.1:8787` added to jobright.ai produces **no child
+  frame at all** in `Page.getFrameTree`, because Chrome refuses an https
+  page a private address. So the two halves are two windows.
+  `inject.split_out` moves the job Apply opened into a window of its own:
+  Chrome cannot move a tab between windows, so the URL is opened again with
+  `newWindow` and the seconds-old original is closed - safe here and nowhere
+  else, since the tab carries the posting's `jr_id` (so the new one is
+  marked the same way) and nothing has been typed into it. **One tab is
+  reused** for every job (`Target.createTarget` cannot say *which* window to
+  open in, so a window per job would be a window per job); when the page
+  closes itself after queueing, the next job makes a new one.
+  `inject.place` reads the usable screen off `window.screen.avail*` - CDP
+  has no display API - and `focus_source` gives the front back to the list,
+  which is the whole point. `AUTOPILOT_SPLIT=0` turns it off.
+  **The claim is made before the target exists**: `run` dispatches every
+  event as a task, so the `targetCreated` for our own new tab is handled
+  before `createTarget` has replied, and a guard set afterwards is set too
+  late - three copies of one page, measured live. The URL is counted into
+  `splitting` first and the event consumes it.
+  On Jobright's own page `declutterJobright` folds away the 72px nav rail,
+  the saved-filters and Turbo column and the copilot, none of which is read
+  while applying. That alone was not enough: Jobright hard-codes
+  `min-width: 1200px` on its main content and 864px on the layout, so at
+  half width the job card was simply cut off and the page scrolled
+  sideways. The minimum is overridden with them, and "< 25 applicants" - one
+  letter wide down the side of the buttons at that width - goes too.
+  Measured after: viewport 720, list 690, `scrollWidth` equal to the client
+  width, the whole card and its match panel on screen. The style node is
+  **compared, not merely checked for**, so a tab that was open when the
+  injector restarted picks up the new rules instead of keeping the old.
+  Still Jobright's and not ours: their extension's own panel takes about
+  half of a 720px employer window.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

@@ -1265,6 +1265,66 @@ async function screen({ force = false, waited = 0 } = {}) {
   }
 }
 
+// ---- Jobright, decluttered ----------------------------------------------
+//
+// Asked for 2026-10-07. Jobright's window is now half the screen (the job
+// Apply opens goes into the other half - `browser/inject.py`), and two of
+// its three columns are not read while applying: the 72px nav rail on the
+// left, and the right-hand third that holds saved filters, the Turbo advert
+// and the copilot. Folding both away gives the job card - which is the part
+// that is read - the whole width.
+//
+// This is CSS and nothing else. Nothing here queues, approves, fills or
+// submits, and the page's own behaviour is untouched.
+const JR_STYLE_ID = "job-autopilot-jobright-style";
+// Jobright's class names are hashed and rotate with every build
+// (`index_job-page-right__VlCL3`), so nothing may hang off a whole one; the
+// stable half is the part before the hash.
+const JR_HIDE = [
+  '[class*="job-page-right"]',
+  '[class*="recommend-right-content"]',
+  '[class*="copilot-floating-root"]',
+  '[class*="jobs-page-side-content"]',
+  "aside.ant-layout-sider",
+  // "< 25 applicants", which at half width is squeezed into a column one
+  // letter wide down the side of the buttons. It is a stat, not a decision.
+  '[class*="apply-time"]',
+];
+// Jobright hard-codes a desktop minimum - `min-width: 1200px` on the main
+// content, 864px on the layout - so in a half-screen window the job card is
+// simply cut off and the page scrolls sideways. Hiding the two columns is
+// only half the job; the minimum has to go with them.
+const JR_WIDEN = [
+  '[class*="jobs-page-main-content"]',
+  '[class*="jobs-page-main-left"]',
+  '[class*="jobs-page-center"]',
+  '[class*="jobs-list"]',
+  "main.ant-layout-content",
+  "div.ant-layout-has-sider",
+];
+
+function declutterJobright() {
+  if (!onJobright || cold) return;
+  const css = `
+    ${JR_HIDE.join(", ")} { display: none !important; }
+    ${JR_WIDEN.join(", ")} {
+      min-width: 0 !important; max-width: 100% !important; width: auto !important;
+      margin-left: 0 !important;
+    }
+  `;
+  let style = document.getElementById(JR_STYLE_ID);
+  // Compared rather than only checked for: a tab that was open when the
+  // injector restarted keeps the node it already has, and would have kept
+  // the old rules with it.
+  if (style && style.textContent === css) return;
+  if (!style) {
+    style = document.createElement("style");
+    style.id = JR_STYLE_ID;
+    document.documentElement.appendChild(style);
+  }
+  style.textContent = css;
+}
+
 function schedule() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
@@ -1284,7 +1344,11 @@ try { const kept = sessionStorage.getItem(JOB_KEY); if (kept) watchSubmission(ke
 // Single-page ATSes (Ashby, Jobright) swap the posting without a navigation.
 // Watch the URL and the title rather than the DOM, which churns constantly.
 schedule();
+declutterJobright();
 setInterval(() => {
   if (location.href !== lastUrl) schedule();
+  // Jobright swaps its page without a navigation and can take the style
+  // node with it; putting it back is cheaper than watching the DOM.
+  declutterJobright();
 }, 1000);
 })();

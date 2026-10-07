@@ -65,6 +65,16 @@ CONTENT_JS = Path(__file__).resolve().parent.parent / "capture" / "content.js"
 TRACKER_JS = Path(__file__).resolve().parent.parent / "capture" / "tracker.js"
 LIST_PAGE = re.compile(r"^https://github\.com/[^/]+/New-Grad-Positions(/|$|\?|#)", re.I)
 SOURCE_HOSTS = ("jobright.ai",)
+# Side by side: the source list on the left half of the screen, the job its
+# Apply opens on the right (2026-10-07, asked for). A true split inside one
+# tab is not available - `jobs.ashbyhq.com` and Workday both answer
+# `x-frame-options: DENY`, Greenhouse sends `default-src 'self'`, and even
+# our own page cannot be framed on an https site because Chrome refuses it a
+# private address - so the two halves are two windows.
+SPLIT_ENV = "AUTOPILOT_SPLIT"
+# Left for the list, right for the job. A gap of nothing: the two windows
+# meet, which is what "split" is asked to look like.
+SPLIT_SHARE = 0.5
 # Jobright's own extension opens "Apply with autofill" in a tab it creates
 # itself, so there is no opener and no Page.windowOpen to tie it to the
 # posting; the URL it opens is tagged with the posting id instead.
@@ -170,6 +180,22 @@ class Injector:
         # screened and queued, then closes itself; the fill opens its own
         # tab on approve and presses Autofill there.
         self.autofill_on_open = os.environ.get(AUTOFILL_ON_OPEN, "0") == "1"
+        # Side by side. `split` is the feature; `job_window` is the window
+        # the right-hand half lives in, reused for every job so a morning of
+        # applying does not end in thirty windows; `screen` is the usable
+        # desktop, read once off a real page because CDP does not report it.
+        self.split = os.environ.get(SPLIT_ENV, "1") != "0"
+        # The one tab on the right, reused for every job so a morning of
+        # applying does not end in thirty windows, and a count per URL of
+        # the tabs we are about to open there. The count is claimed *before*
+        # the target is made: `run` dispatches every event as a task, so the
+        # `targetCreated` for our own new tab can be handled before
+        # `createTarget` has even replied, and a guard set afterwards is set
+        # too late - three copies of one page, measured on the live browser.
+        self.job_tab: Optional[str] = None
+        self.splitting: dict[str, int] = {}
+        self.screen: Optional[dict] = None
+        self.tiled: set[str] = set()
 
     async def send(self, method: str, params: Optional[dict] = None, session: Optional[str] = None) -> dict:
         message_id = next(self.ids)
@@ -244,10 +270,12 @@ class Injector:
             if opener and from_source(self.urls.get(opener, "")):
                 self.marked.add(info["targetId"])
                 log.info("marked new tab from %s", self.urls[opener])
+                await self.split_out(info["targetId"], info.get("url", ""))
             elif info.get("type") == "page" and (info.get("url") in self.opened or tagged(info.get("url", ""))):
                 self.opened.discard(info["url"])
                 self.marked.add(info["targetId"])
                 log.info("marked new window %s", info["url"])
+                await self.split_out(info["targetId"], info.get("url", ""))
 
         elif method == "Target.targetInfoChanged":
             info = params["targetInfo"]
@@ -268,6 +296,11 @@ class Injector:
             target_id = params["targetId"]
             self.urls.pop(target_id, None)
             self.marked.discard(target_id)
+            self.tiled.discard(target_id)
+            if target_id == self.job_tab:
+                # It closed itself once the job was queued; the next one
+                # opens a window again rather than reusing a gone tab.
+                self.job_tab = None
 
         elif method == "Target.attachedToTarget":
             info = params["targetInfo"]
@@ -282,6 +315,7 @@ class Injector:
             await self.send("Runtime.addBinding", {"name": BINDING}, session=new_session)
             # A tab that is already open and loaded fires no load event.
             await self.inject(new_session, target_id, "attach")
+            await self.tile(new_session, target_id)
 
         elif method == "Target.detachedFromTarget":
             self.sessions.pop(params.get("sessionId", ""), None)
@@ -413,6 +447,148 @@ class Injector:
             log.info("closed queued tab %s", self.urls.get(target_id, ""))
         except Exception as error:  # noqa: BLE001 - a tab left open is harmless
             log.warning("close failed: %s", error)
+
+    # -- side by side ------------------------------------------------------
+
+    async def desktop(self, session: str) -> Optional[dict]:
+        """The usable screen, read off a real page.
+
+        CDP has no display API; `window.screen` does, and it already knows
+        about the menu bar and the Dock (`avail*`). Read once and kept: the
+        person may move the window, and re-reading would fight them.
+        """
+        if self.screen is not None:
+            return self.screen
+        try:
+            got = await self.send("Runtime.evaluate", {
+                "expression": "({w: screen.availWidth, h: screen.availHeight,"
+                              " x: screen.availLeft || 0, y: screen.availTop || 0})",
+                "returnByValue": True,
+            }, session)
+        except Exception as error:  # noqa: BLE001 - no tiling, nothing else
+            log.debug("could not read the screen: %s", error)
+            return None
+        value = (got.get("result") or {}).get("value") or {}
+        if not (value.get("w") and value.get("h")):
+            return None
+        self.screen = value
+        return self.screen
+
+    async def place(self, target_id: str, half: str, session: str) -> None:
+        """Put this target's window on the left or right half of the screen."""
+        screen = await self.desktop(session)
+        if not screen:
+            return
+        full = int(screen["w"])
+        width = int(full * SPLIT_SHARE)
+        if half == "right":
+            # The right half takes the rounding, so the two always meet.
+            left, width = int(screen["x"]) + width, full - width
+        else:
+            left = int(screen["x"])
+        try:
+            window = await self.send("Browser.getWindowForTarget", {"targetId": target_id})
+            await self.send("Browser.setWindowBounds", {
+                "windowId": window["windowId"],
+                # A maximized or fullscreen window refuses new bounds until
+                # it is normal again, and says so with an error.
+                "bounds": {"windowState": "normal"},
+            })
+            await self.send("Browser.setWindowBounds", {
+                "windowId": window["windowId"],
+                "bounds": {"left": left, "top": int(screen["y"]), "width": width,
+                           "height": int(screen["h"]), "windowState": "normal"},
+            })
+            if half == "right":
+                self.job_window = window["windowId"]
+        except Exception as error:  # noqa: BLE001 - the tab still works untiled
+            log.debug("could not place the %s window: %s", half, error)
+
+    async def split_out(self, target_id: str, url: str) -> None:
+        """Move a job Apply opened into the right-hand window.
+
+        Chrome has no "move this tab to that window", so the job lives in a
+        tab of our own on the right and this navigates it there, closing the
+        one Jobright opened. That is safe here and nowhere else: the tab is
+        seconds old, it carries the posting's `jr_id` so the page it lands
+        on is marked the same way, and nothing has been typed into it - it
+        exists to be screened, queued, and closed by its own page.
+
+        Reusing one tab rather than opening a window per job is deliberate:
+        `Target.createTarget` cannot say which window to open in, so every
+        job would otherwise get a window of its own.
+        """
+        if not (self.split and is_web(url)) or from_source(url):
+            return
+        if self.splitting.get(url):
+            # Ours: the tab we asked for, arriving as an ordinary new target.
+            self.splitting[url] -= 1
+            if not self.splitting[url]:
+                self.splitting.pop(url, None)
+            self.job_tab = target_id
+            self.marked.add(target_id)
+            self.tiled.add(target_id)
+            return
+        if target_id in self.tiled or target_id == self.job_tab:
+            return
+        self.tiled.add(target_id)
+        try:
+            if self.job_tab and self.job_tab in self.urls:
+                session = next((s for s, t in self.sessions.items() if t == self.job_tab), None)
+                if session:
+                    await self.send("Page.navigate", {"url": url}, session)
+                    self.urls[self.job_tab] = url
+                else:
+                    self.job_tab = None
+            if not self.job_tab:
+                self.splitting[url] = self.splitting.get(url, 0) + 1
+                try:
+                    await self.send("Target.createTarget", {
+                        "url": url, "newWindow": True, "background": True,
+                    })
+                except Exception:
+                    self.splitting[url] -= 1
+                    if not self.splitting[url]:
+                        self.splitting.pop(url, None)
+                    raise
+        except Exception as error:  # noqa: BLE001 - leave the tab where it is
+            log.debug("could not open the job window: %s", error)
+            return
+        try:
+            await self.send("Target.closeTarget", {"targetId": target_id})
+        except Exception as error:  # noqa: BLE001 - two tabs is survivable
+            log.debug("could not close the tab we replaced: %s", error)
+        log.info("job moved to the right-hand window: %s", url[:80])
+
+    async def tile(self, session: str, target_id: str) -> None:
+        """Put a newly attached tab on its side of the screen.
+
+        The list stays where the person put it the first time it is seen;
+        the job window is placed every time, because it is reused and a
+        reused window has already been somewhere.
+        """
+        if not self.split:
+            return
+        url = self.urls.get(target_id, "")
+        if from_source(url):
+            if target_id not in self.tiled:
+                self.tiled.add(target_id)
+                await self.place(target_id, "left", session)
+            return
+        if target_id == self.job_tab:
+            await self.place(target_id, "right", session)
+            # The person is reading the list, not this. Give the front back.
+            await self.focus_source()
+
+    async def focus_source(self) -> None:
+        """Bring the list back to the front, if one is open."""
+        source = next((t for t, u in self.urls.items() if from_source(u)), None)
+        if source is None:
+            return
+        try:
+            await self.send("Target.activateTarget", {"targetId": source})
+        except Exception as error:  # noqa: BLE001 - focus is a courtesy
+            log.debug("could not bring the list back: %s", error)
 
     async def open_tab(self, url: str, focus: bool = True) -> tuple[bool, int, object]:
         """The review page, reused when open. `focus` False points it at

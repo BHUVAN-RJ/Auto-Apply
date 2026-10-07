@@ -19,12 +19,22 @@ LIST_PAGE = "https://github.com/SimplifyJobs/New-Grad-Positions"
 
 
 class Recorder(inject.Injector):
-    def __init__(self):
+    """Side by side is off unless a test asks for it: it replaces the tab
+    Apply opened with one of our own, which every other test here would see
+    as a second close or a stray target."""
+
+    def __init__(self, split=False):
         super().__init__("ws://unused", "SCRIPT", "TRACKER")
         self.calls = []
+        self.split = split
+        self.screen = {"w": 1600, "h": 900, "x": 0, "y": 0}
 
     async def send(self, method, params=None, session=None):
         self.calls.append((method, params or {}, session))
+        if method == "Target.createTarget":
+            return {"targetId": "made"}
+        if method == "Browser.getWindowForTarget":
+            return {"windowId": 1}
         return {}
 
 
@@ -406,3 +416,99 @@ def test_only_an_employer_tab_from_jobright_may_close(monkeypatch):
                if method == "Runtime.evaluate" and "__autopilotReply" in params.get("expression", "")]
     assert len(replies) == 3 and all("403" in reply for reply in replies)
 
+
+
+# -- side by side ---------------------------------------------------------
+
+def bounds(r):
+    return [p["bounds"] for m, p, _ in r.calls
+            if m == "Browser.setWindowBounds" and "left" in p.get("bounds", {})]
+
+
+def test_the_job_apply_opened_is_moved_to_a_window_of_its_own():
+    """Jobright opens Apply in a tab of the same window, and a tab cannot be
+    moved between windows over CDP - so the job is opened again in a window
+    we make and the seconds-old original is closed."""
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"))
+    made = [p for m, p, _ in r.calls if m == "Target.createTarget"]
+    assert made and made[0]["url"] == EMPLOYER and made[0]["newWindow"] is True
+    assert made[0]["background"] is True
+    assert closes(r) == ["t2"]
+
+
+def test_the_window_it_makes_is_not_split_out_again():
+    """The target we create fires `targetCreated` like any other. Without a
+    guard it was moved again, and again: three copies of one page, measured
+    on the live browser."""
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"),
+        created("made", EMPLOYER))
+    assert len([m for m, _, _ in r.calls if m == "Target.createTarget"]) == 1
+    assert closes(r) == ["t2"]
+
+
+def test_the_list_takes_the_left_half_and_the_job_the_right():
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"), created("made", EMPLOYER),
+        attached("made", EMPLOYER, "s3"))
+    left, right = bounds(r)[0], bounds(r)[-1]
+    assert (left["left"], left["width"]) == (0, 800)
+    assert (right["left"], right["width"]) == (800, 800)
+    assert left["height"] == right["height"] == 900
+
+
+def test_the_list_keeps_the_front():
+    """The person is reading the list. The job window is placed behind it."""
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"), created("made", EMPLOYER),
+        attached("made", EMPLOYER, "s3"))
+    activated = [p["targetId"] for m, p, _ in r.calls if m == "Target.activateTarget"]
+    assert activated == ["t1"]
+
+
+def test_the_job_tab_is_reused_rather_than_stacking_windows():
+    """`Target.createTarget` cannot say which window to open in, so a window
+    per job would be a window per job. The second job navigates the first's
+    tab instead."""
+    r = Recorder(split=True)
+    other = "https://jobs.example.com/apply/2?jr_id=def456"
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"), created("made", EMPLOYER),
+        attached("made", EMPLOYER, "s3"), created("t3", other, opener="t1"))
+    assert len([m for m, _, _ in r.calls if m == "Target.createTarget"]) == 1
+    navigated = [p["url"] for m, p, _ in r.calls if m == "Page.navigate"]
+    assert navigated == [other]
+    assert closes(r) == ["t2", "t3"]
+
+
+def test_a_job_window_that_closed_itself_is_made_again():
+    """The page closes its own tab once the job is queued; the next job may
+    not navigate a tab that is gone."""
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"), created("made", EMPLOYER),
+        attached("made", EMPLOYER, "s3"),
+        {"method": "Target.targetDestroyed", "params": {"targetId": "made"}},
+        created("t3", EMPLOYER, opener="t1"))
+    assert len([m for m, _, _ in r.calls if m == "Target.createTarget"]) == 2
+
+
+def test_the_split_can_be_turned_off():
+    r = Recorder(split=False)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"))
+    assert [m for m, _, _ in r.calls if m == "Target.createTarget"] == []
+    assert closes(r) == []
+    assert bounds(r) == []
+
+
+def test_jobright_itself_is_never_moved_to_the_job_window():
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t9", "https://jobright.ai/jobs/info/other", opener="t1"))
+    assert [m for m, _, _ in r.calls if m == "Target.createTarget"] == []
