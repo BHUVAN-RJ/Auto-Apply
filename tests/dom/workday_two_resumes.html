@@ -1,0 +1,25 @@
+<!doctype html><meta charset=utf-8><title>Workday - a multi-file slot with a bin icon</title>
+<!-- The shape behind "two resumes on one slot" (2026-10-07). Workday's
+     Resume/CV is a dropzone that takes more than one file, each row with a
+     bin button that carries no text, no aria-label and no title - only
+     `data-automation-id="delete-file"`. A check that read aria-label, title
+     and text saw no clearing control at all, so the slot was never cleared
+     and ours went on beside Jobright's, same filename, different sizes. -->
+<body>
+<div data-automation-id="resumeSection">
+  <h3 class="css-heading">Resume/CV</h3>
+  <div class="dropzone">Drop files here or <a href="#">Select files</a></div>
+  <div data-automation-id="file-upload-item">
+    <span class="filename">Bhuvan_Rajanahally_Jayakumar_Resume.pdf</span>
+    <span>90.48 KB</span><span>Successfully Uploaded!</span>
+    <button data-automation-id="delete-file"><svg viewBox="0 0 24 24"></svg></button>
+  </div>
+</div>
+<div data-automation-id="coverLetterSection">
+  <h3 class="css-heading">Cover Letter</h3>
+  <div data-automation-id="file-upload-item">
+    <span class="filename">their_cover_letter.pdf</span>
+    <button data-automation-id="delete-file"><svg viewBox="0 0 24 24"></svg></button>
+  </div>
+</div>
+</body>

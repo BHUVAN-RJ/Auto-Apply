@@ -178,8 +178,8 @@ def test_workdays_delete_is_found_though_the_input_is_still_there(browser):
         return [
             await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
                          f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS),
-            await e.call(engine.FIND_REMOVE_FN, engine.COVER_SLOT, engine.PARSE_SLOT,
-                         engine.DELETE_LABELS),
+            await e.call(engine.FIND_REMOVE_FN, engine.COVER_SLOT,
+                         f"{engine.RESUME_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS),
         ]
     resume, cover = on_page(browser, "workday_resume_slot.html", work)
     assert resume and resume["title"] == "Resume/CV" and resume["label"] == "Delete"
@@ -326,3 +326,36 @@ def test_the_controls_do_not_run_off_a_narrow_window(browser):
     assert tiny["bodyW"] >= 280, tiny
     assert tiny["actsRight"] <= 420, tiny
     assert tiny["scrollW"] <= tiny["clientW"] + 1, tiny
+
+
+def test_a_bin_icon_with_no_label_is_still_a_delete(browser):
+    """Workday's Resume/CV takes more than one file and each row's control
+    is a bin with no text, no aria-label and no title - only
+    `data-automation-id="delete-file"`. Nothing was cleared, so the
+    tailored resume went on beside Jobright's: same filename, 60.01 KB
+    against 90.48 KB, both "Successfully Uploaded" (2026-10-07, reported
+    with a screenshot)."""
+    async def work(e, page):
+        return [
+            await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                         f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS),
+            await e.call(engine.FIND_REMOVE_FN, engine.COVER_SLOT,
+                         f"{engine.RESUME_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS),
+        ]
+    resume, cover = on_page(browser, "workday_two_resumes.html", work)
+    assert resume and resume["title"] == "Resume/CV"
+    assert "Bhuvan_Rajanahally_Jayakumar_Resume.pdf" in resume["file"]
+    # And it still tells the two slots apart.
+    assert cover and cover["title"] == "Cover Letter"
+    assert "their_cover_letter.pdf" in cover["file"]
+
+
+def test_the_label_handed_to_the_guard_is_one_a_reader_would_use(browser):
+    """A class name is enough to recognise a control and never enough to
+    describe it: the submit guard reads this label before the one click
+    this makes on a form."""
+    async def work(e, page):
+        return await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                            f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.REMOVE_LABELS)
+    found = on_page(browser, "greenhouse_resume_taken.html", work)
+    assert found["label"] == "Remove file"

@@ -585,7 +585,7 @@ Every one of these cost a debugging cycle. They are in PLAN.md in more detail.
 
 ## Testing
 
-`pytest` collects 899 tests (842 without `test_fill.py`); `tests/test_invariants.py` is the short list
+`pytest` collects 917 tests (860 without `test_fill.py`); `tests/test_invariants.py` is the short list
 every copy runs after any change (`scripts/check.sh --quick`), and
 `tests/conftest.py` points prompt edits and the Workshop store at a
 temporary folder for every test. The suite stubs the model, browser, lualatex, and
@@ -1613,6 +1613,25 @@ invariants first.
   a posting already in the queue keeps its target id, a fresh tag is still
   moved. Nothing about the fill's own tab changes otherwise - it opens
   where it opens, as a tab in whatever window is in front.
+- **Two resumes on one Workday slot, and the bin that could not be seen**
+  (2026-10-07, reported with a screenshot: the same filename twice, 90.48 KB
+  and 60.01 KB, both "Successfully Uploaded"). Workday's Resume/CV is a
+  dropzone that takes **more than one file**, and each row's control is a
+  bin icon with no text, no `aria-label` and no `title` - what names it is
+  `data-automation-id="delete-file"`. `FIND_REMOVE_FN` read only what a
+  reader sees, so it found no clearing control at all, `remove_attached`
+  returned False without an error, and ours went on beside Jobright's.
+  The finder now reads two lists: **`spoken`** (aria-label, title, text, an
+  inner element's label) which is what the submit guard is given and what
+  the log says, and **`coded`** (`data-automation-id`, name, id, class)
+  which is enough to recognise a control and never enough to describe one -
+  a class of `remove` must not stand in for a label somebody could read.
+  The other half was the exclude list, which is also the "you have climbed
+  too far" signal: the resume's call excluded the cover letter, the cover
+  letter's call excluded only the parse slot, so climbing from the
+  *resume's* bin it reached `<body>`, found "Cover Letter" there and
+  answered the cover-letter call with the resume's control. Each slot now
+  names the other. `tests/dom/workday_two_resumes.html` is the shape.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

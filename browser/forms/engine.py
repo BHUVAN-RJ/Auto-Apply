@@ -596,24 +596,48 @@ FIND_REMOVE_FN = r"""
   const skip = exclude ? new RegExp(exclude, "i") : null;
   const text = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
   const remove = new RegExp(labels, "i");
+  // What a control that clears a file is called, in the four places a page
+  // may say it. Workday's is a bin icon with no text in it at all; what
+  // names it is `data-automation-id="delete-file"`, and an icon-only button
+  // whose label is only in an attribute was invisible to a check that read
+  // aria-label, title and text (2026-10-07: two resumes on one Workday
+  // slot, ours and Jobright's, both "Successfully Uploaded").
+  // What a reader sees, in the order a reader meets it. This is what the
+  // submit guard is given and what the log says, so a class name never
+  // stands in for a label somebody could read.
+  const spoken = (btn) => [
+    btn.getAttribute("aria-label"), btn.getAttribute("title"), text(btn),
+    ...[...btn.querySelectorAll("[aria-label], title, svg title")]
+        .map((el) => el.getAttribute("aria-label") || text(el)),
+  ].filter(Boolean).map((v) => String(v).trim());
+  // What only the markup knows. Enough to recognise the control, never
+  // enough to describe it.
+  const coded = (btn) => [
+    btn.getAttribute("data-automation-id"), btn.getAttribute("name"),
+    btn.id, (btn.className || "").toString(),
+  ].filter(Boolean).map((v) => String(v).trim());
+  const clears = (btn) => [...spoken(btn), ...coded(btn)]
+      .some((n) => n.length <= 60 && remove.test(n));
+  const shown = (btn) => spoken(btn).find((n) => n.length <= 40 && remove.test(n))
+      || spoken(btn).find((n) => n.length <= 40) || "remove";
   for (const btn of document.querySelectorAll("button, [role=button], a")) {
-    const label = (btn.getAttribute("aria-label") || btn.getAttribute("title") || text(btn)).trim();
-    if (!remove.test(label) || label.length > 40) continue;
+    if (!clears(btn)) continue;
     let block = btn.parentElement;
     for (let i = 0; i < 6 && block; i++, block = block.parentElement) {
-      // Climbing past the point where a second file lives would let this
-      // button borrow the other slot's heading: a resume and a cover letter
-      // sit a few levels apart, and "Resume" would answer for both.
-      const others = [...block.querySelectorAll("button, [role=button], a")]
-        .filter((b) => b !== btn && remove.test((b.getAttribute("aria-label") || b.getAttribute("title") || text(b)).trim()));
-      if (others.length) break;
+      let found = null;
       for (const heading of block.querySelectorAll("label, legend, [class*='label' i], [id*='label' i], h2, h3, h4")) {
         const title = text(heading);
         if (!title || title.length > 80) continue;
-        if (!want.test(title) || (skip && skip.test(title))) continue;
+        // A block holding both slots' headings answers for neither: climb
+        // no further and leave this button alone.
+        if (skip && skip.test(title)) { found = "mixed"; break; }
+        if (want.test(title)) { found = title; break; }
+      }
+      if (found === "mixed") break;
+      if (found) {
         for (const old of document.querySelectorAll("[data-autopilot-remove]")) old.removeAttribute("data-autopilot-remove");
         btn.setAttribute("data-autopilot-remove", "1");
-        return { label: label, title: title, file: text(block).replace(title, "").trim().slice(0, 120) };
+        return { label: shown(btn), title: found, file: text(block).replace(found, "").trim().slice(0, 120) };
       }
     }
   }
@@ -1614,7 +1638,7 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
         # below (the one this early return stood in front of) is the same
         # step, and the labels it presses are read and guarded first.
         for pattern, exclude in ((RESUME_SLOT, f"{COVER_SLOT}|{PARSE_SLOT}"),
-                                 (COVER_SLOT, PARSE_SLOT)):
+                                 (COVER_SLOT, f"{RESUME_SLOT}|{PARSE_SLOT}")):
             try:
                 if await engine.remove_attached(pattern, exclude):
                     fields = await engine.wait_for_fields()
@@ -1634,7 +1658,7 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
         return report
     for wanted, have, pattern, exclude, what in (
         (resume, resume_input, RESUME_SLOT, f"{COVER_SLOT}|{PARSE_SLOT}", "resume"),
-        (cover_letter, cover_input, COVER_SLOT, PARSE_SLOT, "cover letter"),
+        (cover_letter, cover_input, COVER_SLOT, f"{RESUME_SLOT}|{PARSE_SLOT}", "cover letter"),
     ):
         if not wanted:
             continue

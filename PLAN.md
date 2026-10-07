@@ -2368,3 +2368,61 @@ Next, agreed and not built:
 - A tool in `tools/` that drops `fill_screenshot.png` for closed jobs: they
   are 229 MB of the 341 MB in `applications/`, and nobody reopens the
   screenshot of a job already submitted.
+
+## Phase 29 — the list on the left, the job on the right (2026-10-07)
+
+Built, and three defects found with it, all on the live browser.
+
+**Two windows, not one split tab.** Applying from a list means scrolling
+it, and an employer tab that takes the screen costs the scroll. The literal
+split is not available and the measurement is worth keeping: `jobs.ashbyhq.com`
+and Workday answer `x-frame-options: DENY`, Greenhouse sends
+`default-src 'self'`, and an `<iframe>` of `127.0.0.1:8787` added to
+jobright.ai produces **no child frame at all** in `Page.getFrameTree`,
+because Chrome refuses an https page a private address. So
+`inject.split_out` opens the job again in a window of its own and closes
+the seconds-old original; `inject.place` reads the usable screen off
+`window.screen.avail*`, CDP having no display API; `focus_source` gives the
+front back to the list. One window is reused for every job, because
+`Target.createTarget` cannot say which window to open in.
+
+**The claim is made before the target exists.** `run` dispatches every
+event as a task, so the `targetCreated` for our own new tab is handled
+before `createTarget` has replied: a guard set afterwards is set too late,
+and the new tab split itself again, and again - three copies of one page.
+
+**A tagged URL is not always Apply.** `apply.py` opens the same URL, tag
+and all, when it goes to work on an approved job - so the split took the
+tab the fill was driving, opened a copy and closed the original, mid-fill.
+`Injector.is_new_job` asks the server what it already answers for the
+banner's countdown (`POST /queued` by `jr_id`): a posting with a row is not
+new, an untagged URL is not Apply, and a server that does not answer is not
+new either - leaving a tab where it is costs a split, moving one costs a
+fill.
+
+**Half a screen is a layout nobody had looked at.** The banner's controls
+do not shrink, so the verdict was squeezed into a column one word wide down
+the page; the bar wraps now and the summary has a floor. Jobright
+hard-codes `min-width: 1200px` on its main content, so the job card was
+simply cut off; that goes with the two columns that are folded away. The
+review page gets a mode of its own under 900px: the in-flight list and
+nothing else, scoped to the Jobs tab so shrinking the window on Profile
+does not leave a blank page.
+
+**And the bin that could not be seen.** Workday's Resume/CV takes more than
+one file and each row's control is an icon with no text, no `aria-label`
+and no `title` - only `data-automation-id="delete-file"`. The finder read
+only what a reader sees, so nothing was cleared and the tailored resume
+went on beside Jobright's: same filename, 60.01 KB against 90.48 KB. It now
+reads a `spoken` list (what the submit guard is given, what the log says)
+and a `coded` list (enough to recognise a control, never enough to describe
+one). The exclude list is also the "you have climbed too far" signal, and
+it was asymmetric - the cover letter's call did not exclude the resume, so
+climbing from the resume's bin it reached `<body>`, found "Cover Letter"
+there and answered with the wrong control. Each slot names the other now.
+
+Next, agreed and not built:
+
+- Collapsing Jobright's own extension panel on an employer page: it takes
+  about half of a 720px window, and it is their UI, not ours.
+- The Profile tab overflows horizontally at 720px. Nobody reads it there.

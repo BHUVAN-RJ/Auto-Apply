@@ -126,6 +126,7 @@ job you ever considered.
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
 | `tests/dom/` | The shapes real application forms have, kept so the page scripts can be run against them in a real browser (`tests/test_dom.py`) |
+| `browser/inject.py` | Puts the capture script in every tab, and keeps the two halves of the split: the list on the left, the job its Apply opens on the right |
 
 The queue file is the seam between the capture half and the pipeline half,
 which keeps the two independently debuggable.
@@ -177,7 +178,7 @@ deferred.
 python pipeline.py            # tailor and compile every queued job
 python apply.py               # fill every approved form, then stop
                               # (approving in the UI starts this for you)
-pytest                        # 899 tests
+pytest                        # 917 tests
 ```
 
 ## Setup
@@ -602,6 +603,31 @@ because prompt rules leak:
 
 A rejection is fed back to the model with the specific problem named, so the
 retry is informed rather than a reroll.
+
+## Side by side
+
+The list you scroll and the job its Apply opens are two windows, tiled:
+Jobright on the left half of the screen, the job on the right. Focus stays
+on the list, so adding a job costs you nothing — it screens, queues and
+closes itself on the other side while you keep scrolling.
+
+It is two windows rather than one split tab because no ATS will render
+inside another page (`jobs.ashbyhq.com` and Workday answer
+`x-frame-options: DENY`, Greenhouse sends `default-src 'self'`), and
+neither will this app's own page — Chrome refuses an https page a private
+address. One window is reused for every job, so a morning of applying does
+not end in thirty of them.
+
+On Jobright's own page the 72px nav rail and the right-hand column of saved
+filters and adverts are folded away, and Jobright's hard-coded
+`min-width: 1200px` goes with them, so the job card and its match panel
+still fit in half a screen. The review page has a half-width mode of its
+own: the in-flight list and nothing else — what is tailoring, what is
+filling, what needs you. Open it full screen to read a job.
+
+A tab the **fill** opens is never moved: it is a job already in the queue,
+and the window it opens in is wherever you are. `AUTOPILOT_SPLIT=0` turns
+the tiling off.
 
 ## Where the posting comes from
 
