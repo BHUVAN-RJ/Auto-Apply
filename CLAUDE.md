@@ -1594,6 +1594,25 @@ invariants first.
   so what is asserted is the rule that ships; the extraction strips `${…}`
   first, because `${c.tone}` carries a `}` and slicing to the first one cut
   `.bar` off before its `display: flex`.
+- **The split moved the fill's own tab, mid-fill** (2026-10-07). A tagged
+  URL is not always Apply opening something new: `apply.py` opens **the
+  same URL, tag and all** when it goes to work on an approved job, so
+  `split_out` took the tab the fill was driving, opened a copy in the
+  right-hand window and closed the original - "job moved to the right-hand
+  window: ...for=figma..." in the log with `apply.py c98e` running, and
+  every CDP call after it answering "Session with given id not found". From
+  the outside that read as the pipeline going round in circles: a job
+  opening to be filled, being read again, and queueing itself again.
+  `Injector.is_new_job` asks the server the question it already answers for
+  the banner's countdown (`POST /queued` by `jr_id`): a posting with a row
+  is not new, a URL with no tag at all is not Apply, and **a server that
+  does not answer is not new either** - leaving a tab where it is costs a
+  split, moving one costs a fill. Only a tagged posting with no row of its
+  own is moved, and the answer is remembered per posting so a tab is not
+  asked about twice. Verified live on the running browser: a tagged tab for
+  a posting already in the queue keeps its target id, a fresh tag is still
+  moved. Nothing about the fill's own tab changes otherwise - it opens
+  where it opens, as a tab in whatever window is in front.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

@@ -79,6 +79,10 @@ SPLIT_SHARE = 0.5
 # itself, so there is no opener and no Page.windowOpen to tie it to the
 # posting; the URL it opens is tagged with the posting id instead.
 SOURCE_MARKS = ("jr_id=",)
+# The tag's value, for asking the server whether that posting is already a
+# job of ours. A tagged tab is not always Apply opening a new job: the fill
+# opens the very same URL when it goes to work on one.
+SOURCE_ID = re.compile(r"[?&]jr_id=([A-Za-z0-9_-]+)")
 # An application form opened by hand is still a form: an Ashby posting found
 # through a friend, a Workday portal reached from a company's own careers
 # page. Those tabs have no opener and no `jr_id`, so nothing marked them and
@@ -123,6 +127,12 @@ def tagged(url: str) -> bool:
     """Whether a URL carries a source site's own tag, like Jobright's jr_id."""
     query = url.split("?", 1)[1] if "?" in url else ""
     return any(mark in query for mark in SOURCE_MARKS)
+
+
+def source_id(url: str) -> Optional[str]:
+    """The source site's posting id in this URL, or None."""
+    found = SOURCE_ID.search(url or "")
+    return found.group(1) if found else None
 
 
 def is_list_page(url: str) -> bool:
@@ -193,6 +203,9 @@ class Injector:
         # `createTarget` has even replied, and a guard set afterwards is set
         # too late - three copies of one page, measured on the live browser.
         self.job_tab: Optional[str] = None
+        # Postings the server has told us already have a row. A fill opens
+        # the same tagged URL as Apply, and its tab is never ours to move.
+        self.known_jobs: set[str] = set()
         self.splitting: dict[str, int] = {}
         self.screen: Optional[dict] = None
         self.tiled: set[str] = set()
@@ -504,6 +517,45 @@ class Injector:
         except Exception as error:  # noqa: BLE001 - the tab still works untiled
             log.debug("could not place the %s window: %s", half, error)
 
+    async def is_new_job(self, url: str) -> bool:
+        """Whether this tagged URL is a job Apply is opening for the first
+        time, rather than one of ours already in the queue.
+
+        A tagged tab is not always Apply. `apply.py` opens **the same URL**
+        when it goes to work on an approved job, and the tag is still on it
+        - so the split moved the fill's own tab into another window and
+        closed the one the fill was driving, mid-fill
+        (2026-10-07: "job moved to the right-hand window: ...for=figma...",
+        with `apply.py c98e` running, and every CDP call after it answering
+        "Session with given id not found"). That read from the outside as
+        the pipeline going round in circles.
+
+        The server already answers exactly this question for the banner's
+        countdown. A posting with a row is not a new job, and neither is a
+        URL that carries no tag at all - a fill tab, a form reached by hand,
+        anything the person opened. Only a tagged posting with no row of its
+        own is Apply doing something new, and only that is moved.
+
+        A server that does not answer means "not new": leaving a tab where
+        it is costs a split, and moving one costs a fill.
+        """
+        jr_id = source_id(url)
+        if not jr_id:
+            return False
+        if jr_id in self.known_jobs:
+            return False
+        try:
+            reached, status, body = await asyncio.to_thread(post, "/queued", {"jr_id": jr_id})
+        except Exception as error:  # noqa: BLE001 - treated as "not new"
+            log.debug("could not ask whether %s is queued: %s", jr_id, error)
+            return False
+        if not reached or status >= 400 or not isinstance(body, dict):
+            return False
+        if body.get("queued"):
+            self.known_jobs.add(jr_id)
+            return False
+        return True
+
     async def split_out(self, target_id: str, url: str) -> None:
         """Move a job Apply opened into the right-hand window.
 
@@ -519,6 +571,8 @@ class Injector:
         job would otherwise get a window of its own.
         """
         if not (self.split and is_web(url)) or from_source(url):
+            return
+        if not await self.is_new_job(url):
             return
         if self.splitting.get(url):
             # Ours: the tab we asked for, arriving as an ordinary new target.

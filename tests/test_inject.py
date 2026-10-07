@@ -512,3 +512,62 @@ def test_jobright_itself_is_never_moved_to_the_job_window():
     run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
         created("t9", "https://jobright.ai/jobs/info/other", opener="t1"))
     assert [m for m, _, _ in r.calls if m == "Target.createTarget"] == []
+
+
+def test_the_fills_own_tab_is_never_moved(monkeypatch):
+    """`apply.py` opens the same tagged URL Apply does when it goes to work
+    on an approved job. The split moved that tab into another window and
+    closed the one the fill was driving, mid-fill - which read from the
+    outside as the pipeline going round in circles (2026-10-07)."""
+    monkeypatch.setattr(inject, "post",
+                        lambda path, body, *_: (True, 200, {"queued": True, "id": "c98e"}))
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"))
+    assert [m for m, _, _ in r.calls if m == "Target.createTarget"] == []
+    assert closes(r) == []
+
+
+def test_a_job_apply_is_opening_for_the_first_time_is_moved(monkeypatch):
+    monkeypatch.setattr(inject, "post",
+                        lambda path, body, *_: (True, 200, {"queued": False, "id": None}))
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"))
+    assert [m for m, _, _ in r.calls if m == "Target.createTarget"] != []
+    assert closes(r) == ["t2"]
+
+
+def test_a_tab_with_no_tag_is_left_where_it_is(monkeypatch):
+    """A form reached by hand, a careers page, anything the person opened:
+    not Apply, so not ours to move."""
+    asked = []
+    monkeypatch.setattr(inject, "post",
+                        lambda path, body, *_: (asked.append(path) or (True, 200, {})))
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", "https://jobs.example.com/apply/1", opener="t1"))
+    assert [m for m, _, _ in r.calls if m == "Target.createTarget"] == []
+    assert "/queued" not in asked
+
+
+def test_a_server_that_will_not_answer_moves_nothing(monkeypatch):
+    """Leaving a tab where it is costs a split; moving one costs a fill."""
+    def refused(path, body, *_):
+        raise OSError("connection refused")
+    monkeypatch.setattr(inject, "post", refused)
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"))
+    assert [m for m, _, _ in r.calls if m == "Target.createTarget"] == []
+
+
+def test_a_posting_already_known_is_not_asked_about_twice(monkeypatch):
+    calls = []
+    monkeypatch.setattr(inject, "post",
+                        lambda path, body, *_: (calls.append(body) or
+                                                (True, 200, {"queued": True})))
+    r = Recorder(split=True)
+    run(r, created("t1", JOBRIGHT), attached("t1", JOBRIGHT, "s1"),
+        created("t2", EMPLOYER, opener="t1"), created("t3", EMPLOYER, opener="t1"))
+    assert len(calls) == 1
