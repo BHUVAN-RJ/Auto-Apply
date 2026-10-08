@@ -119,6 +119,26 @@ def test_work_eligibility_boilerplate_is_not_a_visa_block():
         assert fires(text) == [], text
 
 
+def test_a_posting_that_needs_no_clearance_is_not_a_clearance_block():
+    """A hard reject on a live posting (2026-10-04): the sentence saying no
+    clearance is needed names the clearance to say so."""
+    for text in ("No Clearance: Position does not require a security clearance.",
+                 "This position does not require an active security clearance.",
+                 "Security clearance is not required for this role.",
+                 "Security Clearance: None",
+                 "No security clearance required."):
+        assert not fires(text, rule="clearance_required"), text
+
+
+def test_a_clearance_to_obtain_later_still_fires():
+    """Not needing one today is not the same as never needing one."""
+    for text in ("Does not require an active security clearance, but you must be able "
+                 "to obtain a security clearance.",
+                 "No clearance required at start; candidates must be eligible for a "
+                 "security clearance."):
+        assert fires(text, rule="clearance_required"), text
+
+
 def test_a_us_onsite_role_is_not_a_location_block():
     """Relocation is open, so onsite in San Francisco is not a flag. The
     model rejected four jobs on exactly this."""

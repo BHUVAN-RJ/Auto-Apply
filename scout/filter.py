@@ -81,6 +81,9 @@ _CLEARANCE = re.compile(
     r"(?:active|current|hold(?:s|ing)?\s+an?|must\s+(?:have|hold|possess|obtain)\s+an?|requires?\s+an?|"
     r"eligible\s+(?:for|to\s+obtain)\s+an?)\s+(?:(?:top\s+secret|secret|ts/?sci|dod|government|security|public\s+trust)\s+)+clearance",
     re.I)
+# "Position does not require a security clearance" carries the very words
+# `_CLEARANCE` looks for; a negation just before the match cancels it.
+_NOT_NEEDED = re.compile(r"\b(?:not|no|never|without)\b[^.\n]*$", re.I)
 _CITIZEN = re.compile(
     r"(?:u\.?s\.?|united\s+states)\s+citizen(?:ship)?\s+(?:is\s+)?(?:required|is\s+a\s+requirement|only)|"
     r"must\s+be\s+an?\s+(?:u\.?s\.?|united\s+states)\s+citizen|(?:u\.?s\.?|united\s+states)\s+citizens\s+only",
@@ -99,7 +102,8 @@ def prescreen(text: str) -> str | None:
     years = [y for y in years if y <= 30]      # "2024 years" is a date that slipped in
     if years and min(years) >= YEARS_MIN:
         return f"asks for {min(years)}+ years of experience"
-    if _CLEARANCE.search(text):
+    if any(not _NOT_NEEDED.search(text, max(0, m.start() - 40), m.start())
+           for m in _CLEARANCE.finditer(text)):
         return "needs a security clearance"
     if _CITIZEN.search(text):
         return "US citizenship required"
