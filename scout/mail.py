@@ -10,40 +10,24 @@ the hits still land on the page.
 """
 from __future__ import annotations
 
-import os
-import smtplib
-from email.message import EmailMessage
 from html import escape
 
+import mailing
 from scout import Hit, Watch
 
-HOST = "AUTOPILOT_SMTP_HOST"
-PORT = "AUTOPILOT_SMTP_PORT"
-USER = "AUTOPILOT_SMTP_USER"
-PASS = "AUTOPILOT_SMTP_PASS"
-TO = "AUTOPILOT_MAIL_TO"
-FROM = "AUTOPILOT_MAIL_FROM"
-
-
-class MailError(RuntimeError):
-    pass
+HOST, PORT, USER, PASS, TO, FROM = (
+    mailing.HOST, mailing.PORT, mailing.USER, mailing.PASS, mailing.TO, mailing.FROM,
+)
+MailError = mailing.MailError
 
 
 def config() -> dict:
-    user = os.environ.get(USER, "").strip()
-    return {
-        "host": os.environ.get(HOST, "smtp.gmail.com").strip(),
-        "port": int(os.environ.get(PORT, "587") or 587),
-        "user": user,
-        "password": os.environ.get(PASS, ""),
-        "to": [a.strip() for a in os.environ.get(TO, user).split(",") if a.strip()],
-        "sender": os.environ.get(FROM, user).strip() or user,
-    }
+    return mailing.config()
 
 
 def configured() -> bool:
     c = config()
-    return bool(c["user"] and c["password"] and c["to"])
+    return mailing.configured() and bool(c["to"])
 
 
 def status() -> dict:
@@ -55,28 +39,7 @@ def send(subject: str, text: str, html: str | None = None) -> None:
     c = config()
     if not configured():
         raise MailError("mail is not set up: AUTOPILOT_SMTP_USER, AUTOPILOT_SMTP_PASS in .env")
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = c["sender"]
-    msg["To"] = ", ".join(c["to"])
-    msg.set_content(text)
-    if html:
-        msg.add_alternative(html, subtype="html")
-    try:
-        if c["port"] == 465:
-            with smtplib.SMTP_SSL(c["host"], c["port"], timeout=30) as smtp:
-                smtp.login(c["user"], c["password"])
-                smtp.send_message(msg)
-        else:
-            with smtplib.SMTP(c["host"], c["port"], timeout=30) as smtp:
-                smtp.ehlo()
-                smtp.starttls()
-                smtp.login(c["user"], c["password"])
-                smtp.send_message(msg)
-    except smtplib.SMTPAuthenticationError as exc:
-        raise MailError("SMTP login refused: for Gmail use an App Password, not the account password") from exc
-    except (smtplib.SMTPException, OSError) as exc:
-        raise MailError(f"SMTP failed: {exc}") from exc
+    mailing.send(c["to"], subject, text, html)
 
 
 def referral_note(watch: Watch, hit: Hit) -> str:

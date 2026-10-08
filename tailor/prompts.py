@@ -77,6 +77,11 @@ CATALOG: tuple[Prompt, ...] = (
            _file("tailor.cover", "RULES")),
     Prompt("cover.format", "Cover letter reply format", "Tailoring", FORMAT_NOTE,
            _const("tailor.cover", "REPLY_FORMAT")),
+    Prompt("outreach", "Recruiter outreach", "Tailoring",
+           "How one recruiter or hiring-manager email is written.",
+           _file("tailor.outreach", "RULES")),
+    Prompt("outreach.format", "Outreach reply format", "Tailoring", FORMAT_NOTE,
+           _const("tailor.outreach", "REPLY_FORMAT")),
     Prompt("answers", "Form answers", "Tailoring",
            "How the open questions on a form are answered. Visa questions are "
            "refused in code whatever this says.",

@@ -24,6 +24,7 @@ from .profile import router as profile_router
 from .prompts import router as prompts_router
 from .report import router as report_router
 from .github import router as github_router
+from .outreach import router as outreach_router
 from .review import router as review_router
 from .scout import router as scout_router
 from .screen import router as screen_router
@@ -42,7 +43,7 @@ app = FastAPI(title="job-autopilot", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -78,6 +79,7 @@ class StatusUpdate(BaseModel):
 
 
 app.include_router(review_router)
+app.include_router(outreach_router)
 app.include_router(screen_router)
 app.include_router(screening_router)
 app.include_router(simplify_router)

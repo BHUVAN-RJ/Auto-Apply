@@ -137,3 +137,19 @@ def test_the_apply_press_can_never_be_a_submit():
     source = (ROOT / "browser" / "open_apply.py").read_text()
     assert source.count('await page.send("Input.dispatchMouseEvent"') == 1
     assert "safe_to_press" in source.split("async def press(")[1]
+
+
+# 7. Outreach is sent only by the human-only server route.
+
+def test_automation_cannot_reach_outbound_mail():
+    paths = [ROOT / "pipeline.py", ROOT / "apply.py"]
+    paths += list((ROOT / "browser").rglob("*.py"))
+    paths += list((ROOT / "tailor").rglob("*.py"))
+    for path in paths:
+        source = path.read_text()
+        assert "import mailing" not in source and "from mailing" not in source, path
+        assert "send_message(" not in source, path
+
+    route = (ROOT / "server" / "outreach.py").read_text()
+    assert "confirmed" in route and "mailing.send_message(msg)" in route
+    assert "this message is already" in route, "a sent email must not be sent twice"
