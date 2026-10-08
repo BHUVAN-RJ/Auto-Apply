@@ -167,7 +167,9 @@ Apply are walked page by page to their review pages, and a form behind a
 sign-in is waited out rather than handed back: sign in, and the fill carries
 on from the first page. The posting itself comes from the board rather than
 from whatever page the capture landed on, which is usually the application
-form. Next: the same page-by-page walk for Oracle and
+form. And the list you scroll and the job its Apply opens sit side by side,
+two tiled windows, with focus staying on the list (see "Side by side").
+Next: the same page-by-page walk for Oracle and
 iCIMS, a reader for Eightfold and SmartRecruiters (see
 "Where the posting comes from"), and a learning store for LinkedIn's
 screening questions, which have no stable field ids for the correction loop
