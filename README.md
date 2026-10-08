@@ -128,7 +128,7 @@ job you ever considered.
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale. `boards.py` asks Ashby, Greenhouse, Lever and Workday for the posting over their own public endpoints, because the URL a capture keeps is usually the application form rather than the description |
 | `tex/` | TeX wrapper producing deterministic PDFs; the engine is chosen per document |
 | `browser/` | The fill, driving your real Chrome profile over CDP. `forms/` fills and attaches by code; `guard.py` is the never-submit deny-list; `signin.py` waits out a login wall and says when the form is back; `workday.py` and `linkedin_apply.py` walk their multi-page flows; `press_submit.py` is the only place a Submit control is ever pressed, and the agent cannot reach it |
-| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, recruiter outreach, and the Profile, Projects, Scout, Screening and Prompts tabs |
+| `review/` | Local web page: diff view, PDF preview, approve / reject / chat, recruiter outreach, and the Profile, Projects, Scout, Screening, Prompts and Settings tabs |
 | `outreach/` | Per-job recruiter and hiring-manager contacts, drafts, and a Gmail send that only the review page can reach |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |

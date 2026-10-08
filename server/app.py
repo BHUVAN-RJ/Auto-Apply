@@ -24,6 +24,7 @@ from .profile import router as profile_router
 from .prompts import router as prompts_router
 from .report import router as report_router
 from .github import router as github_router
+from .keys import router as keys_router
 from .outreach import router as outreach_router
 from .review import router as review_router
 from .scout import router as scout_router
@@ -84,6 +85,7 @@ app.include_router(screen_router)
 app.include_router(screening_router)
 app.include_router(simplify_router)
 app.include_router(settings_router)
+app.include_router(keys_router)
 app.include_router(profile_router)
 app.include_router(form_router)
 app.include_router(voice_router)

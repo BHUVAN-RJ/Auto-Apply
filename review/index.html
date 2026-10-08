@@ -46,7 +46,7 @@
   ::-webkit-scrollbar-corner { background: transparent; }
   nav::-webkit-scrollbar-thumb { border-color: var(--panel); }
   header {
-    display: flex; align-items: center; gap: 1rem; padding: .7rem 16px;
+    display: flex; align-items: center; gap: 1rem; padding: .7rem 16px; flex-wrap: wrap;
     border-bottom: 2px solid var(--line); background: var(--panel);
     position: sticky; top: 0; z-index: 5;
   }
@@ -62,11 +62,11 @@
   header .pstat[data-on="1"] { border-color: var(--green); color: var(--green); }
   header .pstat[data-on="2"] { border-color: var(--line); }
   header .pstat span.on { color: var(--green); }
-  header .tabs { display: flex; gap: 0; }
+  header .tabs { display: flex; gap: 0; flex-wrap: wrap; }
   header .tabs button { background: none; border: 1px solid var(--line); padding: .3rem .7rem;
                         color: var(--muted); font: inherit; cursor: pointer; text-transform: uppercase;
                         letter-spacing: .08em; font-size: 11px; }
-  header .tabs button + button { border-left: 0; }
+  header .tabs button + button { margin-left: -1px; }
   header .tabs button[aria-current="true"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 
   /* Profile tab */
@@ -172,6 +172,28 @@
      information twice. */
   main.nonav { grid-template-columns: 1fr; }
   main.nonav > nav { display: none; }
+
+  /* Settings: one card per account, the key hidden behind the same dots
+     the browser uses, and what breaks without it said next to it. */
+  .keys { max-width: 760px; }
+  .keycard { border: 1px solid var(--line); padding: .8rem; margin: .8rem 0; }
+  .keycard > h3 { margin: 0 0 .2rem; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+  .keycard .keystate { font-size: 11px; color: var(--muted); margin: .3rem 0 .6rem 154px; }
+  @media (max-width: 700px) { .keycard .keystate { margin-left: 0; } }
+  .keycard .keystate b.on { color: var(--green); }
+  .keycard .keystate b.off { color: var(--muted); }
+  .keycard .keystate b.need { color: var(--red); }
+  .keyfield { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 0; }
+  .keyfield label { flex: 0 0 150px; font-size: 11px; color: var(--muted);
+                    text-transform: uppercase; letter-spacing: .08em; }
+  .keyfield input { flex: 1 1 220px; min-width: 160px; background: var(--bg); color: var(--ink);
+                    border: 1px solid var(--line); padding: .35rem .5rem;
+                    font: inherit; font-size: 12px; }
+  .keyfield input:focus { outline: none; border-color: var(--ink); }
+  .keycard .where { font-size: 11px; color: var(--muted); margin: .4rem 0 0; }
+  .keycard .said { font-size: 11px; margin: .5rem 0 0; }
+  .keycard .said.good { color: var(--green); }
+  .keycard .said.bad { color: var(--red); }
   main > nav, main > section.detail { overflow-y: auto; overflow-x: hidden; min-height: 0; }
   main > section.detail.chatpane { overflow: hidden; }
   @media (max-width: 800px) {
@@ -572,6 +594,7 @@
     <button id="tabScout" aria-current="false">Scout<span class="broken" id="scoutBroken" hidden style="margin-left:.5rem">Broken</span></button>
     <button id="tabScreening" aria-current="false">Screening</button>
     <button id="tabPrompts" aria-current="false">Prompts</button>
+    <button id="tabSettings" aria-current="false">Settings<span class="broken" id="keysBroken" hidden style="margin-left:.5rem">Missing</span></button>
   </div>
   <span class="count" id="count"></span>
   <!-- The line. Held, no job opens a tab; let go, they fill one at a time. -->
@@ -702,7 +725,7 @@ if (location.hash.length > 1) view = "jobs";
 function switchView(name) {
   view = name;
   try { localStorage.setItem("view", name); } catch (_) {}
-  document.querySelector("main").classList.toggle("nonav", name === "screening");
+  document.querySelector("main").classList.toggle("nonav", name === "screening" || name === "settings");
   // Half a screen shows the job list alone, so the pane the other tabs
   // live in is hidden there - but not while another tab is open, or
   // shrinking the window on Profile would leave a page with nothing on it.
@@ -715,6 +738,7 @@ function switchView(name) {
   $("tabScout").setAttribute("aria-current", name === "scout");
   $("tabScreening").setAttribute("aria-current", name === "screening");
   $("tabPrompts").setAttribute("aria-current", name === "prompts");
+  $("tabSettings").setAttribute("aria-current", name === "settings");
   if (name !== "profile") { Profile.leave(); $("detail").classList.remove("chatpane"); }
   if (name !== "screening") Screening.leave();
   if (name === "jobs") loadList();
@@ -722,6 +746,7 @@ function switchView(name) {
   else if (name === "scout") Scout.open();
   else if (name === "screening") Screening.open();
   else if (name === "prompts") Prompts.open();
+  else if (name === "settings") Settings.open();
   else Projects.open();
 }
 // The line at the top of the page. Held (the default), the pipeline still
@@ -812,6 +837,15 @@ $("tabProjects").onclick = () => switchView("projects");
 $("tabScout").onclick = () => switchView("scout");
 $("tabScreening").onclick = () => switchView("screening");
 $("tabPrompts").onclick = () => switchView("prompts");
+$("tabSettings").onclick = () => switchView("settings");
+// "…on the Settings tab" is a link wherever a key is still asked for in
+// place. Delegated, so a pane redrawn by any module keeps it working.
+document.addEventListener("click", (e) => {
+  const link = e.target.closest?.("[data-go-settings]");
+  if (!link) return;
+  e.preventDefault();
+  switchView("settings");
+});
 
 async function loadList() {
   if (view !== "jobs") return;
@@ -1152,7 +1186,7 @@ function outreachSetup(state) {
     <div class="banner warn wide"><b>Connect Apollo</b>
       <div class="actions"><input type="password" id="outreachApolloKey" placeholder="Apollo API key">
       <button class="act" id="outreachSaveKey">Save key</button></div>
-      <span class="hint">Kept only in Autopilot's private .env on this Mac.</span>
+      <span class="hint">Kept only in Autopilot's private .env on this Mac. Also on the <a href="#" data-go-settings="1">Settings tab</a>, with the rest of your keys.</span>
     </div>`;
   const gmail = state.mail_configured ? "" : `
     <div class="banner warn wide"><b>Connect Gmail</b>
@@ -1161,7 +1195,7 @@ function outreachSetup(state) {
         <input type="password" id="outreachGmailPass" placeholder="Gmail App Password">
       </div>
       <div class="actions"><button class="act" id="outreachSaveGmail">Save Gmail</button>
-        <span class="hint">Use a Google App Password, never your account password.</span></div>
+        <span class="hint">Use a Google App Password, never your account password. Also on the <a href="#" data-go-settings="1">Settings tab</a>.</span></div>
     </div>`;
   const contacts = (state.contacts || []).map((contact) => `
     <div class="outreach-person">
@@ -1873,8 +1907,10 @@ function pollNow() {
   else if (view === "scout") Scout.poll();
   else if (view === "screening") Screening.poll();
   else if (view === "prompts") Prompts.poll();
+  else if (view === "settings") Settings.poll();
   else Projects.poll();
   loadScoutBroken();
+  Settings.broken();
   Setup.poll();
 }
 setInterval(pollNow, 5000);
@@ -1995,7 +2031,7 @@ const Scout = (() => {
           <span class="hint" id="sStatus">${state.running ? "" : "the scout thread is off (AUTOPILOT_SCOUT=0)"}</span>
         </div>
         <p class="hint">Mail: ${m.configured ? `on, to ${escape((m.to || []).join(", "))} <button class="act small" id="sMail">Send a test</button>`
-          : "not set up. AUTOPILOT_SMTP_USER and AUTOPILOT_SMTP_PASS in .env (Gmail: an App Password), then restart the server."}</p>
+          : "not set up. Add your Gmail address and an App Password on the <a href=\"#\" data-go-settings=\"1\">Settings tab</a> — no restart."}</p>
       </div>`;
   }
 
@@ -2635,6 +2671,189 @@ const Onboard = (() => {
 // listens, the same bubble and the same voice as the profile interview.
 // She writes rules, never verdicts, and nothing she writes is saved
 // without Add.
+// The Settings tab: every key and account in one place. A key was typed
+// wherever it happened to be wanted - OpenRouter in the onboarding wizard,
+// Apollo and the Gmail App Password on one job's Outreach card - so there
+// was nowhere to go to see what the app holds, and nothing to replace a
+// rotated key with. `server/keys.py` writes them to the data directory's
+// `.env` and into the running process; it never hands one back, so this
+// page shows the last four characters and nothing more.
+const Settings = (() => {
+  let data = null;         // GET /keys
+  let said = {};           // group -> { text, ok } from the last check
+  let busy = null;         // the name being saved or checked
+  // What is half-typed in each box, kept across a re-render: a poll that
+  // wiped the field under the person's hands would be its own bug.
+  let typed = {};
+
+  async function open() {
+    await refresh();
+    render();
+  }
+
+  function leave() { said = {}; typed = {}; }
+
+  async function refresh() {
+    try { data = await api("/keys"); }
+    catch (err) { data = { keys: [], error: err.message }; }
+  }
+
+  // Nothing here changes on its own; a key changes when somebody types one.
+  async function poll() {}
+
+  // ------------------------------------------------------------- render --
+
+  function field(k) {
+    const value = typed[k.name] ?? "";
+    const placeholder = k.set
+      ? (k.password ? "Paste a new one to replace it" : "Replace it")
+      : (k.password ? "Paste it here" : "Type it here");
+    return `<div class="keyfield">
+      <label for="key-${escape(k.name)}">${escape(k.label)}</label>
+      <input id="key-${escape(k.name)}" data-key="${escape(k.name)}"
+             type="${k.password ? "password" : "text"}" spellcheck="false"
+             autocomplete="off" placeholder="${escape(placeholder)}"
+             value="${escape(value)}">
+      <button class="act" data-save="${escape(k.name)}"
+              ${busy === k.name || !value.trim() ? "disabled" : ""}>${busy === k.name ? "Saving…" : "Save"}</button>
+      ${k.checkable ? `<button class="act" data-check="${escape(k.name)}"
+              ${k.set && busy !== k.name ? "" : "disabled"}
+              title="Ask the service whether this works. One request, nothing sent.">Check</button>` : ""}
+      ${k.set && !k.required ? `<button class="act danger" data-forget="${escape(k.name)}">Forget</button>` : ""}
+    </div>
+    <p class="keystate">${k.set
+      ? `<b class="on">Set</b> · ${k.password ? `ends ${escape(k.tail)}` : escape(k.tail)}`
+      : k.required ? `<b class="need">Needed</b> — nothing works without it`
+        : `<b class="off">Not set</b>`}</p>`;
+  }
+
+  function card(group) {
+    const rows = (data?.keys || []).filter((k) => k.group === group);
+    if (!rows.length) return "";
+    const head = rows[0];
+    const note = said[group];
+    return `<div class="keycard">
+      <h3>${escape(GROUPS[group] || group)}</h3>
+      <p class="hint">${escape(head.what)}</p>
+      ${rows.map(field).join("")}
+      <p class="where">Where to get one: ${escape(head.where)}</p>
+      ${rows.length > 1 ? rows.slice(1).map((k) =>
+        `<p class="where">${escape(k.label)}: ${escape(k.what)}</p>`).join("") : ""}
+      ${note ? `<p class="said ${note.ok ? "good" : "bad"}">${escape(note.text)}</p>` : ""}
+    </div>`;
+  }
+
+  const GROUPS = {
+    openrouter: "OpenRouter — the models",
+    apollo: "Apollo — finding a recruiter",
+    mail: "Gmail — Scout digests and approved outreach",
+    github: "GitHub — the Projects scan",
+    fish: "Fish Audio — the spoken voice",
+  };
+
+  function render() {
+    const keys = data?.keys || [];
+    const missing = data?.missing || [];
+    const order = [...new Set(keys.map((k) => k.group))];
+    $("list").innerHTML = "";
+    $("count").textContent = `${keys.filter((k) => k.set).length} of ${keys.length} set`;
+    $("detail").innerHTML = `<div class="keys">
+      <div class="head"><h2>Keys and accounts</h2></div>
+      <p class="hint">Typed here, never in a terminal. Each one is written to
+      <code>${escape(data?.env_file || ".env")}</code>, readable only by you, and the server and
+      everything it starts see it at once — no restart. A saved key is never shown again: the
+      app keeps it, the page sees the last four characters.</p>
+      ${missing.length ? `<div class="banner stop">Still needed: ${missing.map(escape).join(", ")}.</div>` : ""}
+      ${data?.error ? `<div class="banner stop">${escape(data.error)}</div>` : ""}
+      ${order.map(card).join("")}
+      <p class="hint">Only the OpenRouter key is required. Without the others the thing each one
+      is for falls back or stays off; nothing else breaks.</p>
+    </div>`;
+    wire();
+  }
+
+  function wire() {
+    for (const box of $("detail").querySelectorAll("[data-key]")) {
+      box.oninput = () => {
+        typed[box.dataset.key] = box.value;
+        // Save lights up on the first character, and nothing else redraws:
+        // re-rendering here would take the focus out of the box.
+        const button = $("detail").querySelector(`[data-save="${box.dataset.key}"]`);
+        if (button) button.disabled = !box.value.trim();
+      };
+      box.onkeydown = (e) => {
+        if (e.key === "Enter") { e.preventDefault(); save(box.dataset.key); }
+      };
+    }
+    for (const b of $("detail").querySelectorAll("[data-save]")) b.onclick = () => save(b.dataset.save);
+    for (const b of $("detail").querySelectorAll("[data-check]")) b.onclick = () => check(b.dataset.check);
+    for (const b of $("detail").querySelectorAll("[data-forget]")) b.onclick = () => forget(b.dataset.forget);
+  }
+
+  function group_of(name) {
+    return (data?.keys || []).find((k) => k.name === name)?.group || name;
+  }
+
+  // ------------------------------------------------------------ the acts --
+
+  async function save(name) {
+    const value = (typed[name] || "").trim();
+    if (!value) return;
+    busy = name;
+    render();
+    try {
+      data = await api(`/keys/${name}`, { method: "POST", body: JSON.stringify({ value }) });
+      // The box is emptied on success, because the value is now the app's
+      // and leaving it on the screen is the one thing this tab is for not
+      // doing.
+      typed[name] = "";
+      said[group_of(name)] = { text: "Saved.", ok: true };
+    } catch (err) {
+      said[group_of(name)] = { text: err.message, ok: false };
+    }
+    busy = null;
+    render();
+  }
+
+  async function check(name) {
+    busy = name;
+    said[group_of(name)] = { text: "Asking…", ok: true };
+    render();
+    try {
+      const answer = await api(`/keys/${name}/check`, { method: "POST" });
+      said[group_of(name)] = { text: answer.said, ok: true };
+      if (answer.keys) data = answer;
+    } catch (err) {
+      said[group_of(name)] = { text: err.message, ok: false };
+    }
+    busy = null;
+    render();
+  }
+
+  async function forget(name) {
+    const row = (data?.keys || []).find((k) => k.name === name);
+    if (!confirm(`Forget ${row ? row.label : name}? It is removed from the .env and from the `
+      + `running app; whatever uses it stops until you paste another.`)) return;
+    try {
+      data = await api(`/keys/${name}`, { method: "DELETE" });
+      said[group_of(name)] = { text: "Forgotten.", ok: true };
+    } catch (err) {
+      said[group_of(name)] = { text: err.message, ok: false };
+    }
+    render();
+  }
+
+  // The red word on the tab button: a required key the app has not got.
+  async function broken() {
+    try {
+      const answer = await api("/keys");
+      $("keysBroken").hidden = !(answer.missing || []).length;
+    } catch (_) { /* the server is down; the page says that elsewhere */ }
+  }
+
+  return { open, leave, poll, render, refresh, broken };
+})();
+
 const Screening = (() => {
   let data = null;        // GET /screening
   let proposal = null;    // what she last returned
