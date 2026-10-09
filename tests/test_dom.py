@@ -138,19 +138,26 @@ def test_on_the_second_pass_the_parser_is_not_handed_the_resume(browser):
     assert skipped and "Autofill from resume" in skipped[0]
 
 
+def put_source() -> str:
+    """The chip's own code, from `const SLOT_CLIMB` through the end of
+    `putFile`: the constants, the slot namer, the clearer and the putter
+    together, so what the test runs is what ships rather than a copy of it.
+    Taken as one region because `putFile` awaits `clearSlot` and reads
+    `slotWords`, and none of the three works without the others."""
+    source = (Path(__file__).resolve().parent.parent / "capture" / "content.js").read_text()
+    return "const SLOT_CLIMB" + source.split("const SLOT_CLIMB")[1].split("\nfunction esc(")[0]
+
+
 def test_the_put_chip_refuses_the_autofill_slot_too(browser):
     """The banner's chip picks the input itself, from the words round it -
     and that sentence says "resume" twice, so the parser was both first in
     document order and the best match."""
-    source = (Path(__file__).resolve().parent.parent / "capture" / "content.js").read_text()
-    put = source.split("function putFile(")[1].split("\nfunction ")[0]
-
     async def work(e, page):
         return await page.evaluate(
-            "(() => { window.prompt = () => null;"
-            f" function putFile({put}\n"
+            "(async () => { window.prompt = () => null;"
+            f" {put_source()}\n"
             " const f = new File([new Uint8Array([1])], 'tailored.pdf');"
-            " const out = putFile(f, 'resume');"
+            " const out = await putFile(f, 'resume');"
             " const on = [...document.querySelectorAll('input[type=file]')]"
             "   .map((el) => (el.files && el.files.length) ? el.files[0].name : '');"
             " return {out: out, on: on}; })()")
@@ -330,9 +337,9 @@ def test_the_controls_do_not_run_off_a_narrow_window(browser):
 
 def test_a_bin_icon_with_no_label_is_still_a_delete(browser):
     """Workday's Resume/CV takes more than one file and each row's control
-    is a bin with no text, no aria-label and no title - only
-    `data-automation-id="delete-file"`. Nothing was cleared, so the
-    tailored resume went on beside Jobright's: same filename, 60.01 KB
+    is a bin whose only readable name is `title="Delete"`; what always
+    names it is `data-automation-id="delete-file"`. Nothing was cleared, so
+    the tailored resume went on beside Jobright's: same filename, 60.01 KB
     against 90.48 KB, both "Successfully Uploaded" (2026-10-07, reported
     with a screenshot)."""
     async def work(e, page):
@@ -359,3 +366,113 @@ def test_the_label_handed_to_the_guard_is_one_a_reader_would_use(browser):
                             f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.REMOVE_LABELS)
     found = on_page(browser, "greenhouse_resume_taken.html", work)
     assert found["label"] == "Remove file"
+
+def test_the_slot_is_found_at_the_depth_workday_really_nests_it(browser):
+    """The heading that names the slot is nine ancestors above the bin
+    button on a live Workday form; the climb stopped at six, found no
+    heading at all, cleared nothing, and said so to nobody (2026-10-09,
+    reported: two rows on one slot, both 60.38 KB, both the same tailored
+    resume). The old fixture put that heading two ancestors up, so the
+    suite was green through all of it - this asserts the distance, so a
+    shallower fixture cannot make the test pass again."""
+    async def work(e, page):
+        depth = await page.evaluate("""(() => {
+          const btn = document.querySelector('[data-automation-id="delete-file"]');
+          let el = btn.parentElement, i = 0;
+          while (el && i < 40) {
+            i++;
+            if ([...el.querySelectorAll("h2,h3,h4,label,legend")]
+                  .some((h) => /resume|cv/i.test(h.textContent || ""))) return i;
+            el = el.parentElement;
+          }
+          return -1;
+        })()""")
+        found = await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                             f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS)
+        return [depth, found]
+    depth, found = on_page(browser, "workday_two_resumes.html", work)
+    assert depth >= 9, f"the fixture is shallower than the real page ({depth})"
+    assert found and found["title"] == "Resume/CV"
+
+
+def test_every_file_on_a_multi_file_slot_can_be_cleared(browser):
+    """Workday keeps one row per file and `remove_attached` clears one, so
+    clearing once on a slot holding two left the other exactly where it
+    was. `Engine.clear_slot` is the loop; this is the shape it loops over."""
+    async def work(e, page):
+        rows = []
+        for _ in range(4):
+            found = await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                                 f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS)
+            if not found:
+                break
+            rows.append(found["label"])
+            # What `CLICK_REMOVE_FN` does, and what the page does after it.
+            await page.evaluate("""(() => {
+              const btn = document.querySelector("[data-autopilot-remove]");
+              btn.closest('[data-automation-id="file-upload-item"]').remove();
+            })()""")
+        left = await page.evaluate(
+            "document.querySelectorAll('[data-automation-id=\"file-upload-item\"]').length")
+        return [rows, left]
+    rows, left = on_page(browser, "workday_two_resumes.html", work)
+    assert len(rows) == 2, rows      # both resume rows, not one
+    assert left == 1                 # and the cover letter's row is untouched
+
+def test_the_put_chip_replaces_on_workday_rather_than_adding(browser):
+    """Workday keeps the input *and* its rows, and the dropzone takes more
+    than one file - so assigning `input.files` added a copy instead of
+    replacing one, and three presses of the chip left three copies of the
+    same tailored resume on one slot (2026-10-08, reported). Greenhouse and
+    Ashby drop the input once a file is on, so this path never had to clear
+    anything and never learned how.
+
+    The fixture's bin buttons do not really remove their rows, so the rows
+    are taken off here the way Workday takes them off - the thing under test
+    is which controls the chip presses, and that it presses them all."""
+    async def work(e, page):
+        # Workday's own behaviour: the bin takes that row off the list.
+        await page.evaluate("""(() => {
+          for (const btn of document.querySelectorAll('[data-automation-id="delete-file"]'))
+            btn.addEventListener("click", () => setTimeout(() =>
+              btn.closest('[data-automation-id="file-upload-item"]').remove(), 50));
+        })()""")
+        return await page.evaluate(
+            "(async () => { window.prompt = () => null;"
+            f" {put_source()}\n"
+            " const f = new File([new Uint8Array([1])], 'tailored.pdf');"
+            " const out = await putFile(f, 'resume');"
+            " const rows = [...document.querySelectorAll("
+            "   '[data-automation-id=\"file-upload-item-name\"]')].map((d) => d.textContent);"
+            " return {out: out, rows: rows}; })()")
+    got = on_page(browser, "workday_two_resumes.html", work)
+    assert got["out"]["ok"] is True
+    # Both copies came off, and the chip says so rather than claiming a put.
+    assert "replaced 2 files" in got["out"]["note"], got["out"]["note"]
+    # The cover letter's row is not the resume's to clear.
+    assert got["rows"] == ["their_cover_letter.pdf"], got["rows"]
+
+def test_the_chip_tells_workdays_two_slots_apart_without_asking(browser):
+    """Both of Workday's file inputs sit inside "Drop files here or Select
+    files", so the words round them are identical and the chip fell through
+    to a prompt offering two lines of the same text - on the one system
+    where the resume and the cover letter are separate slots. `slotWords`
+    is what tells them apart. The prompt throws here: being asked at all is
+    the failure."""
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => { window.prompt = () => { throw new Error('asked'); };"
+            f" {put_source()}\n"
+            " const out = {};"
+            " for (const key of ['resume', 'cover_letter']) {"
+            "   const f = new File([new Uint8Array([1])], key + '.pdf');"
+            "   out[key] = await putFile(f, key);"
+            " }"
+            " out.on = [...document.querySelectorAll('input[type=file]')]"
+            "   .map((el) => (el.files && el.files.length) ? el.files[0].name : '');"
+            " return out; })()")
+    got = on_page(browser, "workday_two_resumes.html", work)
+    assert got["resume"]["ok"] is True, got["resume"]
+    assert got["cover_letter"]["ok"] is True, got["cover_letter"]
+    # Each on its own slot, in document order: resume first, letter second.
+    assert got["on"] == ["resume.pdf", "cover_letter.pdf"], got["on"]

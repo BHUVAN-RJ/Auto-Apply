@@ -23,7 +23,9 @@ What it never does:
   and the review page's own Submit is the person's click, in their browser
   or through the review page's own button. This module has no path to it.
 - It never presses **Submit**, and that is the only never here about pressing.
-  It does press **Apply** on a posting (2026-09-30, `browser/open_apply.py`),
+  It no longer presses **Apply** on a posting (2026-10-09): on Workday that
+  opened empty tabs and chooser pages of its own, and the account it leads
+  to is the person's. It waits for them instead (`wait_for_theirs`),
   under that module's own precondition: no file input, no password box and
   too few fields to be an application, so there is nothing on the page that
   could be sent. Refusing it did not protect anything - Workday's account
@@ -45,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -73,6 +76,28 @@ STAGE_TIMEOUT = 40.0    # how long a page gets to render after a navigation
 # many consecutive looks.
 STABLE_LOOKS = 2
 SETTLE_TIMEOUT = 15.0   # how long to wait for a page to stop changing
+
+# How long the person gets to open the application and sign in before the
+# job is handed back (2026-10-09, asked for). Workday's account step is
+# theirs alone: pressing Apply for them was opening empty tabs and chooser
+# pages, and giving up on the account page sent back a job whose documents
+# were fine and whose only problem was that nobody had logged in yet. So the
+# walk waits here instead, and says what it is waiting for.
+WAIT_ENV = "AUTOPILOT_WORKDAY_WAIT"
+WAIT_SECONDS = 600.0
+WAIT_POLL = 2.0
+# What counts as the application being open: page 1 of the form, or any
+# later page of it. A posting, an account page and an email-verification
+# page are all still the person's turn.
+THEIRS = ("posting", "account", "verify", "unknown")
+
+
+def wait_seconds() -> float:
+    """Read at call time, never frozen into a signature."""
+    try:
+        return float(os.environ.get(WAIT_ENV) or WAIT_SECONDS)
+    except ValueError:
+        return WAIT_SECONDS
 
 
 def is_workday(url: str) -> bool:
@@ -284,11 +309,14 @@ class WorkdayResult:
 # driver never guesses beyond these: every one of them is something only
 # they can do.
 PAUSES = {
-    "needs_apply": "this is still the posting, not the form: press Apply in the browser "
-                   "(Autopilot never presses Apply), then press Carry on",
-    "needs_sign_in": "Workday wants an account: sign in or let Jobright create one in the "
-                     "browser, then press Carry on",
-    "verify_email": "Workday sent a verification email: open it and verify, then press Carry on",
+    "needs_apply": "still the posting rather than the form after waiting for you: press "
+                   "Apply in the browser (Autopilot never presses Apply on Workday), "
+                   "then press Carry on",
+    "needs_sign_in": "Workday wants an account, and waited for you to make or use one: sign "
+                     "in in the browser until the application's first page is up, then "
+                     "press Carry on",
+    "verify_email": "Workday sent a verification email and waited for it: open it and "
+                    "verify, then press Carry on",
     "blocked": "Workday will not move on until these are answered; fill them in the browser, "
                "then press Carry on",
     "stuck": "the page did not move on and said nothing about why; look at the browser, "
@@ -451,8 +479,70 @@ async def advance(page: Session, before: tuple, timeout: Optional[float] = None)
     return look
 
 
+async def wait_for_theirs(page: Session, why: str, notify=None,
+                          timeout: Optional[float] = None) -> dict:
+    """Wait on a page whose next step is the person's, and return the look
+    the application's first page settles on.
+
+    Workday asks for an account, and often an emailed verification, before
+    it shows page 1 - and both are theirs: no credential is typed here and
+    Apply is not pressed (2026-10-09, asked for: "wait for the login to
+    happen and for the user to land on page 1 so it can keep carrying on").
+    The walk used to stop dead on those pages and hand the job back, so an
+    application with its tailored resume ready sat on the failed shelf
+    because nobody had logged in during the forty seconds it waited.
+
+    Returns the settled look once `stage_of` says the form is up, or the
+    last look when the time runs out - the caller tells them apart by
+    asking `stage_of` again.
+    """
+    deadline = time.monotonic() + (wait_seconds() if timeout is None else timeout)
+    look: dict = {}
+    said = ""
+    while time.monotonic() < deadline:
+        if notify and why != said:
+            said = why
+            try:
+                outcome = notify(why)
+                if asyncio.iscoroutine(outcome):
+                    await outcome
+            except Exception:  # noqa: BLE001 - the banner is advice
+                pass
+        await asyncio.sleep(WAIT_POLL)
+        try:
+            look = await look_at(page)
+        except Exception:  # noqa: BLE001 - mid-render, look again
+            continue
+        stage = stage_of(look)
+        if stage not in THEIRS:
+            # The form is up. Let it finish drawing itself before anybody
+            # reads it or presses anything on it.
+            return await settled(page) or look
+        if stage != "unknown" and PAUSES.get(_waiting_for(stage)) and why != WAITING[stage]:
+            # The wall changed shape - a posting became an account page,
+            # an account page became a verification. Say the new thing.
+            why, said = WAITING[stage], ""
+    return look
+
+
+def _waiting_for(stage: str) -> str:
+    return {"posting": "needs_apply", "account": "needs_sign_in",
+            "verify": "verify_email"}.get(stage, "stuck")
+
+
+# What the badge on the tab says while it is the person's turn. Each one
+# names what they do and promises what happens after it.
+WAITING = {
+    "posting": "Waiting for you to press Apply — I carry on from page 1",
+    "account": "Waiting while you sign in to Workday — I carry on from page 1",
+    "verify": "Waiting while you verify your email — I carry on from page 1",
+    "unknown": "Waiting for the application's first page",
+}
+
+
 async def walk(cdp_url: str, target_id: str, resume=None, cover_letter=None,
-               answerer=None, corrections=None, max_pages: int = MAX_PAGES) -> WorkdayResult:
+               answerer=None, corrections=None, max_pages: int = MAX_PAGES,
+               notify=None) -> WorkdayResult:
     """Walk one Workday application, page by page, and stop at the review.
 
     On each page: Jobright's autofill, then the tailored documents and the
@@ -460,59 +550,64 @@ async def walk(cdp_url: str, target_id: str, resume=None, cover_letter=None,
     Submit - the review page is where this ends, which is checkpoint 2, and
     the person's own click is what follows it.
 
-    Stops and says why whenever the next step is the person's: an account,
-    an email to verify, a question Workday will not let pass, or a page that
-    would not move.
+    Waits, rather than stopping, the first time the next step is the
+    person's: the posting's own Apply, the account, the emailed
+    verification. Apply is never pressed here (2026-10-09) - on Workday that
+    opened empty tabs and chooser pages, and the account behind it is theirs
+    alone. `notify` is called with what is being waited for, for the badge on
+    the tab. After one wait a wall that is still there is handed back, and so
+    is a question Workday will not let pass or a page that would not move.
     """
-    from . import autofill, open_apply, signin
+    from . import autofill
     from .forms import Adapter
     from .forms.engine import mark_named_file, run_documents
 
     result = WorkdayResult(target_id=target_id)
-    applies = 0
+    waited = False
     async with autofill.attached(cdp_url, target_id=target_id) as (page, _):
         await page.send("DOM.enable")
         # Nothing is read or pressed until the first page has stopped
         # drawing itself; the tab has just been opened or has just come back
         # from Apply, and a Workday page arrives in pieces.
         await settled(page)
-        for number in range(1, max_pages + 1):
+        number = 0
+        while number < max_pages:
             try:
                 look = await look_at(page)
             except Exception as error:  # noqa: BLE001
-                result.errors.append(f"reading page {number}: {error}")
+                result.errors.append(f"reading page {number + 1}: {error}")
                 break
             stage = stage_of(look)
             result.stage = stage
+
+            # The posting, the account and the email are the person's, and
+            # waiting for them is not a page of the application (2026-10-09,
+            # asked for). Apply is no longer pressed here at all: on Workday
+            # that was opening empty tabs and chooser pages, and the account
+            # it leads to is the one step that must never be automated. So
+            # the walk watches, says what it is waiting for, and picks the
+            # application up at page 1 - once each, so a wall that comes
+            # back after the full wait is the person's to look at.
+            if stage in THEIRS:
+                if waited:
+                    result.paused = _waiting_for(stage)
+                    result.detail = PAUSES.get(result.paused, PAUSES["stuck"])
+                    break
+                waited = True
+                look = await wait_for_theirs(page, WAITING.get(stage, WAITING["unknown"]),
+                                             notify=notify)
+                stage = stage_of(look)
+                result.stage = stage
+                if stage in THEIRS:
+                    result.paused = _waiting_for(stage)
+                    result.detail = PAUSES.get(result.paused, PAUSES["stuck"])
+                    break
+
+            number += 1
             step = Page(number=number, stage=stage, url=str(look.get("url") or ""),
                         heading=(look.get("heads") or [""])[0])
             result.pages.append(step)
 
-            if stage == "posting":
-                # The same press the sign-in watch makes, with the same
-                # precondition: a posting has nothing on it that could be
-                # sent. Anything else about this page is the person's.
-                if applies >= open_apply.MAX_PRESSES:
-                    result.paused, result.detail = "needs_apply", PAUSES["needs_apply"]
-                    break
-                shot = signin.Look(url=str(look.get("url") or ""),
-                                   fields=int(look.get("editable") or 0),
-                                   files=int(look.get("files") or 0),
-                                   passwords=int(look.get("passwords") or 0))
-                label = await open_apply.press(page, shot)
-                if not label:
-                    result.paused, result.detail = "needs_apply", PAUSES["needs_apply"]
-                    break
-                applies += 1
-                step.advanced = bool(await advance(page, _shape(look)))
-                continue
-
-            if stage == "account":
-                result.paused, result.detail = "needs_sign_in", PAUSES["needs_sign_in"]
-                break
-            if stage == "verify":
-                result.paused, result.detail = "verify_email", PAUSES["verify_email"]
-                break
             if stage == "review":
                 # The end of the line. Submit is the person's, from the page
                 # or from the review page's own button.

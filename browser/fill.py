@@ -620,7 +620,20 @@ async def fill_async(
 
             gate_tab = [""]
             gate_tab[0] = autofill.find_tab(cdp_url, form_url)
-            tab, gate = await signin.ready_tab(cdp_url, form_url, notify=say)
+            # Workday is waited for, never pressed (2026-10-09, asked for).
+            # Pressing its Apply was opening empty tabs and chooser pages
+            # nobody asked for, and its account step is the one thing the
+            # autopilot must not touch - so on Workday the fill opens the
+            # page, says what it is waiting for, and does nothing at all
+            # until the application's first page is on the screen. Every
+            # other system keeps the press: the account there is not offered
+            # until Apply has been pressed.
+            hands_off = workday.is_workday(form_url) or workday.is_workday(url)
+            tab, gate = await signin.ready_tab(cdp_url, form_url, notify=say,
+                                               press_apply=not hands_off,
+                                               patient=hands_off,
+                                               timeout=workday.wait_seconds() if hands_off
+                                               else signin.SIGNIN_TIMEOUT)
             gate_tab[0] = tab
             if gate.applied:
                 log.info("pressed Apply (%s), %d time(s)", gate.applied, gate.pressed)
@@ -688,8 +701,13 @@ async def fill_async(
                else autofill.find_tab(cdp_url, url))
         if tab:
             try:
+                async def waiting(line: str, _tab=tab) -> None:
+                    # The badge on the tab, so a ten-minute wait for a
+                    # sign-in looks like waiting rather than like nothing.
+                    await autofill.notify(cdp_url, _tab, "working", line)
+
                 walk = await workday.walk(cdp_url, tab, resume_pdf, cover_letter_pdf,
-                                          answerer, _corrections_store())
+                                          answerer, _corrections_store(), notify=waiting)
             except Exception as error:  # noqa: BLE001 - then the one-page path
                 log.info("workday walk: %s", error)
                 walk = None

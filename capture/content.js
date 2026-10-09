@@ -944,7 +944,7 @@ async function loadFiles(shadow, jobId) {
   for (const button of row.querySelectorAll(".chip.put")) {
     button.addEventListener("click", async () => {
       const key = button.dataset.put;
-      const result = putFile(files[key], key);
+      const result = await putFile(files[key], key);
       button.innerHTML = `<b>${result.ok ? "✓" : "✕"}</b> ${esc(result.note)}`;
       // A slot the person filled from here is as much ours as one the fill
       // filled, and it was the one path with no logo in front of it, so a
@@ -960,11 +960,88 @@ async function loadFiles(shadow, jobId) {
   }
 }
 
+// Takes whatever is already on a slot off it, so putting a file replaces
+// rather than adds. Scoped to the slot the file is going on: the controls
+// are searched upward from that input and no further than the block that
+// holds it, so a resume's bin can never answer for the cover letter.
+//
+// Workday's is a bin icon with no text in it at all - what names it is
+// `data-automation-id="delete-file"` - which is why the coded names are
+// read as well as the spoken ones. `CLEAR_NOT` is the other half: only a
+// control that plainly clears is pressed, never "Replace" or "Change"
+// (a native file chooser on some systems) and never anything that reads as
+// finishing or sending the application.
+// Which slot a file input belongs to, when nothing near it says. Workday's
+// resume input sits inside "Drop files here or Select files" and so does its
+// cover-letter input, so `describe` below read the two as identical and the
+// chip fell through to asking the person to choose between two lines of the
+// same words. What tells them apart is further up: the heading
+// (<h4>Resume/CV</h4>) or the slot's own `data-fkit-id`
+// ("resumeAttachments--attachments", whose camelCase hides the word from a
+// plain match, hence `words`). Returns the names of the first ancestor that
+// mentions either slot, so the container holding *both* headings is never
+// reached and cannot answer for either.
+const SLOT_CLIMB = 10;
+const SLOT_SAYS = /resume|\bcv\b|curriculum|cover/i;
+
+function slotWords(input) {
+  const text = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+  const words = (v) => String(v || "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[^A-Za-z0-9]+/g, " ").trim();
+  let el = input.parentElement;
+  for (let i = 0; i < SLOT_CLIMB && el; i++, el = el.parentElement) {
+    const names = [
+      ...[...el.querySelectorAll("h2, h3, h4, label, legend")].map(text),
+      ...["data-fkit-id", "data-automation-id", "aria-label", "id"].map((a) => words(el.getAttribute(a))),
+    ].filter((n) => n && n.length <= 80);
+    if (names.some((n) => SLOT_SAYS.test(n))) return names.join(" ");
+  }
+  return "";
+}
+
+const CLEAR_IS = /\b(remove|delete|clear)\b|^[×✕x]$/i;
+const CLEAR_NOT = /submit|send|finish|complete|appl(y|ication)|continue|next|save|sign\s*in|account/i;
+const CLEAR_MAX = 6;
+const CLEAR_SETTLE_MS = 400;   // Workday takes the row off on a state update
+
+async function clearSlot(input) {
+  const text = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+  const spoken = (el) => [el.getAttribute("aria-label"), el.getAttribute("title"), text(el)]
+      .filter(Boolean).map((v) => v.trim());
+  const coded = (el) => [el.getAttribute("data-automation-id"), el.getAttribute("name"), el.id,
+                         (el.className || "").toString()].filter(Boolean).map((v) => String(v).trim());
+  const clears = (el) => {
+    const names = [...spoken(el), ...coded(el)].filter((n) => n.length <= 60);
+    return names.some((n) => CLEAR_IS.test(n)) && !names.some((n) => CLEAR_NOT.test(n));
+  };
+  // The smallest block above the input that holds a clearing control. Small
+  // first: the point is to stay inside this slot.
+  let block = input.parentElement, found = [];
+  for (let i = 0; i < 8 && block; i++, block = block.parentElement) {
+    found = [...block.querySelectorAll("button, [role=button], a")].filter(clears);
+    if (found.length) break;
+  }
+  let gone = 0;
+  for (let round = 0; round < CLEAR_MAX && found.length; round++) {
+    const before = found.length;
+    try { found[0].click(); } catch { break; }
+    // The row goes on a re-render, not on the click, so the count is read
+    // again only after the page has had a moment to drop it. Read too soon
+    // and every slot looks like one that would not clear.
+    await new Promise((done) => setTimeout(done, CLEAR_SETTLE_MS));
+    const left = [...block.querySelectorAll("button, [role=button], a")].filter(clears);
+    if (left.length >= before) break;         // the press changed nothing
+    gone++;
+    found = left;
+  }
+  return gone;
+}
+
 // Sets a file input on the page to the tailored file, the way a drop
 // would. Which input: the one whose name, id, or label reads as the file's
 // kind; else the only one; else the person picks from a numbered list.
 // Fires the events a real pick fires so the form notices.
-function putFile(file, key) {
+async function putFile(file, key) {
   const inputs = [];
   const walk = (root) => {
     for (const el of root.querySelectorAll("input[type=file]")) inputs.push(el);
@@ -984,7 +1061,7 @@ function putFile(file, key) {
   const describe = (el) => {
     const label = el.labels && el.labels.length ? [...el.labels].map((l) => l.innerText).join(" ") : "";
     const near = el.closest("label, fieldset, section, div")?.innerText?.slice(0, 80) || "";
-    return `${el.name || ""} ${el.id || ""} ${el.getAttribute("aria-label") || ""} ${label} ${near}`.replace(/\s+/g, " ").trim();
+    return `${el.name || ""} ${el.id || ""} ${el.getAttribute("aria-label") || ""} ${label} ${near} ${slotWords(el)}`.replace(/\s+/g, " ").trim();
   };
   const want = key === "resume" ? /resume|\bcv\b|curriculum/i : /cover\s*letter/i;
   const other = key === "resume" ? /cover\s*letter/i : /resume|\bcv\b|curriculum/i;
@@ -1007,6 +1084,15 @@ function putFile(file, key) {
     if (!(pick >= 1 && pick <= described.length)) return { ok: false, note: "cancelled" };
     target = described[pick - 1];
   }
+  // Workday keeps the input *and* the attachment it already holds, and its
+  // dropzone takes more than one file - so assigning `input.files` adds a
+  // row rather than replacing one, and three presses of this chip left three
+  // copies of the same tailored resume on one slot (2026-10-08, reported).
+  // On Greenhouse and Ashby the input vanishes once a file is on, so this
+  // path never had to clear anything and never learned how. The fill's own
+  // side has done it since 2026-09-30 (`engine.remove_attached`); this is
+  // the same step, by the person's click.
+  const cleared = await clearSlot(target.el);
   try {
     const dt = new DataTransfer();
     dt.items.add(file);
@@ -1016,7 +1102,8 @@ function putFile(file, key) {
     target.el.setAttribute("data-autopilot-ref", key === "resume" ? "put-resume" : "put-cover-letter");
     target.el.dispatchEvent(new Event("input", { bubbles: true }));
     target.el.dispatchEvent(new Event("change", { bubbles: true }));
-    return { ok: true, note: `put in “${target.text.slice(0, 30) || "file input"}”` };
+    const said = cleared ? `replaced ${cleared > 1 ? `${cleared} files` : "the file"} in` : "put in";
+    return { ok: true, note: `${said} “${target.text.slice(0, 30) || "file input"}”` };
   } catch (err) {
     return { ok: false, note: err.message };
   }

@@ -255,7 +255,7 @@ async def look_at(page: Session) -> Look:
 
 async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
                         timeout: float = SIGNIN_TIMEOUT, notify=None,
-                        press_apply: bool = True) -> Wait:
+                        press_apply: bool = True, patient: bool = False) -> Wait:
     """Watch one tab until its application form is on the screen.
 
     Follows the tab, never the link: single sign-on takes the page to
@@ -268,6 +268,13 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
     pressed (`press_apply`, and only on a page with nothing to send), because
     the account is not offered until it is. `notify` is called with a short
     line whenever the answer changes, for the banner on the tab.
+
+    `patient` gives the page the whole timeout even though no sign-in was
+    ever recognised. It is for the systems whose wall we know is there and
+    cannot reliably see - Workday, whose posting header carries "Sign In" on
+    every tenant and whose account page is reached by a press this no longer
+    makes. There the short no-wall cutoff was answering "no application form
+    on this page" while the person was still typing their password.
     """
     result = Wait(target_id=target_id)
     started = time.monotonic()
@@ -291,6 +298,13 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
                 if notify and line != said:
                     said = line
                     await _say(notify, line)
+            elif patient:
+                # Told to wait, and nothing on the page says why yet: say so
+                # rather than leaving the badge silent for ten minutes.
+                line = "Waiting for you to open the application and sign in — I carry on from page 1"
+                if notify and line != said:
+                    said = line
+                    await _say(notify, line)
             elif press_apply and result.pressed < open_apply.MAX_PRESSES:
                 # A posting, with nothing on it that could be sent. Pressing
                 # its Apply is what the person approved at checkpoint 1; the
@@ -311,10 +325,11 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
             # The full wait belongs to a wall that is really there. A posting
             # nobody is standing in front of gives up quickly instead, so one
             # job does not hold the one-at-a-time fill queue for ten minutes.
-            limit = timeout if result.saw_signin else min(timeout, NO_SIGNIN_TIMEOUT)
+            limit = timeout if (patient or result.saw_signin) else min(timeout, NO_SIGNIN_TIMEOUT)
             if result.waited >= limit:
                 result.note = ("no application form appeared while waiting to be signed in"
-                               if result.saw_signin else "no application form on this page")
+                               if result.saw_signin or patient
+                               else "no application form on this page")
                 break
             await asyncio.sleep(POLL)
     result.waited = time.monotonic() - started
@@ -322,7 +337,8 @@ async def wait_for_form(cdp_url: str, target_id: str, job_url: str = "",
 
 
 async def ready_tab(cdp_url: str, url: str, timeout: float = SIGNIN_TIMEOUT,
-                    notify=None, press_apply: bool = True) -> tuple[str, Wait]:
+                    notify=None, press_apply: bool = True,
+                    patient: bool = False) -> tuple[str, Wait]:
     """The tab this job's form is on, once it is reachable.
 
     Reuses the tab already open on the job (the one the injector screened,
@@ -337,7 +353,7 @@ async def ready_tab(cdp_url: str, url: str, timeout: float = SIGNIN_TIMEOUT,
         async with attached(cdp_url, url) as (_, opened):
             target_id = opened
     wait = await wait_for_form(cdp_url, target_id, url, timeout=timeout, notify=notify,
-                               press_apply=press_apply)
+                               press_apply=press_apply, patient=patient)
     wait.target_id = target_id
     return target_id, wait
 

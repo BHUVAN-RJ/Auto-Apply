@@ -596,6 +596,15 @@ FIND_REMOVE_FN = r"""
   const skip = exclude ? new RegExp(exclude, "i") : null;
   const text = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
   const remove = new RegExp(labels, "i");
+  // Measured on a live Workday form (2026-10-09, Applied Materials): the bin
+  // button that clears an attachment sits *nine* ancestors below the
+  // <h4>Resume/CV</h4> that names the slot. The climb stopped at six, found
+  // no heading at all, and every clear on Workday silently did nothing - so
+  // the tailored resume went on beside the old one and the form carried two.
+  // `tests/dom/workday_two_resumes.html` was built from a screenshot and put
+  // the heading two ancestors up, which is why the suite was green through
+  // all of it.
+  const CLIMB = 14;
   // What a control that clears a file is called, in the four places a page
   // may say it. Workday's is a bin icon with no text in it at all; what
   // names it is `data-automation-id="delete-file"`, and an icon-only button
@@ -620,26 +629,46 @@ FIND_REMOVE_FN = r"""
       .some((n) => n.length <= 60 && remove.test(n));
   const shown = (btn) => spoken(btn).find((n) => n.length <= 40 && remove.test(n))
       || spoken(btn).find((n) => n.length <= 40) || "remove";
-  for (const btn of document.querySelectorAll("button, [role=button], a")) {
-    if (!clears(btn)) continue;
+  // An identifier split into words. `data-fkit-id="resumeAttachments--
+  // attachments"` names the slot four ancestors below the heading that
+  // names it, and camelCase hides the word from \bresume\b, so a coded
+  // name is broken apart before it is read. Never used to *describe* a
+  // control - only to recognise which slot a block belongs to.
+  const words = (v) => String(v || "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[^A-Za-z0-9]+/g, " ").trim();
+  const named = (el) => [el.getAttribute("data-fkit-id"), el.getAttribute("data-automation-id"),
+                         el.getAttribute("aria-label"), el.id].filter(Boolean).map(words);
+  // One climb per kind of name, readable first: the heading a person sees is
+  // what the log should say the slot was, so a coded identifier four
+  // ancestors nearer must not take the title off it.
+  const climb = (btn, names) => {
     let block = btn.parentElement;
-    for (let i = 0; i < 6 && block; i++, block = block.parentElement) {
-      let found = null;
-      for (const heading of block.querySelectorAll("label, legend, [class*='label' i], [id*='label' i], h2, h3, h4")) {
-        const title = text(heading);
-        if (!title || title.length > 80) continue;
-        // A block holding both slots' headings answers for neither: climb
-        // no further and leave this button alone.
-        if (skip && skip.test(title)) { found = "mixed"; break; }
-        if (want.test(title)) { found = title; break; }
-      }
-      if (found === "mixed") break;
-      if (found) {
-        for (const old of document.querySelectorAll("[data-autopilot-remove]")) old.removeAttribute("data-autopilot-remove");
-        btn.setAttribute("data-autopilot-remove", "1");
-        return { label: shown(btn), title: found, file: text(block).replace(found, "").trim().slice(0, 120) };
+    for (let i = 0; i < CLIMB && block; i++, block = block.parentElement) {
+      for (const name of names(block)) {
+        if (!name || name.length > 80) continue;
+        // A block holding both slots' names answers for neither: climb no
+        // further and leave this button alone.
+        if (skip && skip.test(name)) return null;
+        if (want.test(name)) return { block, title: name };
       }
     }
+    return null;
+  };
+  const headings = (block) =>
+    [...block.querySelectorAll("label, legend, [class*='label' i], [id*='label' i], h2, h3, h4")]
+        .map(text);
+  for (const btn of document.querySelectorAll("button, [role=button], a")) {
+    if (!clears(btn)) continue;
+    // Then what only the markup says. Workday's nearest readable label is
+    // "Upload a file (5MB max)", which names no slot at all, and the
+    // heading that does is nine ancestors up; its `data-fkit-id` names one
+    // three ancestors before that.
+    const hit = climb(btn, headings) || climb(btn, named);
+    if (!hit) continue;
+    for (const old of document.querySelectorAll("[data-autopilot-remove]")) old.removeAttribute("data-autopilot-remove");
+    btn.setAttribute("data-autopilot-remove", "1");
+    return { label: shown(btn), title: hit.title,
+             file: text(hit.block).replace(hit.title, "").trim().slice(0, 120) };
   }
   return null;
 })
@@ -1341,6 +1370,23 @@ class Engine:
         await asyncio.sleep(POLL * 4)
         return str(await self.call(FILE_NAME_FN, f.ref, path.name) or "")
 
+    async def clear_slot(self, pattern: str, exclude: str = "",
+                         labels: str = REMOVE_LABELS, limit: int = 4) -> int:
+        """Clear every file already on the slot `pattern` names, not one.
+
+        Workday's Resume/CV is a dropzone that takes more than one file and
+        keeps a row per file, so clearing once left the earlier copies
+        exactly where they were: a form carrying two resumes with nothing to
+        say which was sent (2026-10-08, reported with both rows at 60.38 KB,
+        the same tailored resume twice). Returns how many came off.
+        """
+        cleared = 0
+        while cleared < limit:
+            if not await self.remove_attached(pattern, exclude, labels):
+                break
+            cleared += 1
+        return cleared
+
     async def remove_attached(self, pattern: str, exclude: str = "",
                               labels: str = REMOVE_LABELS) -> bool:
         """Click the remove button on the file slot whose label matches
@@ -1640,7 +1686,7 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
         for pattern, exclude in ((RESUME_SLOT, f"{COVER_SLOT}|{PARSE_SLOT}"),
                                  (COVER_SLOT, f"{RESUME_SLOT}|{PARSE_SLOT}")):
             try:
-                if await engine.remove_attached(pattern, exclude):
+                if await engine.clear_slot(pattern, exclude):
                     fields = await engine.wait_for_fields()
                     resume_input, cover_input = engine.file_inputs(fields)
             except Exception as error:  # noqa: BLE001 - then it reads as no form
@@ -1667,7 +1713,7 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
             # the slot. Anything that clears it is worth pressing, because
             # without the input there is nothing else to try.
             try:
-                if await engine.remove_attached(pattern, exclude):
+                if await engine.clear_slot(pattern, exclude):
                     fields = await engine.wait_for_fields()
             except Exception as error:  # noqa: BLE001 - then the agent replaces it
                 report.errors.append(f"clearing the {what} slot: {error}")
@@ -1679,7 +1725,7 @@ async def run_documents(page: Session, adapter: Adapter, target_id: str = "",
         # that plainly deletes; "Replace" and "Change" open a native file
         # chooser on some systems, which froze a tab once.
         try:
-            if await engine.remove_attached(pattern, exclude, DELETE_LABELS):
+            if await engine.clear_slot(pattern, exclude, DELETE_LABELS):
                 fields = await engine.wait_for_fields()
                 resume_input, cover_input = engine.file_inputs(fields)
                 have = resume_input if what == "resume" else cover_input

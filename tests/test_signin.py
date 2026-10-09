@@ -349,3 +349,36 @@ def test_nothing_is_pressed_before_the_form_is_on_the_screen():
     assert "if (walk is None and easy is None and form_is_up and not filled.attempted" in source
     # And the job comes back as one needing a person, not a failure.
     assert "filled.errors.append(forms.NOT_A_FORM)" in source
+
+def test_a_patient_watch_waits_out_a_wall_it_cannot_see(monkeypatch):
+    """Workday's posting header carries "Sign In" on every tenant, so the
+    wall is never recognised there - and since 2026-10-09 Apply is not
+    pressed on Workday either, so the account page it leads to never
+    appears while we are looking. The short no-wall cutoff was therefore
+    answering "no application form on this page" while the person was still
+    typing their password. `patient` gives the page the whole timeout and
+    says what it is waiting for."""
+    posting = {"url": "https://acme.wd5.myworkdayjobs.com/job/1", "text": "A job",
+               "fields": 1, "files": 0, "passwords": 0}
+    form = {"url": "https://acme.wd5.myworkdayjobs.com/job/1/apply", "text": "My Information",
+            "fields": 9, "files": 1, "passwords": 0}
+    page = PressablePage([posting, posting, form], [])
+    monkeypatch.setattr(signin, "NO_SIGNIN_TIMEOUT", 0.01)
+    said = []
+    result = _watch(monkeypatch, page, timeout=600, press_apply=False, patient=True,
+                    notify=said.append)
+    # It did not give up at the short cutoff, and nothing was pressed.
+    assert result.ready, result.note
+    assert page.presses == []
+    assert said and "sign in" in said[0].lower()
+
+
+def test_a_patient_watch_still_gives_the_queue_its_tab_back(monkeypatch):
+    """Patient is not for ever: the fills run one at a time, so the timeout
+    is the cap and the note says what was being waited for."""
+    posting = {"url": "https://acme.wd5.myworkdayjobs.com/job/1", "text": "A job",
+               "fields": 1, "files": 0, "passwords": 0}
+    page = PressablePage([posting], [])
+    result = _watch(monkeypatch, page, timeout=0.05, press_apply=False, patient=True)
+    assert not result.ready
+    assert "waiting to be signed in" in result.note

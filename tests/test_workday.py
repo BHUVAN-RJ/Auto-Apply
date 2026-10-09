@@ -79,10 +79,24 @@ class Tenant:
         return {}
 
 
+class Waited(Tenant):
+    """A tenant that moves on only when the person does something.
+
+    `move_on` is their hand: it serves the next look with no click from us,
+    which is the whole shape of the sign-in wait. The tests call it from the
+    `notify` callback - the badge asks, the person acts - so what advances
+    the page is never anything the walk did, and a wait that never happened
+    cannot pass by accident.
+    """
+
+    def move_on(self):
+        self.at = min(self.at + 1, len(self.looks) - 1)
+
+
 @pytest.fixture
 def tenant(monkeypatch):
-    def build(looks, controls=None, documents=None):
-        t = Tenant(looks, controls)
+    def build(looks, controls=None, documents=None, waits=False):
+        t = (Waited(looks, controls) if waits else Tenant(looks, controls))
 
         @asynccontextmanager
         async def attached(cdp_url, url="", target_id=""):
@@ -107,6 +121,10 @@ def tenant(monkeypatch):
         monkeypatch.setattr(workday, "SETTLE", 0)
         monkeypatch.setattr(workday, "ADVANCE_TIMEOUT", 0.05)
         monkeypatch.setattr(workday, "SETTLE_TIMEOUT", 0.05)
+        # The wait for the person, in test time. Ten minutes is the real one.
+        monkeypatch.setattr(workday, "WAIT_SECONDS", 0.5)
+        monkeypatch.setattr(workday, "WAIT_POLL", 0)
+        monkeypatch.delenv(workday.WAIT_ENV, raising=False)
         return t
     return build
 
@@ -134,10 +152,49 @@ def test_it_walks_to_the_review_page_and_stops_there(tenant, tmp_path):
     assert len(t.clicks) == 4
 
 
-def test_it_stops_at_the_account_and_says_whose_turn_it_is(tenant):
+def test_it_waits_at_the_account_and_then_says_whose_turn_it_is(tenant):
+    """Nobody signed in during the wait, so the job goes back to the person
+    - but it waited first, and it never touched the page."""
     t = tenant([page(["Sign In", "Create Account"], editable=3, passwords=1)])
     result = walk()
     assert result.paused == "needs_sign_in" and "sign in" in result.detail
+    assert t.clicks == []
+
+
+def test_it_waits_for_the_sign_in_and_carries_on_from_page_one(tenant):
+    """The account step is the person's, and waiting for it is the whole
+    point (2026-10-09, asked for). The walk used to stop dead the moment it
+    saw a password box: an application with its tailored resume ready went
+    to the failed shelf because nobody had logged in inside forty seconds.
+    Nothing here presses anything to make it happen."""
+    said = []
+    t = tenant([
+        page(["Sign In", "Create Account"], editable=3, passwords=1),
+        page(["My Information"], editable=9),
+        page(["Review"], editable=1, buttons=("Submit",)),
+    ], waits=True)
+
+    def asked(line):
+        said.append(line)
+        t.move_on()          # the person signs in, because the badge asked
+
+    result = asyncio.run(workday.walk("http://x", "TAB", notify=asked))
+    assert result.reached_review, result.detail
+    # The account page is not a page of the application.
+    assert [p.stage for p in result.pages] == ["form", "review"]
+    assert result.pages[0].number == 1
+    # And the badge said what it was waiting for, naming what happens after.
+    assert said and "sign in" in said[0].lower() and "page 1" in said[0]
+
+
+def test_a_wall_that_is_still_there_after_the_wait_is_handed_back(tenant):
+    """One wait, not a loop: a page that is still the person's when the time
+    is up is theirs to look at, and the queue is not held for ever."""
+    t = tenant([page(["Sign In"], editable=3, passwords=1),
+                page(["Verify Your Email"], editable=1, text="verification code")],
+               waits=True)
+    result = asyncio.run(workday.walk("http://x", "TAB", notify=lambda _: t.move_on()))
+    assert result.paused == "verify_email"
     assert t.clicks == []
 
 
@@ -156,14 +213,33 @@ def test_a_page_that_will_not_advance_says_what_workday_wants(tenant):
     assert result.needs == ["Phone Number (needs a value)"]
 
 
-def test_a_posting_has_its_apply_pressed(tenant):
+def test_a_posting_is_waited_for_rather_than_pressed(tenant):
+    """Apply is not pressed on Workday any more (2026-10-09, asked for): it
+    was opening empty tabs and chooser pages of its own, and the account it
+    leads to is the person's. The walk waits for them to press it and picks
+    the application up at page 1."""
     t = tenant([
         page(["Associate Software Engineer"], editable=1, buttons=("Apply",)),
-        page(["Sign In"], editable=3, passwords=1),
-    ], controls=[{"text": "Apply", "shown": True, "disabled": False, "top": 1, "x": 5, "y": 6}])
+        page(["My Information"], editable=9),
+        page(["Review"], editable=1, buttons=("Submit",)),
+    ], controls=[{"text": "Apply", "shown": True, "disabled": False, "top": 1, "x": 5, "y": 6}],
+       waits=True)
+    result = asyncio.run(workday.walk("http://x", "TAB", notify=lambda _: t.move_on()))
+    assert result.reached_review, result.detail
+    # Four clicks would be ours; the only presses here are the page turns
+    # after the form was up, and none of them is on the posting.
+    assert all(c.get("y") != 6 for c in t.clicks), t.clicks
+    assert [p.stage for p in result.pages] == ["form", "review"]
+
+
+def test_the_posting_is_handed_back_when_nobody_presses_apply(tenant):
+    t = tenant([page(["Associate Software Engineer"], editable=1, buttons=("Apply",))],
+               controls=[{"text": "Apply", "shown": True, "disabled": False,
+                          "top": 1, "x": 5, "y": 6}])
     result = walk()
-    assert t.clicks, "Apply was never pressed"
-    assert result.paused == "needs_sign_in"
+    assert result.paused == "needs_apply"
+    assert "never presses Apply" in result.detail
+    assert t.clicks == []
 
 
 def test_an_application_that_goes_round_for_ever_stops(tenant):

@@ -247,7 +247,7 @@ Specifically:
 | `browser/ats.py` + `ats_rules.md` | per-system notes for the browser model, picked by URL (oracle, greenhouse, ashby, workday, lever), sent verbatim under "Notes for this application system". Edit the markdown, not the Python. Oracle: one "Upload Attachment" control for every document, so the upload guard lets the cover letter onto a generic attachment slot (never onto a resume-named one) |
 | `browser/guard.py` | the never-submit deny-list |
 | `browser/open_apply.py` | **the only place Apply is pressed** (2026-09-30). Apply is not Submit, and the difference is checked on the page: `safe_to_press` wants no file input, no password box and fewer than `signin.FORM_FIELDS` editable fields, so there is nothing on it that could be sent; `APPLY_START` must match the control's whole label (including LinkedIn's "Easy Apply") and `NOT_APPLY` disqualifies submit / send / finish / withdraw / save / sign in. `MAX_PRESSES` 3: posting → chooser → "Apply Manually". Does not import `guard`, may not name the submit presser (invariant #6 reads it as text), one gated `Input.dispatchMouseEvent` |
-| `browser/workday.py` | **Workday, page by page** (2026-09-30). `walk`: per page, Jobright's autofill, the tailored documents on the page that has a slot, corrections, open questions, then that page's own "Save and Continue", up to `MAX_PAGES`. Ends at the review page, never Submit; `PAUSES` names whose turn it is (account, email verification, a question `blocking()` found, a page that would not move). `stage_of` reads a posting *before* a review page, because `guard.describes_submit` answers yes to "Apply". Writes `workday.json` |
+| `browser/workday.py` | **Workday, page by page** (2026-09-30). `walk`: per page, Jobright's autofill, the tailored documents on the page that has a slot, corrections, open questions, then that page's own "Save and Continue", up to `MAX_PAGES`. Ends at the review page, never Submit; `PAUSES` names whose turn it is (account, email verification, a question `blocking()` found, a page that would not move). `stage_of` reads a posting *before* a review page, because `guard.describes_submit` answers yes to "Apply". **Apply is not pressed here and the person's steps are waited for** (2026-10-09, `wait_for_theirs`, `AUTOPILOT_WORKDAY_WAIT` 600 s): a posting, an account or an email to verify is watched once with the badge saying which, then the walk carries on from page 1. Writes `workday.json` |
 | `browser/linkedin_apply.py` | **LinkedIn Easy Apply** (2026-09-30). Nothing selected by class - LinkedIn's rotate - so the anchors are `aria-label`, visible text and the `N/M pages` the flow prints; the flow is not a `[role=dialog]`, it replaces the page. The tailored resume goes on every time (`put_resume`, slot cleared, name read back); the screening questions are the person's, so it stops at the first unanswered control and lists them; ends at the review page. `linkedin.json`. **Not yet verified live** |
 | `tailor/boards.py` | **the four boards read from their own APIs** (2026-10-06). Jobright's Apply lands on the application, not the description: 109 of the 134 Ashby / Greenhouse / Lever / Workday URLs on disk are a form URL (`/embed/job_app`, `/apply`, `/application`). `identify(url)` names the board and the job from either shape; `posting(url)` reads Greenhouse `boards-api`, Lever `api.lever.co/v0/postings` (opening + each named list + additional, in order), the Ashby job-board feed and Workday `wday/cxs`, none of which needs a login or a key. `fetch.fetch` asks here first, before LinkedIn and before any page read. What it fixes, measured: Greenhouse's embed carried the whole form round the description (Axon 3,381 words of which 1,617 are the posting) or was the form alone (ASM, Pinterest, Tenable - 0 section headings, tailored anyway); a Lever `/apply` fetch read the whole board (Palantir, 10,832 words of other people's jobs); Ashby's `/application` truncates the description on some boards (Clay, Pinecone) and appends the self-identification form on all; and Workday, which renders client-side, fell back to a JSON-LD `description` Workday has already stripped of its own markup - 6,367 characters on **one line**, every bullet run into the sentence before it, now 27. A closed job 404s and the ordinary fetch runs as before. `Posting.authoritative` marks the board's own copy and `pipeline.fetch_posting` returns it without a contest, because the browser's copy of a form is longer than the description inside it |
 | `tailor/linkedin.py` | the posting behind a LinkedIn URL, from `jobs-guest/jobs/api/jobPosting/<id>` - no login, no key. A fetch of the job page is 1778 words of LinkedIn around 194 of posting. `fetch.fetch` asks here first for `/jobs/view/<id>` or `?currentJobId=` |
@@ -1674,6 +1674,47 @@ invariants first.
   them. Next if asked: the other `.env` switches given the same treatment,
   and the wizard's key step handing over to this tab rather than repeating
   it.
+- **Replacing a file on Workday never worked, and the fixture said it did**
+  (2026-10-09, reported with two rows on one slot, both 60.38 KB - the same
+  tailored resume twice, not Jobright's and ours). Three separate holes, one
+  symptom. (1) `FIND_REMOVE_FN` climbed six ancestors looking for the heading
+  that names the slot; on a live Workday form that heading is **nine** above
+  the bin button, so it found none, cleared nothing, and said nothing. It
+  climbs 14 now, in two passes - the readable heading first, so the log still
+  says "Resume/CV", then coded names (`data-fkit-id="resumeAttachments--
+  attachments"`, camelCase split before matching, which names the slot three
+  ancestors earlier than the heading). `tests/dom/workday_two_resumes.html`
+  was built from a screenshot and put that heading **two** ancestors up,
+  which is why the suite was green through all of it; it is now the live
+  markup at its real depth and a test asserts the distance, so a shallower
+  fixture cannot make it pass again. (2) `remove_attached` clears *one*
+  file and Workday's dropzone keeps a row per file, so `Engine.clear_slot`
+  loops it. (3) The banner's **put** chip had no clear step at all - it only
+  assigned `input.files`, which on Greenhouse and Ashby is the whole story
+  because they drop the input once a file is on, and on Workday adds a row.
+  Three presses, three copies (three `POST /review/{id}/mark` in the log).
+  `clearSlot` in `content.js` is the same step by the person's click, scoped
+  to the slot the file is going on and pressing only a control that plainly
+  clears. Found while testing it: the chip could not tell Workday's two slots
+  apart either, since both inputs sit inside "Drop files here or Select
+  files" - `slotWords` climbs to the first ancestor that names a slot.
+- **Workday is waited for, never pressed** (2026-10-09, asked for: "we'll
+  not try to log in or anything ... wait for the login to happen and for the
+  user to land on page 1 so it can keep carrying on"). Apply is no longer
+  pressed on Workday from either side - `open_apply` was opening empty tabs
+  and chooser pages of its own there, and the account behind it is the
+  person's alone. `workday.wait_for_theirs` watches instead: a posting, an
+  account page or an email to verify is waited out once (`AUTOPILOT_WORKDAY_WAIT`,
+  600 s), the badge on the tab says which of the three it is waiting for and
+  that it carries on from page 1, and the walk picks the application up at
+  its first page. A wall still there when the time is up is handed back as
+  before, so the one-at-a-time queue is never held for ever. Waiting is not
+  a page of the application: `result.pages` starts at the form. The sign-in
+  watch takes `patient=True` for the same reason - Workday's posting header
+  carries "Sign In" on every tenant so the wall is never recognised, and
+  with no Apply press the account page never appears while we look, so the
+  90 s no-wall cutoff was answering "no application form on this page" while
+  the person was still typing their password.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

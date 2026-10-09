@@ -607,12 +607,19 @@ def test_an_occupied_slot_is_cleared_before_ours_goes_on():
     """Workday keeps the file input *and* the attachment, so setting ours put
     a second resume on the form - Jobright's and ours, with no way for a
     reader to tell which was sent. Greenhouse drops the input instead, which
-    is the case that was already handled."""
+    is the case that was already handled.
+
+    This reads the source, so it can only promise that the step is wired in;
+    whether it actually clears anything is
+    `tests/test_dom.py::test_every_file_on_a_multi_file_slot_can_be_cleared`,
+    against the markup a real Workday form has."""
     source = (engine.__file__ and open(engine.__file__).read())
     body = source.split("async def run_documents(")[1].split("async def upload_documents(")[0]
     # Both cases: the input gone, and the input there with a file on it.
     assert "if have is None:" in body
-    assert "engine.remove_attached(pattern, exclude, DELETE_LABELS)" in body
+    # Every file on the slot, not one: Workday's dropzone keeps a row each
+    # (2026-10-08, two rows of the same tailored resume at 60.38 KB).
+    assert "engine.clear_slot(pattern, exclude, DELETE_LABELS)" in body
     # The delete list is the narrow one: "Replace" and "Change" open a native
     # file chooser on some systems, which froze a tab.
     assert "replace" not in engine.DELETE_LABELS and "change" not in engine.DELETE_LABELS
