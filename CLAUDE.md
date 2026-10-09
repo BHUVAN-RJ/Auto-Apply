@@ -711,7 +711,14 @@ invariants first.
   re-tailor requests, Tectonic, no browser-use. Not built: the Workshop's
   before/after preview on past jobs, the Workshop by voice, a packaged
   and notarised app (Electron or Tauri) if friends without Claude Code
-  want it, the in-app bug report. PLAN.md Phase 19.
+  want it. Built since: the Report button (2026-09-25), onboarding with
+  the `.tex` upload, any LaTeX layout (`tailor/structure.py`), the
+  install line as a copyable code block. **Waiting on the maintainer:**
+  one real install on a clean macOS account from the README line, which
+  is the only end-to-end test this path has not had (the built app
+  clicked from the Dock, the launcher starting Chrome and the injector
+  for a new user, a fill, the voice downloads, a real issue filed through
+  Report). PLAN.md Phase 19.
 - Early graduation is no longer a reject (2026-09-24): SeatGeek's
   "spring/summer of 2027 college graduates" rejected a December 2026
   graduate. Cohort windows are now parsed like cutoffs in

@@ -1631,8 +1631,13 @@ profile interview.
 - The Workshop's preview: re-run the tailor on the last two or three jobs
   with the proposed prompt and show the resume diff before Apply.
 - The Workshop by voice, through the orb.
-- The maintainer's own agent reading bug reports; the in-app report is a
-  prefilled GitHub issue with nothing personal in it.
+- The maintainer's own agent reading bug reports. The in-app report is
+  built (2026-09-25, `server/report.py`): a prefilled GitHub issue opened
+  in the person's browser, nothing personal in it, nothing sent by the
+  app.
+- Decided, not to build: an automatic check that the person is signed in
+  to Jobright. It means looking into their logged-in session; the tick on
+  the onboarding screen costs one click.
 
 ## Phase 20 — how much changes, and what may not be invented (2026-09-25)
 
