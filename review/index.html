@@ -991,6 +991,11 @@ async function show(id) {
 
   const reviewable = data.status === "awaiting_review";
   const filled = data.status === "filled";
+  // A job that stopped has had no buttons on it at all, and a job stops for
+  // reasons that are nothing to do with the job - the key out of credit, a
+  // fetch that timed out, a dropped socket. It sat on a closed shelf with
+  // nothing to press (2026-10-09, asked for).
+  const stopped = ["failed", "skipped"].includes(data.status);
   // A fill that started under WORKING_GRACE seconds ago gets no buttons: the
   // agent is working and the only honest thing to show is that. After the
   // grace the restart button comes back, gated behind a confirm.
@@ -1132,6 +1137,13 @@ async function show(id) {
         <button class="small act" id="submitted">I submitted it</button>
         <button class="big act" id="submitNow">Submit it</button>
       </div>` : ""}
+    ${stopped ? `
+      <div class="fab">
+        <button class="small act" id="submitted">I submitted it</button>
+        <button class="big act" id="retry" title="${data.tailored
+          ? "Start the fill again on the documents already here"
+          : "Tailor it again from the posting, then back to you at checkpoint 1"}">Try again</button>
+      </div>` : ""}
   `;
 
   if ($("approve")) $("approve").onclick = () => approve(id);
@@ -1155,6 +1167,7 @@ async function show(id) {
     };
   }
   if ($("fillNow")) $("fillNow").onclick = () => fillAgain(id);
+  if ($("retry")) $("retry").onclick = () => retry(id, data);
   if ($("reveal")) wireReveal(id);
   if ($("askGo")) wireThread(id, data);
   if ($("rememberGo")) wireRemember(id);
@@ -1685,6 +1698,28 @@ async function fillAgain(id) {
     await api(`/review/${id}/fill`, { method: "POST", body: JSON.stringify({ force: true }) });
   });
 }
+
+// Start a stopped job again. A job stops for reasons that have nothing to
+// do with the job - the OpenRouter key out of credit, a fetch that timed
+// out, a socket that dropped - and until this existed a `failed` or
+// rejected row had no buttons on it at all, so there was nothing to press
+// (2026-10-09, asked for). The server decides which step to restart from:
+// documents already compiled means the fill, nothing to attach means the
+// tailor. Rejected is lifted by trying again, so that one is confirmed - a
+// job on the rejected shelf was a decision, and reviving it by a misclick
+// is worth one question.
+async function retry(id, data) {
+  if (data && data.status === "skipped") {
+    const why = data.reject_note || data.reject_reason || "no reason recorded";
+    if (!confirm(`You rejected this job (${why}).\n\n` +
+                 "Trying again lifts that and starts it over. Continue?")) return;
+  }
+  // No message of its own: `act` re-reads the job, and the pane then says
+  // what it is doing - "tailoring" or "starting" - with the reason in the
+  // History list. A toast saying the same thing is one more thing to read.
+  await act(id, () => api(`/review/${id}/retry`, { method: "POST", body: "{}" }));
+}
+
 
 // Pressing this button *is* the statement that the form was submitted, so
 // it is not asked again (2026-10-03, asked for). Nothing here is

@@ -959,3 +959,129 @@ def test_a_put_with_no_tab_open_is_refused(client, monkeypatch):
     monkeypatch.setattr(forms, "mark_put_now",
                         lambda *a: pytest.fail("marked without a tab"))
     assert client.post(f"/review/{job_id}/mark", json={"key": "resume"}).status_code == 409
+
+
+# -- trying a stopped job again -------------------------------------------
+
+def failed_job(tailored: bool, error: str = "LLMError: OpenRouter returned 402") -> tuple[str, object]:
+    """A job that fell over. `tailored` says whether its documents compiled
+    before it did, which is what decides where a retry starts."""
+    job, _ = queue.add(Job(url="https://jobs.ashbyhq.com/stradahq/x/application",
+                           title="Software Engineer (Intern)", company="stradahq"))
+    app_dir = store.create(job)
+    if tailored:
+        store.write(app_dir, "resume.pdf", b"%PDF-1.5 fake")
+    store.set_status(app_dir, Status.FAILED, error)
+    queue.update(job.id, status=Status.FAILED, app_dir=str(app_dir), error=error)
+    return job.id, app_dir
+
+
+def test_a_job_with_nothing_to_attach_is_tailored_again(client, monkeypatch):
+    """The Strada HQ run: the key ran out of credit mid-tailor, the row went
+    to `failed`, and `failed` lives on a closed shelf with no buttons on it -
+    so a perfectly good posting was unreachable (2026-10-09, asked for)."""
+    started = []
+    monkeypatch.setattr(runner, "start_pipeline", lambda job_id, log_dir=None: started.append(job_id) or 4321)
+    monkeypatch.setattr(runner, "start_fill",
+                        lambda *a, **k: pytest.fail("a job with no resume.pdf must not be filled"))
+    job_id, app_dir = failed_job(tailored=False)
+
+    answer = client.post(f"/review/{job_id}/retry")
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["step"] == "tailor"
+    assert started == [job_id]
+    row = queue.get(job_id)
+    assert row.status is Status.QUEUED
+    # A rerun must clear the error, or the page shows the old failure over a
+    # good result.
+    assert row.error is None
+    # And the history says what happened and what it came from. It is
+    # recorded against the folder the job was in when the button was
+    # pressed: a real run allocates a new folder, so on the live page this
+    # note stays with the attempt that failed, which is where it belongs.
+    assert any("retried from failed" in (h.get("note") or "")
+               for h in client.get(f"/review/{job_id}").json()["history"])
+
+
+def test_a_job_that_already_has_documents_is_filled_again(client, monkeypatch):
+    """Re-tailoring a resume that compiled spends a model call to get the
+    same thing twice. The documents are there; the fill is what failed."""
+    monkeypatch.setattr(runner, "start_pipeline",
+                        lambda *a, **k: pytest.fail("the documents are already here"))
+    monkeypatch.setattr(runner, "start_fill", lambda job_id, log_dir=None, force=False: 777)
+    job_id, _ = failed_job(tailored=True, error="the tailored resume was never uploaded")
+
+    out = client.post(f"/review/{job_id}/retry").json()
+    assert out["step"] == "fill" and out["pid"] == 777
+    assert queue.get(job_id).status is Status.APPROVED
+
+
+def test_trying_again_lifts_the_rejection(client, monkeypatch):
+    """A rejected job is a decision, and changing your mind about it is
+    another. The row may not carry "poor fit" while it tailors."""
+    monkeypatch.setattr(runner, "start_pipeline", lambda *a, **k: 99)
+    job_id, app_dir = failed_job(tailored=False)
+    client.post(f"/review/{job_id}/reject",
+                json={"reason": "poor_fit", "note": "wrong level"})
+    assert queue.get(job_id).status is Status.SKIPPED
+
+    out = client.post(f"/review/{job_id}/retry").json()
+    assert out["was"] == "skipped" and out["step"] == "tailor"
+    row = queue.get(job_id)
+    assert row.status is Status.QUEUED
+    assert row.reject_reason is None and row.reject_note is None
+
+
+def test_a_submitted_application_is_never_retried(client, monkeypatch):
+    """The application has gone. The row is the record of it, and the way to
+    work on it again is the thread's re-tailor."""
+    monkeypatch.setattr(runner, "start_pipeline",
+                        lambda *a, **k: pytest.fail("a submitted job was restarted"))
+    monkeypatch.setattr(runner, "start_fill",
+                        lambda *a, **k: pytest.fail("a submitted job was refilled"))
+    job_id, app_dir = failed_job(tailored=True)
+    store.set_status(app_dir, Status.SUBMITTED, "by hand")
+    queue.update(job_id, status=Status.SUBMITTED)
+
+    answer = client.post(f"/review/{job_id}/retry")
+    assert answer.status_code == 409
+    assert "submitted" in answer.json()["detail"]
+    assert queue.get(job_id).status is Status.SUBMITTED
+
+
+def test_a_retry_stops_whatever_is_still_running_first(client, monkeypatch):
+    """A retry is a restart: a second apply.py on one tab fights the first,
+    and a pipeline still going would write over what this one writes."""
+    stopped = []
+    monkeypatch.setattr(runner, "stop_fill", lambda job_id: stopped.append(("fill", job_id)) or 101)
+    monkeypatch.setattr(runner, "stop_pipeline", lambda job_id: stopped.append(("pipeline", job_id)) or 202)
+    monkeypatch.setattr(runner, "start_fill", lambda job_id, log_dir=None, force=False: 303)
+    job_id, _ = failed_job(tailored=True)
+
+    out = client.post(f"/review/{job_id}/retry").json()
+    assert stopped == [("fill", job_id), ("pipeline", job_id)]
+    assert out["killed"] == 101
+
+
+def test_a_held_queue_still_holds_a_retry(client, monkeypatch):
+    """Letting go of the fills is the person's decision about what the
+    machine is for; a retry does not get to overrule it."""
+    monkeypatch.setattr(runner, "start_fill", lambda job_id, log_dir=None, force=False: None)
+    monkeypatch.setattr(runner, "held", lambda: True)
+    job_id, _ = failed_job(tailored=True)
+
+    out = client.post(f"/review/{job_id}/retry").json()
+    assert out["step"] == "fill" and out["filling"] is False and out["held"] is True
+    assert queue.get(job_id).status is Status.APPROVED
+
+
+def test_the_page_offers_the_button_on_a_stopped_job():
+    """A tab button with no branch behind it is a click that does nothing;
+    so is a branch with no button in front of it."""
+    import paths
+    page = (paths.ROOT / "review" / "index.html").read_text()
+    assert 'const stopped = ["failed", "skipped"].includes(data.status);' in page
+    assert 'id="retry"' in page
+    assert '$("retry").onclick = () => retry(id, data)' in page
+    assert "async function retry(id, data)" in page
+    assert f'/retry`, {{ method: "POST"' in page

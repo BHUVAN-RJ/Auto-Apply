@@ -1755,6 +1755,24 @@ invariants first.
   rather than unlucky. Not fixed: lengthening the hash changes every id on
   file, so it needs a migration (keep the short id as a display name, key on
   something longer) rather than a one-line change.
+- **A stopped job can be tried again** (2026-10-09, asked for).
+  `POST /review/{id}/retry` and a **Try again** button, because a `failed`
+  or rejected row had no buttons on it at all: Strada HQ stopped on
+  `OpenRouter returned 402: Insufficient credits` - nothing to do with the
+  job - and sat on a closed shelf unreachable. From the top means from the
+  first step with nothing to show: no `resume.pdf` and the pipeline runs
+  again (screen, fetch, tailor, compile, back to checkpoint 1); documents
+  already compiled and the **fill** runs instead, since re-tailoring a
+  resume that compiled spends a model call to get the same thing twice. A
+  retry is a restart, so `stop_fill` and `stop_pipeline` go first; the error
+  is cleared (a rerun that works must not show the old failure) and a
+  rejection is lifted, which is the one case the page confirms first.
+  `SUBMITTED` is refused - the application has gone and the row is the
+  record of it, so the thread's re-tailor is the way to work on it again -
+  and the fill still goes through `runner.start_fill`, so a held queue
+  holds. Driven on the live page against the real failed job: the pane went
+  from `stop` to `agent`, a `_v2` folder was allocated, the posting fetched
+  and the stories picked.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
