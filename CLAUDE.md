@@ -1715,6 +1715,39 @@ invariants first.
   with no Apply press the account page never appears while we look, so the
   90 s no-wall cutoff was answering "no application form on this page" while
   the person was still typing their password.
+- **A day's worth of real Workday flows, recorded** (2026-10-09, asked for,
+  **and meant to be deleted with this entry**). `tools/dev_workday_recorder.py`
+  attaches to every Workday tab and keeps what the person met and what they
+  did: one directory per tab under `data/dev_recordings/workday/` (gitignored
+  - the repository is public and these describe a real application), the
+  pages as HTML with every value scrubbed, and `flow.jsonl` of the moves.
+  **Shape, never content**: a typed value is `<text:27chars>`, a password is
+  `<secret>` with no length, a file is `<pdf:39chars>` with a `repeated`
+  flag (the two-resume signal without the filename, which is named after the
+  person), and nothing is recorded on an identity host. An option chosen
+  from the page's own list keeps its label, because "Master's Degree" is the
+  employer's text and knowing which control to drive is the point. It
+  presses, types and closes nothing. `EXPIRES = 2026-10-09` and it refuses
+  to run after that: "let's record only today".
+  `tools/dev_workday_replay.py` serves a recording back on 127.0.0.1 so the
+  real `browser/` code can be run against the real markup and the real
+  sequence with no account and no employer - which is what each of the last
+  three Workday bugs needed and none of them had. Neither file is imported
+  by anything; deleting both removes the feature. Verified live against a
+  page of our own: values, textarea bodies, Workday's chosen-value pills and
+  its filename rows all come out `[redacted]`, and a slot given the same
+  file twice records `repeated: true`.
+- **Job ids collide, and a collision hides a job** (2026-10-09, found while
+  deleting a queued row the page offered no way to delete). `Job.id` is
+  `url_hash` = **four** hex characters of sha256, so 65,536 ids for 270
+  rows; two Twitch jobs both hashed to `96f2` (an IBM-hosted posting and a
+  Greenhouse embed). `queue.get` returns the first match, so the newer job
+  had no detail page, no Reject and no way out, and `/review/{id}/...` can
+  act on the wrong job while `folder_name` can clash on the same day. At 270
+  rows the chance of at least one collision is about 43%, so this was due
+  rather than unlucky. Not fixed: lengthening the hash changes every id on
+  file, so it needs a migration (keep the short id as a display name, key on
+  something longer) rather than a one-line change.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
