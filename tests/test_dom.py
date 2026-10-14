@@ -476,3 +476,100 @@ def test_the_chip_tells_workdays_two_slots_apart_without_asking(browser):
     assert got["cover_letter"]["ok"] is True, got["cover_letter"]
     # Each on its own slot, in document order: resume first, letter second.
     assert got["on"] == ["resume.pdf", "cover_letter.pdf"], got["on"]
+
+
+# -- Workday, from a recording of a real application ----------------------
+# `workday_work_experience.html` and `workday_two_resumes_live.html` are two
+# pages of one live Workday application (Vermeer, 2026-10-11), captured by
+# `tools/dev_workday_recorder.py` with every value scrubbed. They are here
+# because the hand-drawn fixture beside them was green through the whole of
+# the bug below: the real page is 31 KB of nesting with two sections that
+# each own a control saying "Delete", and that is the shape that broke it.
+
+def test_a_delete_in_another_section_is_not_the_resume_slots(browser):
+    """The clear pressed the Work Experience entry's Delete, four times,
+    believing it was clearing Resume/CV - and reported `resume replaced`
+    over a slot that had never held anything (2026-10-11, Vermeer).
+
+    On this page the two controls reading "Delete" are Work Experience
+    entries with no automation id at all, the Resume/CV heading is 17,000
+    characters further down the document, and the slot is empty. A climb
+    judged by distance reaches from one to the other; a climb that asks
+    "is this control inside an upload?" cannot.
+    """
+    async def work(e, page):
+        bare = await page.evaluate("""(() => {
+          const all = [...document.querySelectorAll("button")]
+              .filter((b) => (b.textContent || "").trim() === "Delete");
+          return JSON.stringify({
+            count: all.length,
+            coded: all.map((b) => b.getAttribute("data-automation-id") || ""),
+            attachments: document.querySelectorAll('[data-automation-id="file-upload-item"]').length,
+          });
+        })()""")
+        found = await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                             f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.REMOVE_LABELS)
+        return [json.loads(bare), found]
+    bare, found = on_page(browser, "workday_work_experience.html", work)
+    # The page really is the trap: bare "Delete" controls, and no attachment.
+    assert bare["count"] >= 2, bare
+    assert bare["coded"] == [""] * bare["count"], bare
+    assert bare["attachments"] == 0, bare
+    assert found is None, f"a Work Experience Delete was offered as the resume slot's: {found}"
+
+
+def test_the_widest_labels_never_match_a_generated_class(browser):
+    """`REMOVE_LABELS` carries "change" and "replace" for the systems that
+    word it that way, and those were matched against generated class names
+    too - so on a live Workday form the phone country selector answered as
+    the Resume/CV slot's clearing control and the fill pressed 'United
+    States' four times (2026-10-11, Databricks). A coded name may only
+    match the narrow list."""
+    async def work(e, page):
+        found = await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                             f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.REMOVE_LABELS)
+        return found
+    found = on_page(browser, "workday_work_experience.html", work)
+    assert found is None
+    # The rule, not just this page: nothing but remove/delete/clear/x may be
+    # read off an identifier, whatever the caller asks for by label.
+    source = engine.FIND_REMOVE_FN
+    assert "CODED_CLEARS" in source
+    assert "coded(btn).some" in source
+
+
+def test_the_slot_says_how_many_files_it_is_holding(browser):
+    """`clear_slot` pressed and counted its own presses, so four failures
+    read as four successes and the notes said `resume replaced` over a form
+    carrying two resumes. The finder now answers with the row count, which
+    is what makes "did that press remove anything?" answerable."""
+    async def work(e, page):
+        found = await e.call(engine.FIND_REMOVE_FN, engine.RESUME_SLOT,
+                             f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS)
+        rows = await e.slot_rows(engine.RESUME_SLOT,
+                                 f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}", engine.DELETE_LABELS)
+        return [found, rows]
+    found, rows = on_page(browser, "workday_two_resumes_live.html", work)
+    assert found and found["title"] == "Resume/CV", found
+    # The live page carried the same tailored resume twice.
+    assert found["rows"] == 2, found
+    assert rows == 2
+
+
+def test_a_press_that_removes_nothing_stops_the_loop_and_says_so(browser):
+    """The other half: `clear_slot` keeps going only while the count drops.
+    Here nothing is ever removed (the click is swallowed, as Workday's was
+    when the control was not its own), so one round happens, the loop stops,
+    and the report carries the reason instead of a silent `replaced`."""
+    async def work(e, page):
+        await page.evaluate("""(() => {
+          for (const b of document.querySelectorAll('[data-automation-id="delete-file"]'))
+            b.addEventListener("click", (ev) => ev.stopImmediatePropagation(), true);
+        })()""")
+        cleared = await e.clear_slot(engine.RESUME_SLOT,
+                                    f"{engine.COVER_SLOT}|{engine.PARSE_SLOT}",
+                                    engine.DELETE_LABELS)
+        return [cleared, list(e.report.errors)]
+    cleared, errors = on_page(browser, "workday_two_resumes_live.html", work)
+    assert cleared == 0, f"nothing came off the slot, so nothing may be reported cleared"
+    assert any("changed nothing" in e for e in errors), errors

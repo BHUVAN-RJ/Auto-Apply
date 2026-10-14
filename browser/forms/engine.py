@@ -625,8 +625,49 @@ FIND_REMOVE_FN = r"""
     btn.getAttribute("data-automation-id"), btn.getAttribute("name"),
     btn.id, (btn.className || "").toString(),
   ].filter(Boolean).map((v) => String(v).trim());
-  const clears = (btn) => [...spoken(btn), ...coded(btn)]
-      .some((n) => n.length <= 60 && remove.test(n));
+  // A coded name is enough to *recognise* a control and never enough to
+  // promise what it does, so it may only match the narrow list. `change`
+  // and `replace` are in the wide one, and a generated class carrying
+  // either is everywhere: on a live Workday form the phone country
+  // selector matched, and the clear pressed 'United States' four times
+  // believing it was the Resume/CV slot (2026-10-11, Databricks).
+  const CODED_CLEARS = /\b(remove|delete|clear)\b|^[\u00d7\u2715x]$/i;
+  const clears = (btn) =>
+    spoken(btn).some((n) => n.length <= 60 && remove.test(n))
+    || coded(btn).some((n) => n.length <= 60 && CODED_CLEARS.test(n));
+  // A control that clears an attachment lives with the attachment. Nothing
+  // else in the climb could tell the Resume/CV slot's bin from a bare
+  // <button>Delete</button> in the Work Experience section seventeen
+  // thousand characters away, which is what a fourteen-ancestor climb
+  // reached for on a live form: it deleted work history and left the slot
+  // untouched (2026-10-11, Vermeer). The distance is not the discriminator;
+  // being inside an upload is.
+  const UPLOAD_CLIMB = 6;
+  const UPLOAD_NAMES = /file.?upload|attachment|dropzone|\bupload\b/i;
+  // How much text an upload widget may hold and still be one.
+  const UPLOAD_TEXT = 400;
+  const FILENAME = /\.(pdf|docx?|rtf|txt|odt|pages)\b/i;
+  const attrs = (el) => [el.getAttribute("data-automation-id"), el.getAttribute("data-fkit-id"),
+                         el.id, (el.className || "").toString()].filter(Boolean).join(" ");
+  const inUpload = (btn) => {
+    // Workday names its own: aria-label="Delete <file>.pdf" on the bin.
+    if (FILENAME.test(spoken(btn).join(" "))) return true;
+    let block = btn.parentElement;
+    for (let i = 0; i < UPLOAD_CLIMB && block; i++, block = block.parentElement) {
+      if (UPLOAD_NAMES.test(attrs(block))) return true;
+      // "Contains a file input" is not enough on its own: six ancestors up
+      // from a Work Experience Delete is the whole form panel, and that
+      // contains the resume slot's input too - which is exactly how the
+      // first version of this guard still handed back the wrong control.
+      // An upload widget is small; a page is not.
+      if (text(block).length <= UPLOAD_TEXT && block.querySelector('input[type="file"]')) return true;
+      // Greenhouse drops the input once a file is on the slot, so the
+      // filename row beside the control is the only thing left to go by -
+      // and only close by, or a page-wide block vouches for everything.
+      if (i < 3 && FILENAME.test(text(block))) return true;
+    }
+    return false;
+  };
   const shown = (btn) => spoken(btn).find((n) => n.length <= 40 && remove.test(n))
       || spoken(btn).find((n) => n.length <= 40) || "remove";
   // An identifier split into words. `data-fkit-id="resumeAttachments--
@@ -658,7 +699,7 @@ FIND_REMOVE_FN = r"""
     [...block.querySelectorAll("label, legend, [class*='label' i], [id*='label' i], h2, h3, h4")]
         .map(text);
   for (const btn of document.querySelectorAll("button, [role=button], a")) {
-    if (!clears(btn)) continue;
+    if (!clears(btn) || !inUpload(btn)) continue;
     // Then what only the markup says. Workday's nearest readable label is
     // "Upload a file (5MB max)", which names no slot at all, and the
     // heading that does is nine ancestors up; its `data-fkit-id` names one
@@ -667,7 +708,12 @@ FIND_REMOVE_FN = r"""
     if (!hit) continue;
     for (const old of document.querySelectorAll("[data-autopilot-remove]")) old.removeAttribute("data-autopilot-remove");
     btn.setAttribute("data-autopilot-remove", "1");
-    return { label: shown(btn), title: hit.title,
+    // How many attachments this slot is holding, so the caller can tell a
+    // press that removed one from a press that did nothing. Workday's
+    // dropzone keeps a row per file and each row has its own bin.
+    const rows = [...hit.block.querySelectorAll("button, [role=button], a")]
+        .filter((el) => clears(el) && inUpload(el)).length;
+    return { label: shown(btn), title: hit.title, rows: rows,
              file: text(hit.block).replace(hit.title, "").trim().slice(0, 120) };
   }
   return null;
@@ -1382,10 +1428,30 @@ class Engine:
         """
         cleared = 0
         while cleared < limit:
+            before = await self.slot_rows(pattern, exclude, labels)
+            if not before:
+                break
             if not await self.remove_attached(pattern, exclude, labels):
+                break
+            if await self.slot_rows(pattern, exclude, labels) >= before:
+                # The press landed on something that was not this slot's, or
+                # the page refused it. Either way the slot still holds what
+                # it held, and saying "cleared" four times over a form that
+                # never lost a file is how two resumes went out under a note
+                # reading `resume replaced` (2026-10-11, Vermeer).
+                self.report.errors.append(
+                    "the control that should clear this slot changed nothing; "
+                    "the file already there is still on the form")
                 break
             cleared += 1
         return cleared
+
+    async def slot_rows(self, pattern: str, exclude: str = "",
+                        labels: str = REMOVE_LABELS) -> int:
+        """How many files the slot `pattern` names is holding, counted on the
+        page. The honest answer to "did that press remove anything?"."""
+        found = await self.call(FIND_REMOVE_FN, pattern, exclude, labels)
+        return int(found.get("rows") or 0) if found else 0
 
     async def remove_attached(self, pattern: str, exclude: str = "",
                               labels: str = REMOVE_LABELS) -> bool:

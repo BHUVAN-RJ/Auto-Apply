@@ -1773,6 +1773,56 @@ invariants first.
   holds. Driven on the live page against the real failed job: the pane went
   from `stop` to `agent`, a `_v2` folder was allocated, the posting fetched
   and the stories picked.
+- **The clear was pressing whatever it could reach, and calling it
+  "replaced"** (2026-10-11, found in a recording of a live application, not
+  in a test). Two Workday jobs the same morning. On Vermeer the log reads
+  `cleared 'Resume/CV' (Work Experience If you are not uploading a resume,
+  please share...) with 'Delete'` **four times**: the control it pressed was
+  a bare `<button>Delete</button>` belonging to a Work Experience entry,
+  with no automation id on it at all, and the Resume/CV heading it claimed
+  as its own was seventeen thousand characters further down the page - with
+  an **empty** slot under it. So it deleted work history, cleared nothing,
+  and the tailored resume went on beside a file that was already there: two
+  rows on `resumeAttachments--attachments`, each with its own bin, all the
+  way to Submit. On Databricks the same climb pressed the phone country
+  selector (`cleared 'Resume/CV*' ... with 'United States'`, four times) and
+  the run ended `resume NOT attached, cover letter attached`. Three causes,
+  each fixed: (1) **distance was never the discriminator** - the 2026-10-09
+  `CLIMB = 14`, raised because the heading really is nine ancestors above
+  the bin, is also far enough for a control in another section to reach that
+  heading. A clearing control now has to be *inside an upload*
+  (`inUpload`: a `file-upload`/`attachment`/`dropzone` identifier, a small
+  block holding a file input, a filename in the block's text within three
+  ancestors, or a filename in the control's own aria-label, which is how
+  Workday names its bin - `aria-label="Delete <file>.pdf"`). "Contains a
+  file input" alone is not enough and was tried: six ancestors up from a
+  Work Experience Delete is the form panel, which contains the resume slot's
+  input too. (2) **A coded name may only match the narrow list.**
+  `REMOVE_LABELS` carries `change|replace` for the systems that word it that
+  way, and matching those against generated class names is what made a
+  country selector a clearing control; `CODED_CLEARS` is
+  `remove|delete|clear|x` and nothing else. A class is enough to recognise a
+  control, never enough to promise what it does. (3) **"Cleared" now means a
+  row went.** The finder answers with `rows`, `Engine.slot_rows` reads it,
+  and `clear_slot` loops only while the count drops - a press that changes
+  nothing stops the loop and writes the reason onto the review page instead
+  of reporting `resume replaced` over a form carrying two resumes. And the
+  two writers are separated: the banner's **put** chip refuses while that
+  job is `filling`, because the fill uploading at 10:23:37.086 and the chip
+  putting at 10:23:37.929 is what put the second row there, and whichever
+  lands second adds rather than replaces. `tests/dom/` carries both real
+  pages now (scrubbed); the hand-drawn fixtures were green through all of
+  this, and all four new tests fail on the previous commit.
+- **A scrubber is only as good as the grep** (2026-10-11). Using those two
+  recorded pages as fixtures meant reading them, and the maintainer's own
+  name and email were still in three places the recorder had not thought
+  of: the bin's `aria-label="Delete <file>.pdf"`, the `ariaLiveMessage` live
+  region announcing `<file>.pdf successfully uploaded`, and
+  `#accountSettingsButton`, which carries the signed-in address in the
+  header of every page. All three are redacted now, plus any filename in an
+  `aria-label`, `title`, `alt` or `placeholder`. The test is not a unit
+  test: it is `SNAPSHOT_JS` run against the page that leaked, grepped for
+  the name. Deleted with the recorder.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

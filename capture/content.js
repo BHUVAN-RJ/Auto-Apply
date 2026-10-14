@@ -892,7 +892,7 @@ function render(result, { pending = false } = {}) {
   // form a person opened by hand is exactly where "put" is wanted, and the
   // match there is often `confident` rather than `high`. Nothing is put on
   // the form without the click.
-  if (seen) loadFiles(shadow, seen.id);
+  if (seen) loadFiles(shadow, seen.id, seen.status);
 }
 
 // The tailored PDFs for this job, as chips. Drag one onto the form's own
@@ -900,7 +900,7 @@ function render(result, { pending = false } = {}) {
 // type=file> takes it like a file from the desktop); or click it to save
 // the file to Downloads for the picker. Nothing here touches the form by
 // itself: the person chooses the slot.
-async function loadFiles(shadow, jobId) {
+async function loadFiles(shadow, jobId, status) {
   const row = shadow.getElementById("files");
   if (!row) return;
   let data;
@@ -944,6 +944,16 @@ async function loadFiles(shadow, jobId) {
   for (const button of row.querySelectorAll(".chip.put")) {
     button.addEventListener("click", async () => {
       const key = button.dataset.put;
+      // Two writers on one slot is how a Workday form ended up carrying the
+      // same tailored resume twice, 843ms apart: the fill uploaded it and
+      // this chip put it, and whichever was second added a row rather than
+      // replacing one (2026-10-11, Vermeer). While the autopilot is on this
+      // job the slot is its to write; the chip is for the forms it cannot
+      // finish, and it says so instead of quietly adding a second file.
+      if (status === "filling") {
+        button.innerHTML = `<b>✕</b> autopilot is filling this now`;
+        return;
+      }
       const result = await putFile(files[key], key);
       button.innerHTML = `<b>${result.ok ? "✓" : "✕"}</b> ${esc(result.note)}`;
       // A slot the person filled from here is as much ours as one the fill

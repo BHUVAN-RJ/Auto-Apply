@@ -97,7 +97,11 @@ class FakePage:
             # the input that comes back once it is removed, field dict).
             slot = getattr(self, "attached", None)
             if slot and re.search(args[0], slot[0], re.I) and not (args[1] and re.search(args[1], slot[0], re.I)):
-                return {"label": slot[3].get("button", "Remove file"), "title": slot[0], "file": slot[1]}
+                # `rows` is how many files the slot is holding: this stub
+                # models one, and `clear_slot` stops when the count stops
+                # dropping, so a stub that never says loops for nothing.
+                return {"label": slot[3].get("button", "Remove file"), "title": slot[0],
+                        "file": slot[1], "rows": 1}
             return None
         if name == "click_remove":
             slot = getattr(self, "attached", None)

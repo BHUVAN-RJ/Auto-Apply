@@ -69,7 +69,7 @@ from browser.autofill import attached  # noqa: E402
 
 # The one day this was asked for. Past it the tool refuses to run rather
 # than quietly keeping on: "let's record only today" (2026-10-09).
-EXPIRES = date(2026, 10, 9)
+EXPIRES = date(2026, 10, 11)
 
 OUT = paths.DATA / "dev_recordings" / "workday"
 POLL = 1.0          # how often the event buffer is drained
@@ -247,8 +247,22 @@ SNAPSHOT_JS = r"""
   // Workday renders a chosen value as a pill and a file as a row; both are
   // the person's. The control stays, its content goes.
   for (const el of copy.querySelectorAll("[data-automation-id='selectedItem'],"
-      + "[data-automation-id='file-upload-item-name'],[data-automation-id='promptAriaInstruction']"))
+      + "[data-automation-id='file-upload-item-name'],[data-automation-id='promptAriaInstruction'],"
+      // The signed-in account's own email, in the header of every page.
+      + "#accountSettingsButton,[data-automation-id='ariaLiveMessage']"))
     el.textContent = "[redacted]";
+  // A filename is named after the person, and Workday puts it in three more
+  // places than the row it shows: the bin's aria-label ("Delete <file>.pdf"),
+  // the live region that announces the upload, and any title carrying it.
+  // Found by grepping the written pages for the maintainer's own name, which
+  // is the only test of a scrubber worth trusting (2026-10-11).
+  const FILENAME = /[^\s"'<>]+\.(pdf|docx?|rtf|txt|odt|pages)\b/gi;
+  for (const el of copy.querySelectorAll("[aria-label],[title],[alt],[placeholder]")) {
+    for (const name of ["aria-label", "title", "alt", "placeholder"]) {
+      const was = el.getAttribute(name);
+      if (was && FILENAME.test(was)) el.setAttribute(name, was.replace(FILENAME, "[redacted]"));
+    }
+  }
   for (const el of copy.querySelectorAll("script,style,svg,img,iframe")) el.remove();
 
   return JSON.stringify({

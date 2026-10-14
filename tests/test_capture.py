@@ -328,7 +328,7 @@ def test_the_put_chip_tags_the_input_and_asks_for_the_logo():
     put = content.split("function putFile(")[1].split("\nfunction ")[0]
     assert 'setAttribute("data-autopilot-ref"' in put
     assert put.index("data-autopilot-ref") < put.index('new Event("change"')
-    chip = content.split('for (const button of row.querySelectorAll(".chip.put"))')[1][:900]
+    chip = content.split('for (const button of row.querySelectorAll(".chip.put"))')[1][:2000]
     assert "/mark`" in chip and "key" in chip
     # Only after the file is actually on the slot.
     assert "if (!result.ok) return;" in chip
