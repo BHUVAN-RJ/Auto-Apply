@@ -153,3 +153,22 @@ def test_automation_cannot_reach_outbound_mail():
     route = (ROOT / "server" / "outreach.py").read_text()
     assert "confirmed" in route and "mailing.send_message(msg)" in route
     assert "this message is already" in route, "a sent email must not be sent twice"
+
+
+# 8. The identity service only ever reads. It answers "have I applied to
+# this?" and it is wired into the places that decide whether to add a job,
+# so the one thing it must never be is a way to act on one.
+
+def test_the_identity_service_cannot_act_on_a_job():
+    forbidden = ("browser", "press_submit", "open_apply", "apply", "pipeline",
+                 "mailing", "runner")
+    for path in (ROOT / "identity").rglob("*.py"):
+        source = path.read_text()
+        for name in forbidden:
+            assert f"import {name}" not in source, f"{path} imports {name}"
+            assert f"from {name}" not in source, f"{path} imports from {name}"
+        # It reads the queue file; it may not go through the module that
+        # writes it, because `queue.update` and `queue.add` are there.
+        assert "server.queue" not in source and "from server import queue" not in source, path
+        for writer in ("store.set_status", "store.write", "queue.add(", "queue.update("):
+            assert writer not in source, f"{path} calls {writer}"
