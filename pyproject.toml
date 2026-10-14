@@ -24,7 +24,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["server", "tailor", "tex", "browser", "archive", "voice"]
+packages = ["server", "tailor", "tex", "browser", "archive", "voice", "identity"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
