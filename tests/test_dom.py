@@ -190,7 +190,7 @@ def test_workdays_delete_is_found_though_the_input_is_still_there(browser):
         ]
     resume, cover = on_page(browser, "workday_resume_slot.html", work)
     assert resume and resume["title"] == "Resume/CV" and resume["label"] == "Delete"
-    assert "Bhuvan_Rajanahally_Jayakumar_Resume.pdf" in resume["file"]
+    assert "tailored_resume.pdf" in resume["file"]
     # And the resume's Delete never answers for the cover letter's slot.
     assert cover and cover["title"] == "Cover Letter"
     assert "their_cover_letter.pdf" in cover["file"]
@@ -228,7 +228,7 @@ def test_the_remove_control_is_read_before_it_is_pressed(browser):
 def test_the_review_page_can_still_say_which_resume_it_is_carrying(browser):
     """No input, no tagged block, no ref: by the review page they belong to
     a page Workday has replaced. The filename is what is left."""
-    name = "Bhuvan_Rajanahally_Jayakumar_Resume.pdf"
+    name = "tailored_resume.pdf"
 
     async def work(e, page):
         placed = await engine.mark_named_file(page, name, "the tailored resume")
@@ -247,7 +247,7 @@ def test_the_logo_goes_on_the_name_and_not_the_whole_page(browser):
     """The smallest element holding the filename, so the mark sits on the
     row rather than on the body."""
     async def work(e, page):
-        await engine.mark_named_file(page, "Bhuvan_Rajanahally_Jayakumar_Resume.pdf",
+        await engine.mark_named_file(page, "tailored_resume.pdf",
                                      "the tailored resume")
         return await page.evaluate(
             "document.querySelectorAll('[data-autopilot-mark]').length")
@@ -351,7 +351,7 @@ def test_a_bin_icon_with_no_label_is_still_a_delete(browser):
         ]
     resume, cover = on_page(browser, "workday_two_resumes.html", work)
     assert resume and resume["title"] == "Resume/CV"
-    assert "Bhuvan_Rajanahally_Jayakumar_Resume.pdf" in resume["file"]
+    assert "tailored_resume.pdf" in resume["file"]
     # And it still tells the two slots apart.
     assert cover and cover["title"] == "Cover Letter"
     assert "their_cover_letter.pdf" in cover["file"]

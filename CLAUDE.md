@@ -1823,6 +1823,16 @@ invariants first.
   `aria-label`, `title`, `alt` or `placeholder`. The test is not a unit
   test: it is `SNAPSHOT_JS` run against the page that leaked, grepped for
   the name. Deleted with the recorder.
+  **And the same sweep found the name already pushed.** Five fixtures
+  committed between 6 and 9 October carried
+  `Bhuvan_Rajanahally_Jayakumar_Resume.pdf` as the attached filename -
+  copied off real forms, which is what makes those fixtures worth having,
+  and a resume's filename is a person's name. The repository is public, so
+  it had been public since those commits. Every fixture now says
+  `tailored_resume.pdf`, and `git ls-files | xargs grep` for the name is
+  the check worth running before any push that adds markup read off a real
+  page. It does not remove it from the history; the rule is for everything
+  from here on.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

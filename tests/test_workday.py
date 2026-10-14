@@ -292,7 +292,7 @@ def test_the_review_page_says_which_resume_it_is_carrying(tenant, tmp_path, monk
     """Every page of a Workday application replaces the last, so the logo
     the upload put on page two is gone by the review - and the review is
     exactly where "is this my tailored resume?" is asked."""
-    resume = tmp_path / "Bhuvan_Resume.pdf"
+    resume = tmp_path / "tailored_resume.pdf"
     resume.write_bytes(b"%PDF")
     t = tenant([
         page(["My Information"], editable=9),
@@ -308,8 +308,8 @@ def test_the_review_page_says_which_resume_it_is_carrying(tenant, tmp_path, monk
     monkeypatch.setattr(engine_mod, "mark_named_file", mark_named_file)
     result = walk(resume=resume)
     assert result.reached_review
-    assert marked == [("Bhuvan_Resume.pdf", "the tailored resume")]
-    assert result.marked == ["Bhuvan_Resume.pdf"]
+    assert marked == [("tailored_resume.pdf", "the tailored resume")]
+    assert result.marked == ["tailored_resume.pdf"]
 
 
 def _drip(t, blank, form, after=2):
