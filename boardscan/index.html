@@ -97,6 +97,7 @@
     <option value="ashby">ashby</option>
   </select>
   <label><input type="checkbox" id="hideseen"> hide known</label>
+  <label><input type="checkbox" id="hideforeign" checked> hide abroad</label>
   <input id="q" placeholder="company or title" size="16">
   <span class="grow"></span>
   <span id="counts" class="meta"></span>
@@ -132,6 +133,7 @@ function query() {
   if (verdict) p.set("verdict", verdict);
   if (system) p.set("system", system);
   if ($("#hideseen").checked) p.set("hide_seen", "true");
+  if ($("#hideforeign").checked) p.set("hide_foreign", "true");
   if ($("#q").value.trim()) p.set("q", $("#q").value.trim());
   return p.toString();
 }
@@ -141,7 +143,7 @@ async function load(keep) {
   rows = data.roles;
   const c = data.counts;
   $("#counts").textContent =
-    `${c.roles} roles · ${c.by_state.new || 0} to read · ${c.already_known} already known · ${c.found_today} today`;
+    `${c.roles} roles · ${c.by_state.new || 0} to read · ${c.already_known} already known · ${c.abroad} abroad · ${c.found_today} today`;
   paintList();
   if (keep && current) {
     const i = rows.findIndex((r) => r.id === current.id);
@@ -267,7 +269,7 @@ $("#crawl").addEventListener("click", async () => {
   await api("/boards/crawl", {});
   poll();
 });
-["state", "verdict", "system", "hideseen"].forEach((id) =>
+["state", "verdict", "system", "hideseen", "hideforeign"].forEach((id) =>
   $("#" + id).addEventListener("change", () => { at = -1; load(false); }));
 let typing;
 $("#q").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(() => { at = -1; load(false); }, 250); });

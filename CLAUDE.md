@@ -1859,7 +1859,23 @@ invariants first.
   filters wrong on sight - `engineer i` / `engineer ii` in Scout's level
   list brought in Manufacturing, Avionics Thermal and Vehicle Fluids
   roles - hence `boardscan.LEVEL_NEGATIVE`, which is this package's own
-  list and not Scout's to inherit changes from.
+  list and not Scout's to inherit changes from. **First full run the same
+  day**: 1,979 companies, 137.9 s, **96,986 open roles**, 4,266 at level,
+  of which the rules rejected 2,748 (1,951 on years of experience, 957 on
+  a clearance, 568 on visas, 436 on export control) and 157 boards answered
+  404 and are now `dead`. Then the second defect, visible at the top of the
+  list it produced: Bucharest, Kuala Lumpur, Manchester and Vladivostok
+  were all roles to read, because `scout.filter.outside_us` matches a
+  *country* and a board often writes only the city. `boardscan/place.py`
+  reads a US signal first (a state name or code rescues Manchester NH and
+  Vancouver WA), then a list of the cities and regions a software board
+  actually writes, then keeps whatever is left, so a bare "San Francisco"
+  survives. It **flags** (`place/foreign`, 140 of the 4,266) and the page
+  hides those by default with the count showing: a place list written from
+  one morning's reading will be wrong about somewhere, and a role dropped
+  before it is stored cannot be found again to prove it. `crawl.reflag_places`
+  re-runs the rule over the rows already on file and touches nothing but
+  flags. 1,338 roles to read after all of it.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

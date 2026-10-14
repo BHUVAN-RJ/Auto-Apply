@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from boardscan import Role, crawl as crawler, known, registry, sources, store
+from boardscan import Role, crawl as crawler, known, place, registry, sources, store
 from scout import Posting
 
 
@@ -285,6 +285,68 @@ def test_the_screen_is_deterministic_and_needs_no_model():
 
 def test_a_posting_with_no_description_is_not_screened_silently():
     assert crawler.judge(posting(text=""), facts="") == ("", [])
+
+
+# ------------------------------------------------------------------- the place
+#
+# Every case below is a real location string: the American ones off the
+# first crawl's own output, the foreign ones off the top of the list it
+# produced before this rule existed.
+
+
+@pytest.mark.parametrize("location", [
+    "San Francisco, CA", "Mountain View, CA", "Austin, Texas",
+    "New York, New York", "Annapolis Junction, MD", "Remote", "Remote - US",
+    "US-Remote", "United States", "Washington DC",
+    # A state rescues a city name that also exists abroad, which is why the
+    # US signal is read before the city list.
+    "Manchester, NH", "Vancouver, WA", "Birmingham, AL",
+    # Not said is not abroad: plenty of boards give no place at all.
+    "", "San Francisco",
+])
+def test_an_american_or_unknown_place_is_kept(location):
+    assert not place.looks_foreign(location)
+
+
+@pytest.mark.parametrize("location", [
+    # Straight off the first crawl's list of roles to read.
+    "Bucharest", "Kuala Lumpur", "MYS - Kuala Lumpur", "Manchester",
+    "Vladivostok", "South America", "London", "Tel Aviv",
+    # And the ones the country-name filter already caught.
+    "Bengaluru, India", "Toronto, Canada", "Vancouver, BC",
+])
+def test_a_foreign_place_is_flagged(location):
+    assert place.looks_foreign(location)
+
+
+def test_a_foreign_place_is_flagged_and_never_dropped(monkeypatch):
+    """A role is stored with `place/foreign` on it and the page hides those
+    by default. Dropping it in the crawl would make a wrong city list
+    impossible to notice."""
+    company, _ = registry.add("ashby", "elevenlabs", "ElevenLabs")
+    monkeypatch.setattr(crawler, "read_board",
+                        lambda *a, **k: [posting(location="Bucharest")])
+    monkeypatch.setattr(crawler, "judge", lambda p, facts: ("ok", []))
+    crawler.crawl_company(company, http=object(), check_known=False)
+    row = store.listing()[0]
+    assert place.FLAG in row.flags
+    assert row.state == "new" and row.verdict == "ok"
+    assert store.listing(hide_foreign=True) == []
+    assert store.counts()["abroad"] == 1
+
+
+def test_reflagging_changes_flags_and_nothing_else():
+    """The city list will learn a place after the roles are already on
+    file, and a decision must survive that."""
+    row = role(location="Bucharest")
+    store.add_new([row])
+    store.decide(row.id, "declined", "not moving to Romania")
+    assert crawler.reflag_places() == 1
+    after = store.get(row.id)
+    assert place.FLAG in after.flags
+    assert (after.state, after.reason) == ("declined", "not moving to Romania")
+    # Idempotent: a second pass has nothing to change.
+    assert crawler.reflag_places() == 0
 
 
 # -------------------------------------------------------------------- the API

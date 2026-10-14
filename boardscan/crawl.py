@@ -34,7 +34,7 @@ from typing import Callable, Optional
 import httpx
 
 from boardscan import (DEFAULT_WORKERS, LEVEL_NEGATIVE, LEVEL_POSITIVE, Company, Role,
-                    known, registry, store)
+                    known, place, registry, store)
 from scout import Posting, Watch, filter as level_filter
 from scout import providers
 from server.models import utcnow
@@ -123,6 +123,11 @@ def crawl_company(company: Company, facts: str = "", http: httpx.Client | None =
     rows: list[Role] = []
     for posting in matching:
         verdict, flags = judge(posting, facts)
+        # Flagged, never dropped: the place filter is written from one
+        # morning's reading and will be wrong about somewhere, and a role
+        # dropped before it is stored cannot be found again to prove it.
+        if place.looks_foreign(posting.location):
+            flags = [*flags, place.FLAG]
         rows.append(Role(system=company.system, slug=company.slug, board_id=posting.id,
                          company=company.name or company.slug, title=posting.title,
                          url=posting.url or company.url, location=posting.location,
@@ -193,3 +198,26 @@ def crawl(systems: tuple[str, ...] = (), limit: int = 0, workers: int = DEFAULT_
         "broken": [r for r in out if r.get("error") and not r.get("dead")][:20],
         "errors": sum(1 for r in out if r.get("error")),
     }
+
+
+def reflag_places() -> int:
+    """Put `place/foreign` on the roles already on file, for when the place
+    list learns a city it did not know. Flags only; a verdict and a
+    decision are never touched."""
+    import json
+
+    changed = 0
+    with store.connect() as conn:
+        rows = conn.execute("SELECT id, location, flags FROM roles").fetchall()
+        for row in rows:
+            flags = json.loads(row["flags"] or "[]")
+            foreign = place.looks_foreign(row["location"])
+            if foreign and place.FLAG not in flags:
+                flags.append(place.FLAG)
+            elif not foreign and place.FLAG in flags:
+                flags.remove(place.FLAG)
+            else:
+                continue
+            conn.execute("UPDATE roles SET flags = ? WHERE id = ?", (json.dumps(flags), row["id"]))
+            changed += 1
+    return changed

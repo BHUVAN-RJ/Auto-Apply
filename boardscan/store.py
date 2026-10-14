@@ -124,8 +124,8 @@ def get(role_id: str) -> Optional[Role]:
 
 
 def listing(state: str = "", verdict: str = "", system: str = "", query: str = "",
-            hide_seen: bool = False, limit: int = 200, offset: int = 0,
-            with_text: bool = False) -> list[Role]:
+            hide_seen: bool = False, hide_foreign: bool = False, limit: int = 200,
+            offset: int = 0, with_text: bool = False) -> list[Role]:
     """The left-hand list: newest first, filtered the way the page asks.
 
     `with_text` is off by default because a page of two hundred roles with
@@ -143,6 +143,8 @@ def listing(state: str = "", verdict: str = "", system: str = "", query: str = "
         args.append(system)
     if hide_seen:
         where.append("seen_verdict = ''")
+    if hide_foreign:
+        where.append("flags NOT LIKE '%place/foreign%'")
     if query:
         where.append("(company LIKE ? OR title LIKE ? OR location LIKE ?)")
         args += [f"%{query}%"] * 3
@@ -191,10 +193,11 @@ def counts() -> dict:
         by_verdict = {r["verdict"] or "none": r["n"] for r in conn.execute(
             "SELECT verdict, COUNT(*) AS n FROM roles GROUP BY verdict")}
         seen = conn.execute("SELECT COUNT(*) FROM roles WHERE seen_verdict != ''").fetchone()[0]
+        abroad = conn.execute("SELECT COUNT(*) FROM roles WHERE flags LIKE '%place/foreign%'").fetchone()[0]
         today = conn.execute("SELECT COUNT(*) FROM roles WHERE found_at >= ?",
                              (utcnow()[:10],)).fetchone()[0]
     return {"roles": total, "by_state": by_state, "by_verdict": by_verdict,
-            "already_known": seen, "found_today": today}
+            "already_known": seen, "abroad": abroad, "found_today": today}
 
 
 def declines(limit: int = 500) -> list[dict]:

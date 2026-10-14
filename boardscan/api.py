@@ -103,9 +103,11 @@ def crawl(body: CrawlBody | None = None) -> dict:
 
 @router.get("/boards/roles")
 def roles(state: str = "", verdict: str = "", system: str = "", q: str = "",
-          hide_seen: bool = False, limit: int = 200, offset: int = 0) -> dict:
+          hide_seen: bool = False, hide_foreign: bool = False,
+          limit: int = 200, offset: int = 0) -> dict:
     rows = store.listing(state=state, verdict=verdict, system=system, query=q,
-                         hide_seen=hide_seen, limit=min(limit, 500), offset=offset)
+                         hide_seen=hide_seen, hide_foreign=hide_foreign,
+                         limit=min(limit, 500), offset=offset)
     return {"roles": [{**r.model_dump(exclude={"text"}), "id": r.id} for r in rows],
             "counts": store.counts()}
 
@@ -146,6 +148,13 @@ def recheck(role_id: str) -> dict:
     store.mark_seen(role_id, answer.level, answer.job_id)
     return {"level": answer.level, "job_id": answer.job_id, "status": answer.status,
             "rule": answer.rule, "block": answer.block}
+
+
+@router.post("/boards/reflag")
+def reflag() -> dict:
+    """Re-run the place rule over the roles already on file, after the city
+    list has learned something."""
+    return {"changed": crawler.reflag_places(), "counts": store.counts()}
 
 
 @router.get("/boards/declines")
