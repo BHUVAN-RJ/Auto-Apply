@@ -628,6 +628,14 @@ native display detection at `test_forbidden_actions_are_absent_from_the_agent`;
 run the focused files plus `pytest --ignore=tests/test_fill.py` until that
 dependency issue is fixed, and still exercise the changed path live.
 
+## Known issues
+
+**[KNOWN_ISSUES.md](KNOWN_ISSUES.md) is the live list of defects that are
+understood, reproducible and not fixed** - currently the four-hex job id
+collision and LinkedIn postings never reaching the queue. The entries below
+are the history of how each was found; that file is what to read before
+picking one up, and an entry leaves it when the fix lands here with a date.
+
 ## Next up (2026-09-20)
 
 Agreed with the human, not built yet. Each is a flow change, so read the
