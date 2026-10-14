@@ -91,7 +91,18 @@ HOST_TRACKING = {
     "ripplehire.com": {"token"},
 }
 
-_UTM = re.compile(r"^utm_")
+# Analytics tags, by prefix and by name. `^utm_` alone missed a bare
+# `?utm=x`, which is exactly the shape that splits one job into two rows:
+# the deny-list keeps whatever it does not recognise, so an unlisted
+# tracking parameter is a missed match (`/autofilled` stopped recognising
+# a job it had just filled). Prefix-matching the family is the fix; a
+# click id is never a job id.
+_UTM = re.compile(r"^(?:utm\b|utm_|_hs|hs_|pk_|mtm_|at_)")
+CLICK_IDS = {
+    "utm", "gclid", "gbraid", "wbraid", "dclid", "fbclid", "msclkid",
+    "yclid", "ttclid", "twclid", "igshid", "li_fat_id", "mc_cid", "mc_eid",
+    "_ga", "_gl", "vero_id", "oly_enc_id", "oly_anon_id", "epik", "s_kwcid",
+}
 
 # Path tails that mean "the form for this job" rather than another job.
 # Stripping them collapses the application URL Jobright's Apply lands on
@@ -249,7 +260,7 @@ def canonical(url: str) -> str:
             path = head
         else:
             break
-    dropped = set(TRACKING_PARAMS)
+    dropped = set(TRACKING_PARAMS) | CLICK_IDS
     for suffix, extra in HOST_TRACKING.items():
         if host.endswith(suffix):
             dropped |= extra

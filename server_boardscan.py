@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, Response
 
 import paths
+from boardscan import run
 from boardscan.api import router
 
 paths.load_env()
@@ -29,6 +30,14 @@ PAGE = Path(__file__).resolve().parent / "boardscan" / "index.html"
 
 app = FastAPI(title="Board scan")
 app.include_router(router)
+
+
+@app.on_event("startup")
+def _start_schedule() -> None:
+    """The daily crawl. A `TestClient(app)` built without `with` never
+    fires startup, which is how the suite stays offline - the same
+    arrangement `server/watch.py` has."""
+    run.start()
 
 
 @app.get("/")

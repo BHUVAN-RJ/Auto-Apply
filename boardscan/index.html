@@ -105,6 +105,7 @@
   <button id="crawl" class="go">Crawl boards</button>
 </header>
 <div id="runline" style="padding:4px 12px"></div>
+<div id="scheduleline" class="meta" style="padding:0 12px 4px; color:#8b8781"></div>
 
 <main>
   <nav id="list"></nav>
@@ -235,6 +236,18 @@ function askDecline() {
   decide("declined", reason.trim());
 }
 
+async function paintSchedule() {
+  // The daily crawl runs itself; the page says so, because a schedule
+  // nobody can see is one nobody trusts.
+  const s = (await api("/boards/stats")).schedule;
+  if (!s) return;
+  const when = (r) => (r && r.at ? new Date(r.at).toLocaleString() : "never");
+  $("#scheduleline").textContent =
+    `daily crawl ${s.running ? "scheduled" : s.enabled ? "not started" : "off"} · ` +
+    `last crawl ${when(s.crawl)} · last harvest ${when(s.harvest)}` +
+    (s.crawl_due ? " · a crawl is due" : "");
+}
+
 async function poll() {
   const run = await api("/boards/run");
   const line = $("#runline");
@@ -255,7 +268,7 @@ async function poll() {
   } else {
     line.textContent = "";
   }
-  if (busy !== poll.wasBusy) { poll.wasBusy = busy; if (!busy) load(true); }
+  if (busy !== poll.wasBusy) { poll.wasBusy = busy; if (!busy) { load(true); paintSchedule(); } }
   setTimeout(poll, busy ? 1500 : 5000);
 }
 
@@ -285,4 +298,5 @@ addEventListener("keydown", (e) => {
 
 load(false);
 poll();
+paintSchedule();
 </script>

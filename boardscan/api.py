@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from boardscan import crawl as crawler
-from boardscan import known, registry, sources, store
+from boardscan import known, registry, run as schedule, sources, store
 
 router = APIRouter()
 
@@ -57,6 +57,7 @@ def _start(kind: str, work) -> dict:
 def stats() -> dict:
     return {"registry": registry.stats(), "roles": store.counts(),
             "harvests": registry.harvests(), "run": dict(_run),
+            "schedule": schedule.status(),
             "sources": [{"name": s.name, "repo": s.repo, "measured": s.measured}
                         for s in sources.SOURCES]}
 

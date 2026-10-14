@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
+import identity
+from identity import sources as identity_sources
 from archive import store
 from tailor import quality
 
@@ -242,8 +244,15 @@ def furthest(items: list[Known]) -> Known:
     return sorted(items, key=_best)[0]
 
 
-def find(url: str, title: str = "", company: str = "", text: str = "") -> Optional[Match]:
-    """The best match for this page, or None."""
+def _find_by_scan(url: str, title: str = "", company: str = "", text: str = "") -> Optional[Match]:
+    """The original answer: every row, scanned, four signals.
+
+    Kept as the fallback for a lookup `identity/` could not answer. It is
+    the implementation this module shipped with, and its measured gaps are
+    why `find` now asks the index first - a `/apply` tail on one of two
+    otherwise identical URLs let the same Vagaro posting into the queue
+    twice, four minutes apart.
+    """
     rows = known()
     url_key = canonical(url)
     jr = postings.source_id(url)
@@ -295,12 +304,103 @@ def find(url: str, title: str = "", company: str = "", text: str = "") -> Option
     return None
 
 
+
+
+# ---------------------------------------------------------------- the index
+#
+# `identity/` answers the same question over an index of the same data,
+# with a wider ladder: the canonical URL with its `/apply` tails stripped,
+# the board's own id across nineteen systems, Jobright's posting id, then
+# company-and-title and a posting simhash behind thresholds measured on
+# this corpus. It is read-only on the queue and the applications, it checks
+# its own staleness on every lookup, and it answers in single-digit
+# milliseconds.
+#
+# This module keeps its own shape - `Match`, `Known`, `furthest`,
+# `canonical` are used by the banner, the review page and the Simplify tab -
+# and hands the matching itself over. A lookup that raises falls back to
+# the scan rather than answering "nothing matched", because a false CLEAR
+# is the one answer that costs a second application.
+
+# The index may not import the modules that write the queue and the
+# archive (invariant 8), so it asks for their locations through a seam and
+# this is where the seam is filled. Registered as callables rather than
+# values because both are monkeypatched - by the suite, and by anything
+# that runs with a different data directory - after import.
+identity_sources.PATH_HOOKS["queue"] = lambda: queue.QUEUE_PATH
+identity_sources.PATH_HOOKS["applications"] = lambda: store.APPLICATIONS
+
+CERTAIN_LEVEL = "high"
+LIKELY_LEVEL = "confident"
+
+
+def _reject_label(job_id: str) -> str:
+    """The reason a rejected row was rejected, in the banner's words.
+
+    The index does not carry it: a reject reason is autopilot's own
+    vocabulary, not part of a posting's identity.
+    """
+    for job in queue.all_jobs():
+        if job.id == job_id and job.reject_reason:
+            return REJECT_LABELS.get(job.reject_reason, "")
+    return ""
+
+
+def find(url: str, title: str = "", company: str = "", text: str = "") -> Optional[Match]:
+    """The best match for this page, or None.
+
+    The enrichment stays here, before the lookup: Jobright's own page says
+    the company and the role in its title and nowhere else, and the index
+    is given facts rather than asked to guess them.
+    """
+    if not company:
+        company = postings.source_meta(url)[1] or company_from_title(title)
+    if not title:
+        title = postings.source_meta(url)[0]
+    try:
+        verdict = identity.lookup(url, title=title, company=company, text=text)
+    except Exception:                       # noqa: BLE001 - the scan is the fallback
+        return _find_by_scan(url, title=title, company=company, text=text)
+    if not verdict.matches:
+        return None
+    best = verdict.matches[0]
+    level = CERTAIN_LEVEL if best.confidence == identity.CERTAIN else LIKELY_LEVEL
+    return Match(level, best.display_id, best.status, best.decided_at, best.title,
+                 best.company, best.rule, _reject_label(best.display_id))
+
+
+def _employer_jobright_id(url: str) -> str:
+    """Jobright's posting id, but not from Jobright's own page.
+
+    Two employer URLs carrying the same `jr_id` are one posting and one
+    row. Jobright's posting page and the employer page its Apply opens are
+    also one posting - the banner says so, and `find` ranks the employer's
+    row first - but they are not one **row**: the employer row is the one
+    the fill works on, and refusing it because a Jobright row happens to
+    exist would mean the application was never queued at all.
+    """
+    return "" if is_source_page(url) else identity.keys.jobright_id(url)
+
+
 def same_job(a: Job, b: Job) -> bool:
-    """Provably one posting: what `queue.add` refuses to duplicate."""
-    if canonical(a.url) == canonical(b.url):
+    """Provably one posting: what `queue.add` refuses to duplicate.
+
+    `identity.keys` is asked, because this module's own canonical form let
+    a duplicate through: Vagaro's posting arrived once as
+    `.../p/<id>/apply` and once as `.../p/<id>`, four minutes apart, and
+    both were queued - one row failed, the other submitted. Stripping the
+    application tail is one of the things the index's canonical form does
+    that this one did not, and Breezy is one of the fifteen systems it
+    recognises an id for that `ats_id` does not.
+
+    Only a proof counts here. Company-and-title resemblance is for a
+    person reading a banner, never for refusing a job silently at the
+    door.
+    """
+    if identity.keys.canonical(a.url) == identity.keys.canonical(b.url):
         return True
-    ja, jb = postings.source_id(a.url), postings.source_id(b.url)
+    ja, jb = _employer_jobright_id(a.url), _employer_jobright_id(b.url)
     if ja and ja == jb:
         return True
-    aa, ab = ats_id(a.url), ats_id(b.url)
+    aa, ab = identity.keys.ats_identity(a.url), identity.keys.ats_identity(b.url)
     return bool(aa) and aa == ab

@@ -635,3 +635,68 @@ def test_the_cli_exits_two_on_a_block(corpus, capsys):
     assert main(["check", GREENHOUSE_BOARD]) == 2
     assert main(["check", LINKEDIN_VIEW]) == 0
     assert "BLOCK" in capsys.readouterr().out
+
+
+# ------------------------------------------------- wired into the app (2026-10-14)
+#
+# Three things found while pointing `server/seen.py` and `queue.add` at this
+# service. Each is a real regression that a green suite did not catch until
+# the whole app ran on it.
+
+
+@pytest.mark.parametrize("url", [
+    # `^utm_` alone kept a bare `?utm=x`, and the deny-list keeps what it
+    # does not recognise - so one job became two keys and `/autofilled`
+    # stopped recognising a job it had just filled.
+    "https://example.com/jobs/1?utm=x",
+    "https://example.com/jobs/1?utm_source=jobright&utm_medium=email",
+    "https://example.com/jobs/1?gclid=abc123",
+    "https://example.com/jobs/1?fbclid=1&msclkid=2&li_fat_id=3",
+    "https://example.com/jobs/1?_ga=2.1.1&mc_cid=9",
+    "https://www.example.com/jobs/1/",
+])
+def test_a_click_id_is_never_part_of_a_job(url):
+    assert keys.canonical(url) == keys.canonical("https://example.com/jobs/1")
+
+
+def test_a_job_id_that_looks_like_tracking_is_still_kept():
+    """The other direction, which is the dangerous one: a dropped job
+    parameter is a missed match."""
+    embed = keys.canonical(
+        "https://boards.greenhouse.io/embed/job_app?for=acme&token=7&utm=x")
+    assert "for=acme" in embed and "token=7" in embed
+    # ...except where that name is a session, which is host-specific.
+    assert "token" not in keys.canonical("https://x.ripplehire.com/p?token=s&jobid=8")
+    assert "jobid=8" in keys.canonical("https://x.ripplehire.com/p?token=s&jobid=8")
+
+
+def test_the_index_follows_the_queue_the_app_is_actually_using(tmp_path, monkeypatch):
+    """Invariant 8 forbids importing the module that writes the queue, so
+    the location comes through a registered reader. Without it the index
+    reads the default path and answers CLEAR about a job that is right
+    there - the one answer that costs a second application."""
+    from identity import sources
+
+    moved = tmp_path / "elsewhere" / "queue.json"
+    moved.parent.mkdir(parents=True)
+    moved.write_text("[]")
+    monkeypatch.delenv("AUTOPILOT_QUEUE", raising=False)
+    monkeypatch.setitem(sources.PATH_HOOKS, "queue", lambda: moved)
+    assert sources.queue_path() == moved
+
+    # An explicit override still wins, because that is what it is for.
+    monkeypatch.setenv("AUTOPILOT_QUEUE", str(tmp_path / "named.json"))
+    assert sources.queue_path() == tmp_path / "named.json"
+
+    # And a reader that raises is not fatal: the default answers.
+    monkeypatch.delenv("AUTOPILOT_QUEUE")
+    monkeypatch.setitem(sources.PATH_HOOKS, "queue",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no queue here")))
+    assert sources.queue_path().name == "queue.json"
+
+
+def test_importing_seen_registers_the_readers():
+    from identity import sources
+    from server import queue, seen                   # noqa: F401 - the import is the point
+
+    assert sources.PATH_HOOKS["queue"]() == queue.QUEUE_PATH

@@ -23,6 +23,13 @@ from .form import router as form_router
 from .profile import router as profile_router
 from .prompts import router as prompts_router
 from .report import router as report_router
+
+# The identity service's own router: a lookup, a backfill, the stats and the
+# collision report. Read-only on the queue and the applications, and the
+# same ladder `seen.find` now answers with, exposed so the collection
+# server (and a terminal) can ask the one question that must never be
+# guessed: have I applied to this already?
+from identity.api import router as identity_router
 from .github import router as github_router
 from .keys import router as keys_router
 from .outreach import router as outreach_router
@@ -93,6 +100,7 @@ app.include_router(github_router)
 app.include_router(scout_router)
 app.include_router(prompts_router)
 app.include_router(report_router)
+app.include_router(identity_router)
 
 
 @app.on_event("startup")

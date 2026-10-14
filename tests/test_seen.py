@@ -72,7 +72,8 @@ def test_confident_match_by_title_at_the_same_company():
                   title="[Remote] Software Engineer, (Internal Audit) [All Levels]"))
     match = seen.find("https://fieldguide.io/careers/swe-audit",
                       title="Software Engineer, Internal Audit @ Fieldguide | Jobright.ai")
-    assert match.level == "confident" and "same role" in match.reason
+    # The phrase is the index's; the judgement is the same one.
+    assert match.level == "confident" and "same company and title" in match.reason
     assert seen.find("https://fieldguide.io/careers/pm", title="Product Manager - Fieldguide Careers") is None
     assert seen.find("https://acme.io/careers/swe", title="Software Engineer, Internal Audit - Acme") is None
 
@@ -165,16 +166,26 @@ def test_the_job_that_was_applied_for_is_the_one_the_banner_points_at(tmp_path, 
     """Adding a duplicate of a job already submitted makes a second row, in
     flight. Asking "have I applied to this?" then answered with the new row -
     "In autopilot · waiting for your review" - about a job that had already
-    gone out. The row that got furthest is the answer."""
-    from server.models import Status
+    gone out. The row that got furthest is the answer.
 
-    sent = seen.Known("aaaa", "https://boards.example.com/jobs/1", "Backend Engineer",
-                      "Example Corp", Status.SUBMITTED.value, "2026-09-20T10:00:00+00:00", None)
-    again = seen.Known("bbbb", "https://boards.example.com/jobs/1", "Backend Engineer",
-                       "Example Corp", Status.AWAITING_REVIEW.value, "2026-09-26T10:00:00+00:00", None)
-    monkeypatch.setattr(seen, "known", lambda: [again, sent])
+    The two rows are written straight into the queue, because `queue.add`
+    now refuses the second one - which is the fix for a different bug and
+    not what this test is about.
+    """
+    import json
+
+    sent = Job(url="https://boards.example.com/jobs/1", title="Backend Engineer",
+               company="Example Corp", added_at="2026-09-20T10:00:00+00:00",
+               status=Status.SUBMITTED)
+    again = Job(url="https://boards.example.com/jobs/1?utm_source=jobright",
+                title="Backend Engineer", company="Example Corp",
+                added_at="2026-09-26T10:00:00+00:00", status=Status.AWAITING_REVIEW)
+    assert sent.id != again.id          # two rows, one posting
+    queue.QUEUE_PATH.write_text(json.dumps(
+        [again.model_dump(mode="json"), sent.model_dump(mode="json")]))
+
     match = seen.find("https://boards.example.com/jobs/1")
-    assert match and match.id == "aaaa" and match.status == "submitted"
+    assert match and match.id == sent.id and match.status == "submitted"
 
 
 def test_a_decided_row_is_dated_by_its_decision_not_by_when_it_was_noticed(tmp_path):

@@ -35,13 +35,14 @@ def path() -> Path:
 def _read() -> dict:
     p = path()
     if not p.exists():
-        return {"companies": [], "harvests": []}
+        return {"companies": [], "harvests": [], "runs": []}
     try:
         data = json.loads(p.read_text() or "{}")
     except json.JSONDecodeError:
-        return {"companies": [], "harvests": []}
+        return {"companies": [], "harvests": [], "runs": []}
     data.setdefault("companies", [])
     data.setdefault("harvests", [])
+    data.setdefault("runs", [])
     return data
 
 
@@ -169,3 +170,27 @@ def stats() -> dict:
         "roles": sum(c.roles for c in live),
         "at_level": sum(c.at_level for c in live),
     }
+
+
+def record_run(kind: str, result: dict) -> None:
+    """When a scheduled job last ran, and what it did. One record per kind,
+    replaced: the history worth keeping is on the companies and the roles."""
+    with _lock:
+        data = _read()
+        runs = {r["kind"]: r for r in data.get("runs", [])}
+        runs[kind] = {"kind": kind, "at": utcnow(), **result}
+        data["runs"] = list(runs.values())
+        _write(data)
+
+
+def last_run_record(kind: str) -> Optional[dict]:
+    with _lock:
+        for row in _read().get("runs", []):
+            if row["kind"] == kind:
+                return row
+    return None
+
+
+def last_run(kind: str) -> Optional[str]:
+    row = last_run_record(kind)
+    return row["at"] if row else None

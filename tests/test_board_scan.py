@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from boardscan import Role, crawl as crawler, known, place, registry, sources, store
+from boardscan import Role, crawl as crawler, known, place, registry, run as schedule, sources, store
 from scout import Posting
 
 
@@ -406,3 +406,49 @@ def test_one_long_job_at_a_time(client, monkeypatch):
     assert client.post("/boards/crawl", json={"limit": 1}).json()["state"] == "running"
     assert client.post("/boards/crawl", json={"limit": 1}).status_code == 409
     gate.set()
+
+
+# ------------------------------------------------------------- the schedule
+
+
+def test_a_job_is_due_until_it_has_run_and_then_is_not():
+    assert schedule.crawl_due() and schedule.harvest_due()
+    registry.record_run("crawl", {"companies": 1979, "new": 4266})
+    assert not schedule.crawl_due()
+    assert schedule.harvest_due()           # a different clock: once a week
+    registry.record_run("harvest", {"sources": 8, "errors": 0})
+    assert not schedule.harvest_due()
+
+
+def test_the_harvest_runs_before_the_crawl(monkeypatch):
+    """So a crawl on the same tick reads the companies it just learned
+    about."""
+    order = []
+    monkeypatch.setattr(schedule.sources, "harvest",
+                        lambda *a, **k: order.append("harvest") or {"sources": [], "errors": {}})
+    monkeypatch.setattr(schedule.crawler, "crawl",
+                        lambda *a, **k: order.append("crawl") or
+                        {"companies": 0, "seconds": 0.0, "roles": 0, "at_level": 0,
+                         "new": 0, "dead": 0})
+    schedule.round_once()
+    assert order == ["harvest", "crawl"]
+
+
+def test_the_schedule_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv(schedule.ENV, "0")
+    assert schedule.start() is False
+    assert schedule.running() is False
+
+
+def test_the_suite_never_starts_the_schedule(client):
+    """`TestClient(app)` without `with` does not fire startup, which is
+    what keeps the tests offline - the same arrangement `server/watch.py`
+    has."""
+    client.get("/boards/stats")
+    assert schedule.running() is False
+
+
+def test_the_stats_say_when_it_last_ran(client):
+    registry.record_run("crawl", {"companies": 1979, "seconds": 137.9, "new": 4266})
+    body = client.get("/boards/stats").json()["schedule"]
+    assert body["crawl"]["companies"] == 1979 and body["crawl_due"] is False

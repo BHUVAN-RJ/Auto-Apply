@@ -1877,6 +1877,48 @@ invariants first.
   before it is stored cannot be found again to prove it. `crawl.reflag_places`
   re-runs the rule over the rows already on file and touches nothing but
   flags. 1,338 roles to read after all of it.
+- **The never-apply-twice check is the app's, not a second opinion**
+  (2026-10-14, asked for: "completely integrate the identity to the job
+  autopilot"). `seen.find` and `seen.same_job` now answer through
+  `identity/`, so the banner, the review page, `/screen`, `/autofilled`,
+  the Simplify tab, `queue.add` and `boardscan/` all judge "have I applied
+  to this?" by one ladder instead of two. `seen.py` keeps its own shape -
+  `Match`, `Known`, `furthest`, `canonical` are used all over - and
+  `_find_by_scan` is the old implementation, kept as the fallback for a
+  lookup that raises, because a false CLEAR is the one answer that costs a
+  second application. `identity.api` is mounted on 8787 as well. Three
+  defects the integration found, none of which a green suite had caught:
+  (1) `identity.keys.jobright_id` reads Jobright's *own* page URL, so
+  `queue.add` began refusing the **employer** row whenever a Jobright row
+  existed - which would mean the application was never queued at all;
+  `seen._employer_jobright_id` is the distinction the old code made by
+  accident (two employer URLs sharing a `jr_id` are one row; Jobright's
+  page and the employer page it opens are one *posting* and two rows, and
+  `find` ranks the employer's first). (2) The tracking deny-list matched
+  `^utm_` and so kept a bare `?utm=x`: one job became two keys and
+  `/autofilled` stopped recognising a job it had just filled.
+  `keys.CLICK_IDS` and a prefix rule fix it, and a job id that merely looks
+  like tracking is still kept (Greenhouse's `token`), because a dropped job
+  parameter is a missed match. (3) The index read `paths.DATA/queue.json`
+  while ten test files and any second server move the queue elsewhere, so
+  it answered CLEAR about a job sitting in the queue; invariant 8 forbids
+  importing the module that writes it, so `sources.PATH_HOOKS` is the seam
+  and `server/seen.py` registers a reader for the queue and the archive on
+  import. Measured after wiring: of the 4,266 roles `boardscan/` had
+  collected, the new ladder **dropped 14 matches `seen.py` had called
+  "confident"** - eleven of them Palantir "Forward Deployed Software
+  Engineer" variants, which are separate openings - and kept every certain
+  one. Stricter where it was wrong, 12 ms a role.
+- **The board scan runs itself, daily** (2026-10-14). `boardscan/run.py`,
+  the shape of `scout/run.py`: a tick a minute, the crawl due once a day
+  (`RUNS_PER_DAY`) and the harvest once a week (`HARVEST_EVERY_DAYS`, since
+  the GitHub lists gain a handful of companies a week and each harvest is
+  28 MB of other people's files). The harvest runs first so a crawl on the
+  same tick reads the companies it just learned. `AUTOPILOT_BOARDSCAN=0`
+  off; one job at a time through the same lock the page's buttons use; the
+  page says when it last ran, because a schedule nobody can see is one
+  nobody trusts. `TestClient(app)` built without `with` never fires
+  startup, which is what keeps the suite offline.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows

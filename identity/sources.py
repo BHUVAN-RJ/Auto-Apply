@@ -99,14 +99,49 @@ class KnownJob:
         return found
 
 
+# Where the data is, when something has moved it. This service may not
+# import the modules that *write* the queue and the archive (invariant 8),
+# so it declares the seam and the server fills it in: `server/seen.py`
+# registers a reader for each on import. The reason it matters at all is
+# that a lookup against the wrong queue answers CLEAR, and a false CLEAR
+# is the single failure this service exists to prevent - so the index has
+# to follow the queue wherever the app has actually put it (a test, a
+# second server started from another home - see CLAUDE.md on two servers
+# and two data folders).
+PATH_HOOKS: dict[str, Callable[[], Path]] = {}
+
+
 def queue_path() -> Path:
     """Resolved per call: a module-level default freezes at import, which
-    has bitten this repository twice (see CLAUDE.md)."""
-    return Path(os.environ.get("AUTOPILOT_QUEUE") or paths.DATA / "queue.json")
+    has bitten this repository twice (see CLAUDE.md).
+
+    An explicit `AUTOPILOT_QUEUE` wins, since that is what an override is
+    for; then whatever the app registered; then the data directory.
+    """
+    named = os.environ.get("AUTOPILOT_QUEUE")
+    if named:
+        return Path(named)
+    hook = PATH_HOOKS.get("queue")
+    if hook is not None:
+        try:
+            return Path(hook())
+        except Exception:                            # noqa: BLE001 - fall through to the default
+            pass
+    return paths.DATA / "queue.json"
 
 
 def applications_path() -> Path:
-    return Path(os.environ.get("AUTOPILOT_APPLICATIONS") or paths.APPLICATIONS)
+    """The archive, by the same three steps."""
+    named = os.environ.get("AUTOPILOT_APPLICATIONS")
+    if named:
+        return Path(named)
+    hook = PATH_HOOKS.get("applications")
+    if hook is not None:
+        try:
+            return Path(hook())
+        except Exception:                            # noqa: BLE001
+            pass
+    return Path(paths.APPLICATIONS)
 
 
 def _fingerprint(path: Path) -> str:
