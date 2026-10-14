@@ -42,6 +42,7 @@ import urllib.request
 from itertools import count
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from . import autofill, chrome
 
@@ -138,6 +139,16 @@ def source_id(url: str) -> Optional[str]:
 def is_list_page(url: str) -> bool:
     """The job list the tracker is drawn on, rather than a posting."""
     return bool(LIST_PAGE.match(url or ""))
+
+
+def on_server(url: str) -> bool:
+    """Is this one of our own pages? Origin only, so any route or hash on
+    it counts - see `open_tab`, where being strict about the shape was
+    opening a second Autopilot tab for every job."""
+    if not url:
+        return False
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" == SERVER_ORIGIN
 
 
 def is_web(url: str) -> bool:
@@ -652,9 +663,16 @@ class Injector:
         if not (is_web(url) and (url == SERVER_ORIGIN or url.startswith(f"{SERVER_ORIGIN}/"))):
             return True, 403, {"detail": "only the review page may be opened this way"}
         try:
+            # Any tab on our own origin is the review page, whatever route
+            # or hash it is showing. It used to be `/` and `/#<id>` alone,
+            # which meant a tab on any other shape - a query, a path, a
+            # port read from `run/port` that the page had navigated with -
+            # was not recognised, and every Apply opened one more Autopilot
+            # tab. Reusing the wrong tab on our own origin is not a thing
+            # that can happen: there is only one page served there.
             existing = next(
                 (target_id for target_id, known_url in self.urls.items()
-                 if known_url == f"{SERVER_ORIGIN}/" or known_url.startswith(f"{SERVER_ORIGIN}/#")),
+                 if on_server(known_url)),
                 None,
             )
             if existing is not None:
@@ -667,7 +685,12 @@ class Injector:
                     await self.send("Page.navigate", {"url": url}, session)
                 if focus:
                     await self.send("Target.activateTarget", {"targetId": existing})
+                log.info("review tab reused for %s (focus=%s)", url, focus)
                 return True, 200, {"ok": True, "reused": True}
+            # Logged because it is the interesting case: a tab appearing on
+            # every Apply is this line running when it should not have.
+            log.info("review tab created for %s (focus=%s); %d tabs on file, none on %s",
+                     url, focus, len(self.urls), SERVER_ORIGIN)
             await self.send("Target.createTarget", {"url": url, "background": not focus})
             return True, 200, {"ok": True, "reused": False}
         except Exception as error:  # noqa: BLE001 - reported to the page
