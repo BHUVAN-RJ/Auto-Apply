@@ -2431,3 +2431,96 @@ Next, agreed and not built:
 - Collapsing Jobright's own extension panel on an employer page: it takes
   about half of a 720px window, and it is their UI, not ours.
 - The Profile tab overflows horizontally at 720px. Nobody reads it there.
+
+## Phase 30 — a day of real Workday flows, and what they showed (2026-10-11)
+
+The three Workday bugs before this one were each found on a live form,
+after an application had gone out wrong, and each was fixed against a
+fixture drawn from a screenshot. This phase is the other order: record the
+real thing first, then fix against it.
+
+**The recorder.** `tools/dev_workday_recorder.py` attaches to every Workday
+tab and keeps what the person met and what they did with it - one directory
+per tab under `data/dev_recordings/workday/` (gitignored), the pages as HTML
+with every value scrubbed, `flow.jsonl` of the moves.
+`tools/dev_workday_replay.py` serves one back on `127.0.0.1` so the real
+`browser/` code can run against the real markup in the real sequence, with
+no account and no employer. Shape, never content: a typed value is
+`<text:27chars>`, a password is `<secret>` with no length, a file is
+`<pdf:39chars>` with a `repeated` flag - the two-resume signal without the
+filename, which is named after the person. Nothing is recorded on an
+identity host. It presses, types and closes nothing, and it refuses to run
+past `EXPIRES`. Both files are deletable; nothing imports either.
+
+**What the first recording showed, within a day.** A Vermeer application,
+42 pages, done by hand with the autopilot's own fill running on its first
+two. Two file events on one input, 843 ms apart, the same 39-character
+filename - and from the next page on, `resumeAttachments--attachments`
+holding two `file-upload-item` rows with a `delete-file` bin each, all the
+way to the Submit. The fill's own log said `resume replaced`.
+
+**The clear had been pressing whatever it could reach.** Four identical
+lines: `cleared 'Resume/CV' (Work Experience If you are not uploading a
+resume, please share...) with 'Delete'`. The control was a bare
+`<button>Delete</button>` belonging to a Work Experience entry, with no
+automation id on it at all; the Resume/CV heading it claimed was seventeen
+thousand characters further down the page, over an **empty** slot. So it
+deleted work history four times and cleared nothing. On the other Workday
+job that morning the same climb pressed the phone country selector
+(`... with 'United States'`, four times) and the run ended `resume NOT
+attached, cover letter attached`.
+
+Three causes, and the shape of each fix:
+
+- **Distance was never the discriminator.** The 2026-10-09 `CLIMB = 14` was
+  raised because the heading really is nine ancestors above the bin, and
+  fourteen is also far enough for a control in another section to reach it.
+  A clearing control now has to be *inside an upload* (`inUpload`). "An
+  ancestor contains a file input" is not enough on its own and was tried:
+  six up from a Work Experience Delete is the form panel, which contains
+  the resume slot's input too. An upload widget is small; a page is not.
+- **A coded name may only match the narrow list.** `REMOVE_LABELS` carries
+  `change|replace` for the systems that word it that way, and matching
+  those against generated class names is what made a country selector a
+  clearing control. A class is enough to recognise a control, never enough
+  to promise what it does.
+- **"Cleared" has to mean a row went.** The finder answers with `rows`,
+  `Engine.slot_rows` reads it, and `clear_slot` loops only while the count
+  drops. A press that removes nothing stops the loop and writes the reason
+  onto the review page, rather than reporting a replacement that never
+  happened.
+
+**And two writers on one slot.** The fill uploaded the resume and the
+banner's **put** chip put it 843 ms later; on a Workday dropzone whichever
+lands second adds a row. The chip refuses while that job is `filling` - it
+is for the forms the fill cannot finish, and it says so instead of quietly
+adding a second file.
+
+**A scrubber is only as good as the grep.** Using two of those pages as
+fixtures meant reading them, and the maintainer's own name and email were
+still in three places the recorder had not thought of: the bin's
+`aria-label="Delete <file>.pdf"`, the `ariaLiveMessage` live region
+announcing the upload, and `#accountSettingsButton`, which carries the
+signed-in address in the header of every page. All redacted now, plus any
+filename in an `aria-label`, `title`, `alt` or `placeholder`. The check is
+not a unit test: it is `SNAPSHOT_JS` run against the page that leaked,
+grepped for the name.
+
+**The fixtures are the real pages.** `tests/dom/workday_work_experience.html`
+and `tests/dom/workday_two_resumes_live.html`, scrubbed. The hand-drawn
+fixtures beside them were green through the whole of this, which is the
+argument for keeping these at full size; all four new tests fail on the
+commit before the fix.
+
+Next, agreed and not built:
+
+- Job ids collide. `Job.id` is four hex characters of sha256 - 65,536 ids
+  for 270 rows, two Twitch postings both `96f2`, and `queue.get` returns
+  the first match, so the newer job has no detail page and no way out. At
+  270 rows the chance of a collision is about 43%. Lengthening the hash
+  changes every id on file, so it needs a migration (keep the short id as a
+  display name, key on something longer), not a one-line change.
+- The Workday fixes above have not been seen on a live Workday form. The
+  fixtures are the real markup and the tests fail on the old code, which is
+  better evidence than any of the three previous attempts had - and it is
+  still not a real run.
