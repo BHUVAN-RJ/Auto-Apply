@@ -51,6 +51,33 @@ every status note that names one. A fix is a migration: keep the short id as
 a **display** name, key on something longer, and map the old ids forward so
 nothing already on disk is orphaned.
 
+**Where it stands (2026-10-14).** The long key now exists and nothing has
+been migrated onto it. `identity.identity_key(url)` is 64 bits of sha256
+over the *canonical* URL, so one job keeps one key across the several links
+it arrives as, and `identity/` keys its own index on it while showing the
+four-hex id. The check is no longer a hand-written script:
+
+```bash
+python -m identity collisions
+```
+
+which today answers that **no four-hex id in the data names two jobs** - the
+`96f2` pair was resolved by hand. The residue of that pair is still on disk
+and is worth knowing about: the surviving queue row carries the **IBM** URL
+with the title "...at Twitch" and an `app_dir` pointing at the Twitch
+folder, whose `posting.md` is the Twitch posting under a `**Source:**` line
+naming careers.ibm.com. That row's URL and its contents disagree
+permanently; no fix recovers which was meant.
+
+The migration proposed, and not done, in the order that matters: (1) add
+`key` to `Job`, defaulted to `identity.identity_key(url)`, leaving `Job.id`
+exactly as it is, and give `queue` a `by_key` lookup; (2) make
+`queue.get(id)` refuse an ambiguous short id rather than silently return
+the first match - **that is the data-loss bug, and it is the whole fix**;
+(3) route `/review/{id}/...` through the long key where the page can supply
+one; (4) leave folder names, thread files, logs and `#<id>` links alone for
+good, because a display name may repeat as long as nothing acts on it.
+
 ---
 
 ## 2. A LinkedIn posting is never queued
