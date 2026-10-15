@@ -23,8 +23,9 @@ import json
 import os
 import sqlite3
 import threading
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 import paths
 from boardscan import Role
@@ -64,6 +65,44 @@ CREATE INDEX IF NOT EXISTS roles_verdict ON roles (verdict);
 _FIELDS = ("id", "system", "slug", "board_id", "company", "title", "url", "location",
            "posted", "text", "found_at", "verdict", "flags", "seen_verdict", "seen_job",
            "state", "reason", "decided_at")
+
+
+# The day a role belongs to: the board's own publish date when it sent one,
+# else the day we first saw it - an undated role is news on the day it
+# arrived, and sorting it among the ancient ones would bury it. The listing
+# orders by the same expression, so the filter and the order agree.
+DAY = "COALESCE(NULLIF(posted,''), substr(found_at,1,10))"
+
+# The filters the page opens with, and what a plain "how many are there to
+# read?" means: nothing decided, nothing already in autopilot, nowhere
+# abroad, nothing the rules threw out.
+TO_READ = {"state": "new", "verdict": ("ok", "caution"),
+           "hide_seen": True, "hide_foreign": True}
+
+WINDOWS = ("today", "yesterday", "3d", "week", "month", "all")
+
+
+def window_dates(name: str, today: Optional[date] = None) -> tuple[str, str]:
+    """The inclusive `(from, to)` ISO dates of a named freshness window.
+
+    `today` and `yesterday` are **one day each**, not "since": the point is
+    to read today's postings today and yesterday's yesterday, so the two
+    piles have to be separable. The wider windows are open-ended at the
+    top. The day is the reader's own local day rather than UTC, because the
+    question is "what came out today" as the person lives it.
+    """
+    now = today or date.today()
+    if name in ("", "all"):
+        return "", ""
+    if name == "today":
+        return now.isoformat(), now.isoformat()
+    if name == "yesterday":
+        day = (now - timedelta(days=1)).isoformat()
+        return day, day
+    spans = {"3d": 2, "week": 6, "month": 29}
+    if name in spans:
+        return (now - timedelta(days=spans[name])).isoformat(), ""
+    raise ValueError(f"not a window: {name}")
 
 
 def path() -> Path:
@@ -123,21 +162,36 @@ def get(role_id: str) -> Optional[Role]:
     return _row_to_role(row) if row else None
 
 
-def listing(state: str = "", verdict: str = "", system: str = "", query: str = "",
-            hide_seen: bool = False, hide_foreign: bool = False, limit: int = 200,
-            offset: int = 0, with_text: bool = False) -> list[Role]:
-    """The left-hand list: newest first, filtered the way the page asks.
-
-    `with_text` is off by default because a page of two hundred roles with
-    their descriptions is megabytes the list does not display.
-    """
+def _filters(state: str = "", verdict: str | Sequence[str] = "", system: str = "",
+             query: str = "", hide_seen: bool = False, hide_foreign: bool = False,
+             window: str = "", day_from: str = "", day_to: str = "",
+             ) -> tuple[list[str], list]:
+    """The WHERE of a listing, built once so the counts can be counted over
+    exactly what the list is showing. A count that disagrees with the rows
+    under it is worse than no count."""
     where, args = [], []
     if state:
         where.append("state = ?")
         args.append(state)
-    if verdict:
-        where.append("verdict = ?")
-        args.append(verdict)
+    verdicts = [verdict] if isinstance(verdict, str) else list(verdict)
+    # `none` is how the page names a role the board sent with no
+    # description, which is stored as the empty verdict - and the empty
+    # string on its own means "no verdict filter at all", so it cannot be
+    # the name of one. Nothing ticked is therefore everything, not nothing:
+    # a page of no rows reads as broken, and no filter is what no filter
+    # means everywhere else here.
+    verdicts = ["" if v == "none" else v for v in verdicts if v]
+    if verdicts:
+        where.append(f"verdict IN ({','.join('?' * len(verdicts))})")
+        args += verdicts
+    if window and not (day_from or day_to):
+        day_from, day_to = window_dates(window)
+    if day_from:
+        where.append(f"{DAY} >= ?")
+        args.append(day_from)
+    if day_to:
+        where.append(f"{DAY} <= ?")
+        args.append(day_to)
     if system:
         where.append("system = ?")
         args.append(system)
@@ -148,11 +202,58 @@ def listing(state: str = "", verdict: str = "", system: str = "", query: str = "
     if query:
         where.append("(company LIKE ? OR title LIKE ? OR location LIKE ?)")
         args += [f"%{query}%"] * 3
+    return where, args
+
+
+def by_window(**filters) -> dict:
+    """How many rows each freshness window holds **under these filters**.
+
+    This is what the day buttons wear, so the number on the button is the
+    number of rows pressing it produces - ticks, search box and all. The
+    `window` filter itself is ignored here, since each window counts its
+    own; and the windows overlap, so they do not add up.
+    """
+    filters.pop("window", None)
+    filters.pop("day_from", None)
+    filters.pop("day_to", None)
+    out: dict[str, int] = {}
+    with _lock, connect() as conn:
+        for name in WINDOWS:
+            where, args = _filters(**filters, window=name)
+            sql = "SELECT COUNT(*) FROM roles"
+            if where:
+                sql += " WHERE " + " AND ".join(where)
+            out[name] = conn.execute(sql, args).fetchone()[0]
+    return out
+
+
+def listing(state: str = "", verdict: str | Sequence[str] = "", system: str = "",
+            query: str = "", hide_seen: bool = False, hide_foreign: bool = False,
+            window: str = "", day_from: str = "", day_to: str = "",
+            limit: int = 200, offset: int = 0, with_text: bool = False) -> list[Role]:
+    """The left-hand list: newest first, filtered the way the page asks.
+
+    `verdict` takes several - `("ok", "caution")` is the working pile, and
+    a single verdict was never a real question: a caution is read the same
+    morning as an ok.
+
+    `window` is a name from `WINDOWS` resolved against the reader's own
+    today; `day_from` / `day_to` are the same thing said in ISO dates and
+    win over it. Both are judged on `DAY`, so a role the board dated is
+    filed under the day the employer published it and an undated one under
+    the day we found it.
+
+    `with_text` is off by default because a page of two hundred roles with
+    their descriptions is megabytes the list does not display.
+    """
+    where, args = _filters(state=state, verdict=verdict, system=system, query=query,
+                           hide_seen=hide_seen, hide_foreign=hide_foreign,
+                           window=window, day_from=day_from, day_to=day_to)
     columns = "*" if with_text else ",".join(f for f in _FIELDS if f != "text")
     sql = f"SELECT {columns} FROM roles"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY COALESCE(NULLIF(posted,''), found_at) DESC, found_at DESC LIMIT ? OFFSET ?"
+    sql += f" ORDER BY {DAY} DESC, found_at DESC LIMIT ? OFFSET ?"
     with _lock, connect() as conn:
         rows = conn.execute(sql, (*args, limit, offset)).fetchall()
     out = []
@@ -197,7 +298,11 @@ def counts() -> dict:
         today = conn.execute("SELECT COUNT(*) FROM roles WHERE found_at >= ?",
                              (utcnow()[:10],)).fetchone()[0]
     return {"roles": total, "by_state": by_state, "by_verdict": by_verdict,
-            "already_known": seen, "abroad": abroad, "found_today": today}
+            "already_known": seen, "abroad": abroad, "found_today": today,
+            # What makes a pile of four thousand workable: "10 today, 15
+            # yesterday" are the two buttons worth pressing. Under the
+            # default filters here; the page counts under its own.
+            "fresh": by_window(**TO_READ)}
 
 
 def declines(limit: int = 500) -> list[dict]:

@@ -177,6 +177,87 @@ def test_the_listing_filters_and_hides_what_is_already_known():
     assert store.counts()["already_known"] == 1
 
 
+def test_several_verdicts_are_one_pile():
+    """ok and caution are read the same morning, so the page ticks both.
+    A single verdict was never the real question."""
+    a = role(board_id="1", verdict="ok")
+    b = role(board_id="2", verdict="caution")
+    c = role(board_id="3", verdict="reject")
+    d = role(board_id="4", verdict="")
+    store.add_new([a, b, c, d])
+    assert sorted(r.board_id for r in store.listing(verdict=("ok", "caution"))) == ["1", "2"]
+    # The empty string is "no filter at all", so a role the board sent with
+    # no description is asked for by name.
+    assert len(store.listing(verdict="")) == 4
+    assert [r.board_id for r in store.listing(verdict=("none",))] == ["4"]
+
+
+def test_today_is_today_and_yesterday_is_yesterday():
+    """The whole reason the windows exist: a pile of thousands is unreadable
+    and the ones worth the first hour are the ones posted in the last one."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    rows = {
+        "now": role(board_id="1", posted=today.isoformat()),
+        "yesterday": role(board_id="2", posted=(today - timedelta(days=1)).isoformat()),
+        "last week": role(board_id="3", posted=(today - timedelta(days=5)).isoformat()),
+        "ancient": role(board_id="4", posted=(today - timedelta(days=400)).isoformat()),
+    }
+    store.add_new(list(rows.values()))
+    seen = lambda window: sorted(r.board_id for r in store.listing(window=window))  # noqa: E731
+    assert seen("today") == ["1"]
+    # One day each, not "since": the two piles have to be separable or
+    # yesterday's postings are read twice and today's not at all.
+    assert seen("yesterday") == ["2"]
+    assert seen("3d") == ["1", "2"]
+    assert seen("week") == ["1", "2", "3"]
+    assert seen("all") == ["1", "2", "3", "4"]
+    assert seen("") == ["1", "2", "3", "4"]
+    # Newest first, so the day's work is at the top of the list.
+    assert [r.board_id for r in store.listing()] == ["1", "2", "3", "4"]
+    with pytest.raises(ValueError):
+        store.listing(window="fortnight")
+
+
+def test_a_role_the_board_never_dated_is_news_on_the_day_it_arrived():
+    """An undated role filed under 1970 would be buried for ever; it is
+    filed under the day the crawl found it instead."""
+    store.add_new([role(posted="")])
+    assert len(store.listing(window="today")) == 1
+
+
+def test_the_day_counts_are_counted_under_the_same_filters():
+    """The number on a day button is the number of rows pressing it
+    produces, so a decided, known, abroad or rejected role is not counted
+    under the filters the page opens with. A count that disagrees with the
+    rows beneath it is worse than no count."""
+    from datetime import date, timedelta
+
+    today, yesterday = date.today().isoformat(), (date.today() - timedelta(days=1)).isoformat()
+    good = role(board_id="1", posted=today, verdict="ok")
+    decided = role(board_id="2", posted=today, verdict="ok")
+    known_already = role(board_id="3", posted=today, verdict="ok")
+    rejected = role(board_id="4", posted=today, verdict="reject")
+    abroad = role(board_id="5", posted=today, verdict="ok", flags=[place.FLAG])
+    old = role(board_id="6", posted=yesterday, verdict="caution")
+    store.add_new([good, decided, known_already, rejected, abroad, old])
+    store.decide(decided.id, "added")
+    store.mark_seen(known_already.id, "high", "96f2")
+    fresh = store.by_window(**store.TO_READ)
+    assert fresh["today"] == 1
+    assert fresh["yesterday"] == 1
+    assert fresh["3d"] == 2
+    assert fresh["all"] == 2
+    # The same arithmetic the page gets, and the window asked for is
+    # ignored when the windows are counted - each counts its own.
+    assert store.by_window(**store.TO_READ, window="today")["yesterday"] == 1
+    # Counted under *these* filters: with the reject ticked and nothing
+    # hidden, today's pile is the five roles posted today.
+    assert store.by_window(state="new")["today"] == 4
+    assert store.counts()["fresh"] == fresh
+
+
 def test_the_listing_leaves_the_description_behind():
     store.add_new([role(text="x" * 5000)])
     assert store.listing()[0].text == ""
@@ -379,6 +460,25 @@ def test_the_list_and_one_decision_over_http(client):
     assert answer.status_code == 200
     assert store.get(row.id).reason == "too far from home"
     assert client.get("/boards/declines").json()["declines"][0]["reason"] == "too far from home"
+
+
+def test_the_page_asks_for_a_window_and_a_set_of_verdicts(client):
+    from datetime import date, timedelta
+
+    today, yesterday = date.today().isoformat(), (date.today() - timedelta(days=1)).isoformat()
+    store.add_new([role(board_id="1", posted=today, verdict="ok"),
+                   role(board_id="2", posted=today, verdict="caution"),
+                   role(board_id="3", posted=today, verdict="reject"),
+                   role(board_id="4", posted=yesterday, verdict="ok")])
+    asked = client.get("/boards/roles?window=today&verdict=ok,caution").json()
+    assert sorted(r["board_id"] for r in asked["roles"]) == ["1", "2"]
+    # The day buttons' own counts, under the verdicts that were ticked.
+    assert asked["fresh"] == {"today": 2, "yesterday": 1, "3d": 3,
+                              "week": 3, "month": 3, "all": 3}
+    assert [r["board_id"] for r in
+            client.get("/boards/roles?window=yesterday").json()["roles"]] == ["4"]
+    # A window nobody defined is the caller's mistake, not a 500.
+    assert client.get("/boards/roles?window=fortnight").status_code == 400
 
 
 def test_a_role_that_is_not_there_is_a_404_not_a_crash(client):

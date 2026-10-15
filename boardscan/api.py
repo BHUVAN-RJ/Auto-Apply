@@ -105,12 +105,31 @@ def crawl(body: CrawlBody | None = None) -> dict:
 @router.get("/boards/roles")
 def roles(state: str = "", verdict: str = "", system: str = "", q: str = "",
           hide_seen: bool = False, hide_foreign: bool = False,
+          window: str = "", day_from: str = "", day_to: str = "",
           limit: int = 200, offset: int = 0) -> dict:
-    rows = store.listing(state=state, verdict=verdict, system=system, query=q,
-                         hide_seen=hide_seen, hide_foreign=hide_foreign,
-                         limit=min(limit, 500), offset=offset)
+    """The list the page draws.
+
+    `verdict` is a comma-separated set, because ok and caution are one
+    pile - a caution is read the same morning as an ok, and the person
+    asked for a tick per verdict rather than a one-of dropdown.
+
+    `window` is one of `store.WINDOWS` - `today` and `yesterday` are one
+    day each - and `day_from` / `day_to` say the same thing in ISO dates
+    for anything the named windows do not cover.
+    """
+    filters = dict(state=state, verdict=[v.strip() for v in verdict.split(",")],
+                   system=system, query=q, hide_seen=hide_seen, hide_foreign=hide_foreign)
+    try:
+        rows = store.listing(**filters, window=window, day_from=day_from,
+                             day_to=day_to, limit=min(limit, 500), offset=offset)
+        # The day buttons wear these, so each is counted under the same
+        # filters as the list: a count that disagrees with the rows beneath
+        # it is worse than no count.
+        fresh = store.by_window(**filters)
+    except ValueError as e:                     # an unknown window name
+        raise HTTPException(400, str(e)) from e
     return {"roles": [{**r.model_dump(exclude={"text"}), "id": r.id} for r in rows],
-            "counts": store.counts()}
+            "fresh": fresh, "counts": store.counts()}
 
 
 @router.get("/boards/role/{role_id}")

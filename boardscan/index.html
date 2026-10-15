@@ -12,6 +12,13 @@
   autopilot", d to decline with a reason, o to open the posting. A week of
   triage is a few thousand keystrokes, and every decline is kept with its
   reason because that pile is what the filters get tuned from.
+
+  The day buttons are what make four thousand roles workable (2026-10-15).
+  A pile that deep cannot be read at all, and the ones worth the first
+  hour are the ones posted in the last one: today and yesterday are a
+  button each, with their own counts on them, so today's postings are read
+  today and yesterday's yesterday. The verdict is a tick per verdict
+  rather than a one-of dropdown, because ok and caution are one pile.
 -->
 <style>
   :root {
@@ -65,6 +72,19 @@
           padding-top: 12px; margin-top: 12px; max-width: 80ch; }
   .actions { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
   .empty { color: var(--dim); padding: 24px 12px; }
+  .days { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+          padding: 4px 12px; border-bottom: 1px solid var(--line); }
+  .days .lab { color: var(--dim); }
+  .days button.on { border-color: var(--agent); color: var(--agent); }
+  .days button .n { color: var(--dim); }
+  .days button.on .n { color: var(--you); }
+  .ticks { display: flex; gap: 8px; align-items: center; }
+  .ticks label { color: var(--dim); }
+  .ticks label.ok { color: var(--you); }
+  .ticks label.caution { color: var(--warn); }
+  .ticks label.reject { color: var(--no); }
+  .age { color: var(--you); }
+  .age.old { color: var(--dim); }
   .runline { color: var(--agent); }
   .runline.error { color: var(--no); }
   a { color: var(--you); }
@@ -84,12 +104,12 @@
     <option value="declined">declined</option>
     <option value="added">in autopilot</option>
   </select>
-  <select id="verdict">
-    <option value="">any verdict</option>
-    <option value="ok">ok</option>
-    <option value="caution">caution</option>
-    <option value="reject">reject</option>
-  </select>
+  <span class="ticks">
+    <label class="ok"><input type="checkbox" class="verdict" value="ok" checked> ok</label>
+    <label class="caution"><input type="checkbox" class="verdict" value="caution" checked> caution</label>
+    <label class="reject"><input type="checkbox" class="verdict" value="reject"> reject</label>
+    <label><input type="checkbox" class="verdict" value="none"> not screened</label>
+  </span>
   <select id="system">
     <option value="">all boards</option>
     <option value="greenhouse">greenhouse</option>
@@ -104,6 +124,9 @@
   <button id="harvest">Harvest slugs</button>
   <button id="crawl" class="go">Crawl boards</button>
 </header>
+<div class="days" id="days">
+  <span class="lab">posted</span>
+</div>
 <div id="runline" style="padding:4px 12px"></div>
 <div id="scheduleline" class="meta" style="padding:0 12px 4px; color:#8b8781"></div>
 
@@ -116,6 +139,14 @@
 const $ = (s) => document.querySelector(s);
 let rows = [], at = -1, current = null;
 
+// The day buttons, in the order they are worth pressing. `today` and
+// `yesterday` are one day each; the rest are "since".
+const WINDOWS = [
+  ["today", "today"], ["yesterday", "yesterday"], ["3d", "3 days"],
+  ["week", "week"], ["month", "month"], ["all", "everything"],
+];
+let window_ = "today";
+
 const api = async (path, body) => {
   const res = await fetch(path, body ? {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -127,12 +158,17 @@ const api = async (path, body) => {
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+function verdicts() {
+  return [...document.querySelectorAll("input.verdict:checked")].map((el) => el.value);
+}
+
 function query() {
   const p = new URLSearchParams({ limit: "400" });
-  const state = $("#state").value, verdict = $("#verdict").value, system = $("#system").value;
+  const state = $("#state").value, system = $("#system").value;
   if (state) p.set("state", state);
-  if (verdict) p.set("verdict", verdict);
+  if (verdicts().length) p.set("verdict", verdicts().join(","));
   if (system) p.set("system", system);
+  if (window_ && window_ !== "all") p.set("window", window_);
   if ($("#hideseen").checked) p.set("hide_seen", "true");
   if ($("#hideforeign").checked) p.set("hide_foreign", "true");
   if ($("#q").value.trim()) p.set("q", $("#q").value.trim());
@@ -143,15 +179,43 @@ async function load(keep) {
   const data = await api("/boards/roles?" + query());
   rows = data.roles;
   const c = data.counts;
+  fresh = data.fresh || {};
+  // "to read" is under the filters that are on, not the whole table: the
+  // table's own four thousand includes the rejects and the abroad ones and
+  // is not a number of jobs anybody is going to open.
   $("#counts").textContent =
-    `${c.roles} roles · ${c.by_state.new || 0} to read · ${c.already_known} already known · ${c.abroad} abroad · ${c.found_today} today`;
+    `${rows.length} shown · ${fresh.all ?? "?"} under these filters · ` +
+    `${c.roles} collected · ${c.already_known} already known · ${c.abroad} abroad`;
+  paintDays();
   paintList();
   if (keep && current) {
     const i = rows.findIndex((r) => r.id === current.id);
     if (i >= 0) { at = i; markRow(); return; }
   }
   if (rows.length && at < 0) show(0);
-  if (!rows.length) { $("#detail").innerHTML = '<div class="empty">Nothing here. Crawl, or widen the filters.</div>'; }
+  // An empty day is the normal case most mornings, so it says where the
+  // work actually is rather than reading as a broken page.
+  if (!rows.length) {
+    const next = WINDOWS.filter(([k]) => k !== window_ && (fresh[k] || 0) > 0)
+      .map(([k, label]) => `${fresh[k]} ${label === "everything" ? "in all" : label}`);
+    $("#detail").innerHTML = `<div class="empty">Nothing posted ${window_ === "all" ? "at all" : esc(label(window_))} under these filters.` +
+      (next.length ? `<br>Elsewhere: ${esc(next.join(" · "))}.` : " Crawl, or widen the filters.") + `</div>`;
+  }
+}
+
+let fresh = {};
+const label = (key) => (WINDOWS.find(([k]) => k === key) || ["", key])[1];
+
+function paintDays() {
+  // Each count is what is left **to read** in that window - nothing
+  // decided, nothing already in autopilot, nowhere abroad, nothing the
+  // rules threw out - so the number on the button is the number of jobs
+  // the button is offering.
+  $("#days").innerHTML = '<span class="lab">posted</span>' + WINDOWS.map(([key, text]) =>
+    `<button data-w="${key}" class="${key === window_ ? "on" : ""}">${text}` +
+    `${fresh[key] === undefined ? "" : ` <span class="n">${fresh[key]}</span>`}</button>`).join("");
+  $("#days").querySelectorAll("button").forEach((el) =>
+    el.addEventListener("click", () => { window_ = el.dataset.w; at = -1; load(false); }));
 }
 
 function paintList() {
@@ -164,7 +228,7 @@ function paintList() {
       </div>
       <div class="meta">
         <span>${esc(r.location || "—")}</span>
-        <span>${esc(r.posted || "")}</span>
+        <span class="age ${age(r).old ? "old" : ""}">${esc(age(r).text)}</span>
         <span>${esc(r.system)}</span>
         ${r.seen_verdict ? `<span class="chip seen">${r.seen_verdict === "high" ? "already in autopilot" : "looks like a job of mine"}</span>` : ""}
         ${r.state !== "new" ? `<span class="chip ${r.state}">${r.state}</span>` : ""}
@@ -172,6 +236,20 @@ function paintList() {
     </div>`).join("") || '<div class="empty">No rows.</div>';
   $("#list").querySelectorAll(".row").forEach((el) =>
     el.addEventListener("click", () => show(Number(el.dataset.i))));
+}
+
+function age(r) {
+  // "3d" reads faster than "2026-10-12" when the whole question is how
+  // fresh this one is. Over a fortnight it is the date again, because by
+  // then the exact day is what tells two month-old postings apart.
+  const day = (r.posted || (r.found_at || "").slice(0, 10));
+  if (!day) return { text: "no date", old: true };
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(day + "T00:00:00").getTime()) / 86400000);
+  if (!isFinite(days)) return { text: day, old: true };
+  if (days <= 0) return { text: "today", old: false };
+  if (days === 1) return { text: "yesterday", old: false };
+  if (days <= 14) return { text: days + "d", old: days > 7 };
+  return { text: day, old: true };
 }
 
 function markRow() {
@@ -282,8 +360,10 @@ $("#crawl").addEventListener("click", async () => {
   await api("/boards/crawl", {});
   poll();
 });
-["state", "verdict", "system", "hideseen", "hideforeign"].forEach((id) =>
+["state", "system", "hideseen", "hideforeign"].forEach((id) =>
   $("#" + id).addEventListener("change", () => { at = -1; load(false); }));
+document.querySelectorAll("input.verdict").forEach((el) =>
+  el.addEventListener("change", () => { at = -1; load(false); }));
 let typing;
 $("#q").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(() => { at = -1; load(false); }, 250); });
 
@@ -294,6 +374,10 @@ addEventListener("keydown", (e) => {
   if (e.key === "a") { decide("added", ""); }
   if (e.key === "d") { askDecline(); }
   if (e.key === "o" && current) { window.open(current.url, "_blank", "noopener"); }
+  // The day is the first decision of a session, so it is a keystroke too:
+  // 1 is today, 6 is everything, in the order the buttons stand.
+  const pick = WINDOWS[Number(e.key) - 1];
+  if (pick) { window_ = pick[0]; at = -1; load(false); e.preventDefault(); }
 });
 
 load(false);
