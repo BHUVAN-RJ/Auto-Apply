@@ -2524,3 +2524,180 @@ Next, agreed and not built:
   fixtures are the real markup and the tests fail on the old code, which is
   better evidence than any of the three previous attempts had - and it is
   still not a real run.
+
+## Phase 31 — the jobs from the boards, and one answer to "have I applied?" (2026-10-14 / 15)
+
+Two halves of one problem, built the same day because neither is worth
+much without the other. The collection half reads every company's own job
+board directly, which multiplies the number of postings in front of the
+person by an order of magnitude; the identity half is what stops that
+turning into the same application sent twice.
+
+### Why a company list is the whole input
+
+Greenhouse, Lever and Ashby each publish **every open role at one
+company** over an endpoint that needs no login and no key
+(`boards-api.greenhouse.io/v1/boards/<org>/jobs?content=true`,
+`api.lever.co/v0/postings/<org>`,
+`api.ashbyhq.com/posting-api/job-board/<org>`). None of the three has an
+endpoint that searches **across** their customers. That is why the usual
+trick for this is `site:job-boards.greenhouse.io "new grad"` in Google:
+it borrows the only cross-company index that exists, at Google's price —
+a fraction of the postings, days late, a hundred results a query.
+
+So the company list is the input, and it is harvested rather than
+guessed. `boardscan/sources.py` reads eight public new-grad and
+internship lists on GitHub; every row carries an employer apply link and
+`scout.detect` reads the board slug out of any shape of it, the embedded
+Greenhouse form included. An abandoned 2024 list is as good as a current
+one, because the postings are dead and the boards are not. First harvest,
+measured: 80,786 links, **1,979 companies** (901 Greenhouse, 698 Ashby,
+380 Lever), nothing paid for.
+
+### What the first full crawl found, and the two defects it showed
+
+1,979 companies in 137.9 s at 12 workers: **96,986 open roles**, 4,266
+past `scout.filter.at_level` and the US check, of which `tailor/screen.py`'s
+twelve deterministic rules rejected 2,748 (1,951 on years of experience,
+957 on a clearance, 568 on visas, 436 on export control). 157 boards
+answered 404 and are `dead`.
+
+Both defects were visible at the top of the list it produced, and neither
+would have been caught by a test:
+
+* Scout's level list carries `engineer i` / `engineer ii`, which brought
+  in Manufacturing, Avionics Thermal and Vehicle Fluids roles.
+  `boardscan.LEVEL_NEGATIVE` is this package's **own** list for exactly
+  that reason: it is not Scout's to inherit changes from.
+* `scout.filter.outside_us` matches a *country*, and a board often writes
+  only the city, so Bucharest, Kuala Lumpur, Manchester and Vladivostok
+  were all roles to read. `boardscan/place.py` reads a US signal first (a
+  state name or code rescues Manchester NH and Vancouver WA), then the
+  cities and regions a software board actually writes, then keeps whatever
+  is left, so a bare "San Francisco" survives. It **flags** rather than
+  drops (140 of 4,266) and the page hides those by default with the count
+  showing: a place list written from one morning's reading will be wrong
+  about somewhere, and a role dropped before it is stored cannot be found
+  again to prove it.
+
+`store.py` is SQLite because 90,000 roles with their text is a database,
+and every insert is `INSERT OR IGNORE`: **a crawl may never clear a
+decision**, since the decline pile with its reasons is the only thing the
+filters get tuned from.
+
+### The identity ladder
+
+Asked for in these words: a deterministic check, no model, allowed to take
+a second, 99% no-reapply. `identity/` is a ladder, cheapest and most
+certain first — the canonical URL; the board's own `(board, org, job)`;
+company plus title plus place; and resemblance, which is the same company
+and either a token-set title similarity of 0.85 or a posting simhash
+within 6 bits. Both thresholds were measured over the pairs on disk rather
+than chosen: 1.00 is one job spelled twice, 0.80 is two real Palantir
+openings, and before `keys.usable_posting` filtered the text six pairs sat
+0–1 bits apart and every one was two unrelated jobs sharing a sign-in
+wall. Levels 3 and 4 are fenced by `conflicting` (Engineer I against
+Engineer II, an internship against a job) and roman numerals are
+normalised to digits rather than deleted, so Google's `III` still
+discriminates.
+
+BLOCK on a certain match already applied for or in the pipeline, WARN on a
+certain `skipped` / `failed` and on anything likely, CLEAR on nothing —
+and **a false CLEAR is the one answer that costs a second application**,
+which is why staleness is checked on every lookup and caught up before
+answering. The index is SQLite, built from `data/queue.json` and
+`applications/**` and read-only on both; invariant 8 asserts that a lookup
+and a backfill leave every mtime alone.
+
+Measured: 301 of 301 jobs identify themselves; the same job as a different
+link 301/301 for added or stripped tracking, trailing slashes, `www`,
+`http` and `/apply`, and 76/76 for each of Greenhouse's three URL shapes.
+Two certain duplicate groups in the corpus, both real — one of them **the
+same Vagaro posting queued twice, four minutes apart, one row failed and
+one submitted**, which `seen.canonical` missed because it keeps the
+`/apply` tail.
+
+### Integrating it, and the three defects that found
+
+"Completely integrate the identity to the job autopilot": `seen.find` and
+`seen.same_job` answer through the ladder, so the banner, the review page,
+`/screen`, `/autofilled`, the Simplify tab, `queue.add` and `boardscan/`
+all judge the question one way. `_find_by_scan` is kept as the fallback
+for a lookup that raises.
+
+Three defects, none of which a green suite had caught:
+
+1. `identity.keys.jobright_id` reads Jobright's *own* page URL, so
+   `queue.add` began refusing the **employer** row whenever a Jobright row
+   existed — the application would never have been queued at all.
+   `seen._employer_jobright_id` is the distinction the old code made by
+   accident: two employer URLs sharing a `jr_id` are one row, while
+   Jobright's page and the employer page it opens are one *posting* and
+   two rows.
+2. The tracking deny-list matched `^utm_` and so kept a bare `?utm=x`: one
+   job became two keys and `/autofilled` stopped recognising a job it had
+   just filled. `keys.CLICK_IDS` plus a prefix rule fix it, and a job id
+   that merely looks like tracking is still kept (Greenhouse's `token`),
+   because a dropped job parameter is a missed match.
+3. The index read `paths.DATA/queue.json` while ten test files and any
+   second server move the queue elsewhere, so it answered CLEAR about a
+   job sitting in the queue. Invariant 8 forbids importing the module that
+   writes the queue, so `sources.PATH_HOOKS` is the seam and
+   `server/seen.py` registers a reader on import.
+
+After wiring, over the 4,266 collected roles, the new ladder **dropped 14
+matches `seen.py` had called "confident"** — eleven of them Palantir
+"Forward Deployed Software Engineer" variants, which are separate openings
+— and kept every certain one. Stricter where it was wrong, 12 ms a role.
+
+### Reading four thousand roles (2026-10-15)
+
+The collection half works, which is the problem: 1,338 roles to read is
+not a list anybody reads. The ones worth the first hour are the ones
+posted in the last one, so the page has a **day button per freshness
+window**, each wearing its own count: today 11, yesterday 17, 3 days 48,
+week 86, month 326, everything 1,415 on the morning it was built. `today`
+and `yesterday` are **one day each** rather than "since", because the
+whole point is to read today's postings today and yesterday's yesterday,
+and two overlapping "since" windows make that impossible.
+
+The day a role belongs to is `store.DAY` — the board's own publish date
+when it sent one, else the day the crawl found it. An undated role filed
+under 1970 would be buried for ever, and is really news on the day it
+arrived; the listing orders by the same expression, so the filter and the
+order agree. The verdict filter became **a tick per verdict**: ok and
+caution are one pile, a caution is read the same morning as an ok, and
+`none` names a posting the board sent with no description. Nothing ticked
+is everything, not nothing, because a page of no rows reads as broken.
+
+Every count goes through `store._filters`, the listing's own WHERE
+(`store.by_window`), so the number on a button is the number of rows
+pressing it produces — ticks, search box and all. A count that disagrees
+with the rows beneath it is worse than no count, and the one it replaced
+did disagree: it promised ten and the list held eleven. Driven in a
+headless Chrome against the live server before and after each change.
+
+### One Autopilot tab, not one per Apply
+
+Reported in the middle of this: "why does clicking apply to new jobs open
+the tab again and again". `inject.open_tab` reuses the review page when it
+is open, and recognised it by two exact URL shapes — `{SERVER_ORIGIN}/`
+and `{SERVER_ORIGIN}/#...`. A tab on our own origin in any other shape
+fell through to `Target.createTarget`, so every Apply left another copy of
+the page behind. The test is the **origin** now (`inject.on_server`): one
+page is served there, so reusing the wrong tab is not possible, while
+being strict about the route cost a tab a job. Both branches log which one
+they took, because the reason this had to be guessed at rather than read is
+that the open path logged nothing at all.
+
+Next, agreed and not built:
+
+- Merging the board scan into autopilot proper. It is a package and a
+  server of its own (8788) until the collection half has earned a tab, and
+  `api.py` is a router precisely so that merge changes no line in it.
+- The week-one calibration itself: read the declines with their reasons
+  and tighten `LEVEL_NEGATIVE`, the place list and the screening rules
+  from the pattern, which is the whole reason the pile is kept.
+- Adding a role to autopilot from this page. Today "it is in autopilot" is
+  the person's own note after they have added it by hand on the posting,
+  which is deliberate for week one: nothing here queues anything.
