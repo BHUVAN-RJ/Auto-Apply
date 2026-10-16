@@ -2688,7 +2688,16 @@ the page behind. The test is the **origin** now (`inject.on_server`): one
 page is served there, so reusing the wrong tab is not possible, while
 being strict about the route cost a tab a job. Both branches log which one
 they took, because the reason this had to be guessed at rather than read is
-that the open path logged nothing at all.
+that the open path logged nothing at all. Read back a day later:
+`logs/inject.log` has 18 "review tab reused" lines and no "created" one, so
+the fix is proven on real Apply clicks rather than only in a test.
+
+Where the collection stands on 2026-10-16: 4,348 roles stored, 1,501 `ok`
+and 43 `caution`, 2,803 rejected by the rules, 68 already in autopilot, 144
+read as abroad, 1,403 left to read, 44 declined with a reason. The crawl ran
+itself at 20:59 UTC on 15 October - 1,822 companies, 126.8 s, 97,045 roles,
+4,263 at level, 79 of them new - which is the schedule working unattended,
+and is also why the `today` button reads 0 before the day's run.
 
 Next, agreed and not built:
 

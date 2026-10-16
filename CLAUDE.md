@@ -1930,6 +1930,9 @@ invariants first.
   tab a job. And **neither branch logged anything**, which is why this had
   to be guessed at rather than read - both say which one they took now, the
   created one with how many tabs it knew about and that none was ours.
+  **Proven live** (2026-10-16): `logs/inject.log` carries 18 "review tab
+  reused for ..." lines across two days and not one "created" since, so
+  Apply now points the one tab at the job instead of opening another.
 - **Today's jobs today** (2026-10-15, asked for). A pile of four thousand
   roles cannot be read at all, and the ones worth the first hour are the
   ones posted in the last one, so the page has a day button per freshness
@@ -1951,6 +1954,29 @@ invariants first.
   pressing it produces - a count that disagrees with the rows beneath it is
   worse than no count. The row says an age ("today", "6d") instead of a raw
   date up to a fortnight, and 1-6 are the day buttons' keystrokes.
+- **Where things stand (2026-10-16).** 322 queue rows: 228 submitted, 51
+  failed, 40 skipped, 2 at `awaiting_review` and 1 `filled` - so there is
+  one tailored form waiting on a person's Submit and two jobs waiting to be
+  read. Three processes own the machine: `uvicorn server.app:app` on 8787
+  (pid 77623), `browser.inject --open http://127.0.0.1:8787/` (78485) and
+  `uvicorn server_boardscan:app --port 8788` (85208), the last restarted on
+  2026-10-15 for the day filters. The board scan holds **4,348 roles** from
+  1,820 live companies (831 Greenhouse, 662 Ashby, 327 Lever; 159 dead, 1
+  broken), of which 1,501 screen `ok` and 43 `caution`, 2,803 are rejected
+  by the rules, 68 are already in autopilot and 144 read as abroad - **1,403
+  left to read** under the page's own filters, 12 of them from yesterday.
+  The schedule is running: last crawl 2026-10-15 20:59 UTC (1,822 companies,
+  126.8 s, 97,045 roles, 4,263 at level, 79 new), last harvest 2026-10-14,
+  due again 2026-10-21. `today` reads 0 until the day's crawl has run, which
+  is the schedule and not a defect. Not started, each the person's call: the
+  board-scan page cannot add a role to autopilot (`a` is only their own
+  note), there is no per-day breakdown for an exact older day, `boardscan/`
+  is still a server of its own rather than a tab on 8787, and the week-one
+  calibration pass over the 44 declines has not been read. Carried over:
+  KNOWN_ISSUES #1 (the four-hex `Job.id` collision; the fix that matters is
+  making `queue.get(id)` refuse an ambiguous short id) and #2 (LinkedIn
+  postings never reaching the queue, cause not established), plus the
+  malformed record in `applications/index.csv`.
 - Whatever comes next lands here first, one line each, with the date.
 
 ## What the review page shows
