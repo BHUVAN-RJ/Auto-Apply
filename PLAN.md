@@ -263,6 +263,15 @@ leak; a deny-list in code does not.
   quote that is not in the posting, or that is a question, is dropped; the
   verdict is recomputed from the surviving flags; with facts derived from
   the resume, visa, clearance, export-control, and timeline flags are soft.
+- Nothing automated reaches a stranger. The follow-up after a submission
+  writes an email and a LinkedIn note and then stops: delivery happens in
+  one place, `server/outreach.py`, behind a press that carries `confirmed`,
+  and a guessed address is refused until the person has ticked that they
+  checked it. The pipeline, `apply.py`, `browser/` and the tailor may not
+  import the mailer or either of the two bridges to the person's own Gmail
+  and LinkedIn (`tests/test_invariants.py` #7), and neither the follow-up
+  queue, the send clock nor the contact ladder may call the worker that
+  sends. An address written to once is never written to again.
 
 ## Phases
 
@@ -2710,3 +2719,132 @@ Next, agreed and not built:
 - Adding a role to autopilot from this page. Today "it is in autopilot" is
   the person's own note after they have added it by hand on the posting,
   which is deliberate for week one: nothing here queues anything.
+
+## Phase 32 — the person presses, and the application keeps going after it is sent (2026-10-26 / 11-05)
+
+Four pieces of work that are really one change of stance. Up to here the
+design treated the human press as the last gate before something
+irreversible; everything else drifted towards doing itself. This phase
+moves the press forward, to the start: nothing begins without one either.
+And it extends the application past the submit click, because an
+application that is in the pile and nothing else is half a job.
+
+### A form read as data, and a browser watched rather than trusted
+
+`browser/forms/` already filled the fields it recognised in code. What it
+could not do was walk a system whose application is several pages, which
+is most of the large ones. The answer was to stop writing that walk in
+Python per employer and keep each system's form as data: `table.json`
+holds a system's fields and the order of its pages, `table.py` reads it,
+and `steps.py` runs them. A new ATS is then a row rather than a module,
+and `rules_for` is exported for the case where one needs a rule the table
+cannot express — deliberately uncalled today, so that the first caller
+has to justify itself.
+
+Alongside it, `server/watch.py`: a thread that reads every filled form
+over CDP every four seconds. It exists because the end of a fill was the
+one thing the system knew least about. A model's "I submitted it" is
+worthless, and so is a page that merely changed; what counts is a page
+that is a confirmation, with the form gone and the confirmation words in
+its text. The watch is also what lets the person submit in the form's own
+tab and have autopilot notice, which is how a person actually works.
+`AUTOPILOT_WATCH=0` turns it off.
+
+### The button, on every page, and the page that forbade it
+
+The automatic path used to screen a posting, count down and press Apply.
+That was removed on 2026-10-30. The verdict is still computed and still
+shown, but **Add to autopilot** and **Start now** are presses, and the
+countdown is gone. The reason is the same reason the submit gate exists:
+a verdict is a guess about fit, and acting on a guess at machine speed
+produces applications nobody chose to send.
+
+Once the press is the way in, the button has to be *everywhere* — a
+posting on a company's own site, a LinkedIn job, anything. So the banner
+now carries a labelled button in its cold state, before any screen has
+run, and pressing it reads the posting and adds the job in one press
+rather than two.
+
+That button did not appear on Google's careers pages, and the reason is
+worth recording. Those pages send
+`require-trusted-types-for 'script'`, under which `innerHTML` throws —
+and so does `DOMParser.parseFromString`, which was the first fix and was
+measured failing live. The sanctioned way through is to declare a policy,
+so `content.js` now has exactly one HTML sink, `setHTML`, backed by a
+`job-autopilot` Trusted Types policy, and a test asserts that it is the
+only one. Pages that send no such header are unaffected; pages that do
+get the banner instead of nothing.
+
+### A submission is not the end: the follow-up phase
+
+An application that has gone in is worth one email to a recruiter and,
+often, one connection request to someone on the team. `outreach/follow.py`
+is the phase a submission starts, and `server/followqueue.py` walks every
+submitted application through it, one at a time and with no cap, because
+the limit that matters is the person's press rather than a number here.
+
+Contacts come off a ladder, cheapest rung first: `outreach/people.py`
+reads the public web through the Claude Code subscription at no API cost,
+`outreach/apollo.py` is the paid rung and the only one that returns a
+*verified* address, and `outreach/jobright.py` guesses. A guessed or typed
+address is marked as such on the card and holds the press until the person
+ticks that they checked it, which is the whole difference between helping
+and sending mail to strangers at a company.
+
+### Why the mail leaves through their own Gmail
+
+The SMTP path logs into one mailbox, and Gmail stamps that account's
+address on everything leaving it. The address this person writes from is
+their university one, and no app password exists for it — Google's own
+page does not offer one on that account. Proved live on 2026-11-03: the
+`From` was rewritten.
+
+The way through was already on their disk. `~/outreach/gmail-mcp` is a
+tool they built: a dedicated Chrome signed into that account by hand,
+driving Gmail's own data requests. `outreach/gmailthing.py` is a bridge to
+it, not a reimplementation — it shells out to the tool's own entry points,
+so a change in Gmail is fixed in one place. An approved follow-up becomes
+a draft in their real mailbox with the tailored resume attached, and the
+send presses the real Send button. It presses rather than posting the
+request because Gmail's send is issued from a service worker and is
+invisible to the capture that worked for drafts and uploads; that was
+measured, and the measurement is why the code looks the way it does. A
+capture run on 2026-11-05 confirmed a real message leaving as the
+university address.
+
+`outreach/linkedinthing.py` is the same arrangement for
+`~/outreach/linkedin-mcp`: autopilot writes the note to *their* guide
+(`docs/connection-note-guide.md`, read verbatim into the prompt) and their
+tool owns the cap — fourteen invites per rolling 24 hours, one to three
+minutes apart, no retry, stop at the first failure. The count is asked of
+their tracker and never kept here, because that log also holds what they
+sent by hand.
+
+Both bridges are off by one `.env` line each
+(`AUTOPILOT_OUTREACH_GMAIL=0` falls back to SMTP,
+`AUTOPILOT_OUTREACH_LINKEDIN=0` to nothing), both are forced off for the
+whole test suite by an autouse fixture, and neither may be imported by the
+pipeline, the fill or the tailor. The SMTP path stays, because it is the
+right path for anyone whose login is the address they write from.
+
+### One press for both channels
+
+The first design drafted into Gmail and let the person press Send there.
+They asked for the other shape on 2026-11-05 — "once i approve then you
+can start and then send completely" — so the card now shows the emails and
+the notes together behind a single **Approve and send N emails and M
+LinkedIn notes**, disabled while any guessed address is unticked, and a
+worker thread does both while the card says it is sending.
+
+Where this stands: the drafts, the notes, the cap arithmetic and the one
+approval are built and tested, and a message has been proved to leave from
+the right address. The full press on a real job card has not been run end
+to end yet; that run is the proof, and it is the person's to make.
+
+Next, not built:
+
+- The SMTP clock does not skip weekends, so a Saturday approval sits until
+  Monday only by luck of the hour.
+- The LinkedIn half reaches only people the contact ladder already found.
+  Searching an employer for alumni of the person's own university is
+  offered by their tool and not wired up.

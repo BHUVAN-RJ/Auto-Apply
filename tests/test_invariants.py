@@ -149,10 +149,23 @@ def test_automation_cannot_reach_outbound_mail():
         source = path.read_text()
         assert "import mailing" not in source and "from mailing" not in source, path
         assert "send_message(" not in source, path
+        # The same rule for the person's own tools, which since 2026-11-05 are
+        # the real outward path: one writes into their mailbox and sends it,
+        # the other writes to strangers on LinkedIn. `tailor/outreach.py`
+        # writes the words and may not reach either.
+        for tool in ("gmailthing", "linkedinthing"):
+            assert tool not in source, f"{path} must not reach {tool}"
 
     route = (ROOT / "server" / "outreach.py").read_text()
     assert "confirmed" in route and "mailing.send_message(msg)" in route
     assert "this message is already" in route, "a sent email must not be sent twice"
+    # The one press that reaches people through their own tools is gated the
+    # same way, and nothing else may call it: a timer, a verdict or a
+    # submission path reaching `_go` would be the countdown all over again.
+    assert "confirm before anything is sent" in route
+    for module in ("server/followqueue.py", "server/sendlater.py", "outreach/follow.py"):
+        source = (ROOT / module).read_text()
+        assert "_go(" not in source and "gmailthing" not in source, module
 
 
 # 8. The identity service only ever reads. It answers "have I applied to

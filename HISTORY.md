@@ -2145,3 +2145,49 @@ Oldest first. Add new entries at the end of this file, one line each, with the d
   `AUTOPILOT_OUTREACH_CLAUDE=0` goes straight to Apollo as before, and
   `tests/conftest.py` sets it off for every test, since the suite may never
   reach the CLI or the web.
+
+- **The button on every page, and the page that forbade markup** (2026-11-04,
+  asked for: "when I open a page from outside, I want a start button ... let's
+  show that button on every page"). The banner's cold state is now a labelled
+  **Add to autopilot** button rather than an orb, and one press reads the
+  posting and adds the job instead of screening first and waiting for a
+  second press. It did not render at all on Google's careers pages: they send
+  `require-trusted-types-for 'script'`, under which `innerHTML` throws - and
+  so does `DOMParser.parseFromString`, which was the first fix and was
+  measured failing live over CDP. `content.js` now declares a `job-autopilot`
+  Trusted Types policy and has exactly one HTML sink, `setHTML`;
+  `tests/test_capture.py` asserts that it is the only one, and the four
+  `tests/test_dom.py` failures that followed were fixed by splicing the
+  helper into the lifted source rather than by loosening the tests. Verified
+  live with a screenshot of the banner on a page that had shown nothing.
+
+- **A submitted application reaches people, from the address it should**
+  (2026-11-05, asked for: "use the gmail api thingy that I have created ...
+  and the linkedin as well and connect all to job autopilot", then "once i
+  approve then you can start and then send completely"). SMTP can never send
+  as the university address: Gmail rewrites any `From` that is not a verified
+  alias of the mailbox it is logged into, proved live on 2026-11-03, and that
+  account offers no app password at all. So delivery moved onto the tools the
+  person had already built. `outreach/gmailthing.py` shells out to
+  `~/outreach/gmail-mcp` - a Chrome signed into that account by hand - to
+  create the draft with the tailored resume and then to press the real Send
+  button; it presses rather than posting the request because Gmail's send is
+  issued from a service worker and is invisible to the capture that works for
+  drafts and uploads, which was measured before the code was written. A
+  capture run on 2026-11-05 confirmed a real message leaving as the
+  university address. `createDrafts` answers with a count rather than ids, so
+  `ledger_id` reads the draft id back out of the tool's own
+  `~/.gmail-mcp/ledger.jsonl`. `outreach/linkedinthing.py` is the same
+  arrangement for `~/outreach/linkedin-mcp`: the note is written to their own
+  `docs/connection-note-guide.md`, read verbatim into the prompt, and their
+  tracker owns the cap - 14 invites per rolling 24 hours, one to three
+  minutes apart, no retry, stop at the first failure - because that log also
+  holds what they sent by hand. The card shows the emails and the notes
+  together behind one **Approve and send**, disabled while any guessed
+  address is unticked. Both bridges are off for the whole suite by an autouse
+  fixture in `tests/conftest.py`, since each acts in a real signed-in
+  account, and `tests/test_invariants.py` #7 now refuses them to the
+  pipeline, the fill and the tailor as it already refused the mailer. The
+  SMTP path stays for anyone whose login is the address they write from. The
+  full press on a real job card has not been run end to end; that run is the
+  proof.

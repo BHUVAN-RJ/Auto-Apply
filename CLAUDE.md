@@ -114,7 +114,15 @@ Grep HISTORY.md for a path to get its reasoning.
 - `tailor/quality.py`: scores posting text without a model.
 - `tailor/boards.py`, `tailor/linkedin.py`: posting text from each board's own API.
 - `tailor/claudecode.py`: Claude Code subscription calls, with no CLAUDE.md on any call.
-- `outreach/`, `server/outreach.py`, `tailor/outreach.py`: recruiter outreach, always a human send.
+- `outreach/`, `server/outreach.py`, `tailor/outreach.py`: recruiter outreach, always a human press.
+- `outreach/follow.py`: the phase a submission starts; `company_for` reads the employer off a row that names none.
+- `outreach/people.py`: the free first rung, the public web read by the Claude Code subscription.
+- `outreach/apollo.py`, `outreach/jobright.py`: the paid and the guessed rungs; only Apollo returns a verified address.
+- `outreach/gmailthing.py`: their own Gmail tool (`~/outreach/gmail-mcp`), which is signed in as the address they write from.
+- `outreach/linkedinthing.py`: their own LinkedIn tool (`~/outreach/linkedin-mcp`), which owns the invite cap.
+- `outreach/schedule.py`, `server/sendlater.py`: the 9 am slot and its clock, for the SMTP fallback.
+- `server/followqueue.py`: every submitted application through the checking phase, one at a time, no cap.
+- `tracking/`: every tab in the Chrome we own, watched until it closes; `policy.py` decides what may be recorded.
 - `voice/`, `server/voice.py`: whisper.cpp in, Fish Audio or Kokoro out.
 - `capture/content.js`: reads the page, calls `/screen`, paints the banner.
 - `capture/background.js`: context menu, tab following, Autopilot tab reuse.
@@ -241,6 +249,11 @@ flow.
   no per-day breakdown for an older day, it is not yet a tab on 8787, the
   calibration pass over the 44 declines is unread, and
   `applications/index.csv` has a malformed record.
+- Outreach, as of 2026-11-05: the real send has never been run end to end -
+  the drafts, the notes and the one approval are built and tested, and the
+  first press on a job card is the proof. Weekends are not skipped by the
+  SMTP clock. The LinkedIn half only reaches people the contact ladder found;
+  searching a company for USC alumni is offered and not built.
 - Older ideas may already be done, so check before building:
   `grep -nE "Next if asked|not built|Raised" HISTORY.md`.
 
@@ -256,8 +269,15 @@ page reads like prose again, one of those slipped.
 
 `AUTOPILOT_RESUME_FILENAME`, `AUTOPILOT_COVER_LETTER_FILENAME`,
 `AUTOPILOT_LOCATION`, `AUTOPILOT_AUTOFILL`, `AUTOPILOT_SERVER_URL`,
-`AUTOPILOT_BROWSER`, `OPENROUTER_TAILOR_MODEL`, `OPENROUTER_PREMIUM_MODEL`. Never hardcode a name, a city, or a phone number in the
-repo; it is public.
+`AUTOPILOT_BROWSER`, `OPENROUTER_TAILOR_MODEL`, `OPENROUTER_PREMIUM_MODEL`.
+Outreach: `AUTOPILOT_OUTREACH` (the phase), `AUTOPILOT_OUTREACH_CLAUDE` (the
+free web rung), `AUTOPILOT_OUTREACH_GMAIL` and `AUTOPILOT_OUTREACH_LINKEDIN`
+(their own tools; 0 falls back to SMTP and to nothing), `AUTOPILOT_GMAIL_THING`
+and `AUTOPILOT_LINKEDIN_THING` (where those tools live),
+`AUTOPILOT_OUTREACH_SEND` and `AUTOPILOT_OUTREACH_HOUR` (the SMTP clock),
+`AUTOPILOT_OUTREACH_BACKFILL` (the queue through the checking phase).
+Never hardcode a name, a city, an email address or a phone number in the
+repo; it is public, and a resume's filename is a person's name.
 
 ## Style
 

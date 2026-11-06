@@ -82,12 +82,20 @@ of it and the window left open on it. Everything halts there.
 
 Checkpoint 2 always blocks. Nothing is ever submitted by anything but you.
 
-After the documents exist, the same review page can find a recruiter and a
-hiring manager, write a short email for each, and send it through Gmail
-with the tailored resume attached. Finding contacts and drafting is
-automatic; sending is not. A guessed or typed address needs you to tick
-that you verified it, then **Approve and send**. The pipeline and the
-browser agent cannot reach mail.
+**After a submission — the follow-up.** Once a job is submitted, the same
+review page looks up who to write to at that employer, and prepares two
+things: an email to a recruiter and a hiring manager, with the tailored
+resume attached, and a short LinkedIn connection note for each person it
+found. Both are shown on the job's card before anything leaves.
+
+Nothing is sent without one press. **Approve and send** sends the emails
+and the invites together; a guessed or typed address first needs you to
+tick that you verified it. Mail goes out through your own Gmail, so it
+leaves from the address you actually write from and lands in your Sent
+Mail, and the invites go through your own LinkedIn, which owns the daily
+cap and the pacing. Without those tools it falls back to SMTP for mail
+and to nothing for LinkedIn. The pipeline and the browser agent cannot
+reach either one.
 
 ## The agent never submits
 
@@ -123,13 +131,13 @@ job you ever considered.
 
 | Component | Role |
 |---|---|
-| `capture/` | `content.js`: the on-page banner (screen verdict, countdown, queue, already-seen, file chips, submission watch). `tracker.js`: the status column drawn over the Simplify new-grad list's own GitHub page. Both injected by `browser/inject.py` into the app's own Chrome; also loadable as an MV3 extension for an everyday Chrome |
+| `capture/` | `content.js`: the on-page banner (**Add to autopilot** on every page, screen verdict, queue, already-seen, file chips, submission watch), written through one Trusted Types policy so it also appears on pages that forbid raw markup. `tracker.js`: the status column drawn over the Simplify new-grad list's own GitHub page. Both injected by `browser/inject.py` into the app's own Chrome; also loadable as an MV3 extension for an everyday Chrome |
 | `server/` | FastAPI on `localhost:8787` by default. Owns the queue, serves the review UI, holds checkpoint state |
 | `tailor/` | Reads the posting plus your profile, edits the resume, emits a diff and a rationale. `boards.py` asks Ashby, Greenhouse, Lever and Workday for the posting over their own public endpoints, because the URL a capture keeps is usually the application form rather than the description |
 | `tex/` | TeX wrapper producing deterministic PDFs; the engine is chosen per document |
 | `browser/` | The fill, driving your real Chrome profile over CDP. `forms/` fills and attaches by code; `guard.py` is the never-submit deny-list; `signin.py` waits out a login wall and says when the form is back; `workday.py` and `linkedin_apply.py` walk their multi-page flows; `press_submit.py` is the only place a Submit control is ever pressed, and the agent cannot reach it |
 | `review/` | Local web page: diff view, PDF preview, approve / reject / chat, recruiter outreach, and the Profile, Projects, Scout, Screening, Prompts and Settings tabs |
-| `outreach/` | Per-job recruiter and hiring-manager contacts, drafts, and a Gmail send that only the review page can reach |
+| `outreach/` | Per-job recruiter and hiring-manager contacts, email drafts and LinkedIn notes, and the two bridges that deliver them — your own Gmail and your own LinkedIn — reachable only from the review page's one press |
 | `voice/` | Local speech for the interviewer: whisper.cpp in, Piper out, both as subprocess binaries |
 | `tools/sweep_failed.py` | Moves failed application folders under `applications/failed/`; nothing is deleted |
 | `archive/` | Application folder writer plus `index.csv` |
@@ -249,10 +257,11 @@ load `capture/` as an unpacked extension (`chrome://extensions` →
 Developer mode → Load unpacked).
 
 Open <http://127.0.0.1:8787> for the queue. In the Chrome that opened,
-browse Jobright: a posting page is screened as it opens; an OK or caution
-verdict counts down and presses Apply; the employer's page is screened
-again and queues itself; the pipeline runs; the job appears on the review
-page. A posting already in autopilot is not queued again: the banner says
+browse Jobright: a posting page is screened as it opens and the verdict is
+shown on the banner, with **Add to autopilot** next to it; the press is
+yours, on any page — the banner carries that button whether or not the
+posting could be screened. On the employer's own page it queues the job,
+the pipeline runs, and the job appears on the review page. A posting already in autopilot is not queued again: the banner says
 where it stands and opens it on the review page. Add, Add anyway, and Open in
 autopilot focus the existing Autopilot tab and select that job; if there is no
 Autopilot tab, exactly one is opened.
