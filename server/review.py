@@ -13,6 +13,7 @@ an existing one is ever overwritten.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional
@@ -24,11 +25,15 @@ from pydantic import BaseModel
 import paths
 from archive import store
 from browser import chrome, guard
+from identity import keys as identity_keys
 from server import corrections, queue, runner, seen, thread as job_thread
-from server.models import REJECT_LABELS, Job, RejectReason, Status
+from server.models import REJECT_LABELS, Job, RejectReason, Status, utcnow
 from tailor import answers, llm, profile, tailor
 
 router = APIRouter(prefix="/review", tags=["review"])
+
+# Not `log`: this module already serves a job's apply log under that name.
+logger = logging.getLogger(__name__)
 
 # Where apply.py writes its per-job logs.
 DATA_DIR = paths.DATA
@@ -59,7 +64,15 @@ ARTIFACTS = {
 
 
 class Decision(BaseModel):
+    """A human decision about one job.
+
+    `url` is the page the person was standing on when they pressed. It is
+    not decoration: `Job.id` is four hex characters and can name two jobs
+    (KNOWN_ISSUES #1), so the URL is what says which of them the page meant.
+    """
+
     note: Optional[str] = None
+    url: Optional[str] = None
 
 
 class FillRequest(BaseModel):
@@ -98,8 +111,91 @@ class ThreadMessage(BaseModel):
     premium: bool = False
 
 
-def _job_and_dir(job_id: str) -> tuple[Job, Path]:
-    job = queue.get(job_id)
+def _same_posting(rows: list[Job], url: str) -> Optional[Job]:
+    """Which of these colliding rows is the page at `url`.
+
+    Two rows share a short id only by hash collision, so they are two
+    different postings and the URL tells them apart. The URL is matched with
+    the app's own machinery and nothing new: `identity.keys.canonical` first
+    (the same canonical form `seen.same_job` and the index are keyed on), and
+    then `seen.same_job`, which is the proof-only half of the
+    never-applied-twice ladder - a posting reached by another one of its
+    links is still that posting. Resemblance is deliberately not consulted
+    here: it is for a person reading a banner, never for choosing which job
+    a click lands on.
+    """
+    if not url:
+        return None
+    want = identity_keys.canonical(url)
+    exact = [row for row in rows if identity_keys.canonical(row.url) == want]
+    if len(exact) == 1:
+        return exact[0]
+    asking = Job(url=url)
+    proven = [row for row in rows if seen.same_job(row, asking)]
+    return proven[0] if len(proven) == 1 else None
+
+
+def _by_url(url: str) -> Optional[Job]:
+    """The job this page is, through the one never-applied-twice ladder.
+
+    `seen.find` already answers "have I applied to this?" for the banner,
+    the review page, `/screen` and the queue, so there is no second matcher
+    here. Only a **certain** match counts: a likely one is "same company,
+    similar title", which at Palantir is eleven separate openings, and
+    acting on one of those would fill the wrong job's form or mark the wrong
+    application sent.
+    """
+    if not url:
+        return None
+    match = seen.find(url)
+    if match is None or match.level != seen.CERTAIN_LEVEL:
+        return None
+    rows = queue.rows_for(match.id)
+    if len(rows) == 1:
+        return rows[0]
+    return _same_posting(rows, url)
+
+
+def _ambiguous(job_id: str, rows: list[Job]) -> HTTPException:
+    """409, saying it is ambiguous and naming the jobs it is between.
+
+    Never a guess and never a bare 404: the person asked about a job that
+    exists, and the only honest answer is that the id names two of them.
+    """
+    return HTTPException(409, {
+        "error": "ambiguous_id",
+        "id": job_id,
+        "message": f"the id {job_id} names {len(rows)} jobs; open the one you mean "
+                   f"from the list, or send the posting's URL with the request",
+        "candidates": [{"id": row.id, "url": row.url, "title": row.title,
+                        "company": row.company, "status": row.status.value,
+                        "added_at": row.added_at} for row in rows],
+    })
+
+
+def _resolve_job(job_id: str, url: str = "") -> Optional[Job]:
+    """One job for this request, or None. Raises 409 on an ambiguous id.
+
+    The id is tried first, because every link the page writes carries one.
+    When it names two rows the URL breaks the tie; with no URL to break it,
+    the request is refused rather than aimed at whichever row came first in
+    the file (`queue.Ambiguous`). An id that names nothing falls back to the
+    URL, which is how "I submitted it" still reaches the job when the page
+    is sending a posting we know under a different link.
+    """
+    rows = queue.rows_for(job_id) if job_id else []
+    if len(rows) == 1:
+        return rows[0]
+    if len(rows) > 1:
+        picked = _same_posting(rows, url)
+        if picked is not None:
+            return picked
+        raise _ambiguous(job_id, rows)
+    return _by_url(url)
+
+
+def _job_and_dir(job_id: str, url: str = "") -> tuple[Job, Path]:
+    job = _resolve_job(job_id, url)
     if job is None:
         raise HTTPException(404, "unknown job")
     if not job.app_dir:
@@ -214,7 +310,7 @@ def ask(job_id: str, body: Question) -> dict:
 @router.get("/{job_id}/thread")
 def read_thread(job_id: str) -> dict:
     """The conversation about this job. Polled while a change runs."""
-    queue.get(job_id) or _job_and_dir(job_id)
+    _resolve_job(job_id) or _job_and_dir(job_id)
     return {"id": job_id, "turns": job_thread.load(job_id), "running": job_thread.running(job_id)}
 
 
@@ -613,14 +709,48 @@ def reject_reasons() -> list[dict]:
     return [{"value": reason.value, "label": label} for reason, label in REJECT_LABELS.items()]
 
 
+def _prepare_follow_up(job_id: str) -> None:
+    """Start the follow-up drafts for a job that has just been submitted.
+
+    Imported here rather than at module scope, the way `pipeline` is: the
+    outreach package reaches `apply.upload_copy` for the named resume copy,
+    and that side of the tree imports the server package back.
+
+    Nothing about a submission may depend on this working. `follow.start`
+    already answers rather than raising, and runs the work on a thread of
+    its own - but a submission is the one fact in this app that must be
+    recorded whatever else is broken, so the call is wrapped as well. A
+    failure here is a missing draft, which the Outreach card says out loud;
+    an exception here would be a submission the person made and we did not
+    keep.
+    """
+    try:
+        from outreach import follow
+
+        follow.start(job_id)
+    except Exception as error:  # noqa: BLE001 - see the docstring
+        logger.warning("follow-up drafts were not started for %s: %s", job_id, error)
+
+
 @router.post("/{job_id}/submitted")
 def mark_submitted(job_id: str, decision: Decision) -> dict:
     """Checkpoint 2. Only a human reaches this, after submitting by hand.
 
     The agent has no path to SUBMITTED: its terminal state is FILLED, and this
     endpoint is reachable only from the review page.
+
+    This is also the **only** path that survives the tab being closed. The
+    other three ways a submission is marked all read the tab the form was on
+    - the page's own ping, `server/watch.py` over CDP, and `/screen`
+    recognising a confirmation - so a person who presses Submit and closes
+    the tab in the same second leaves this button as the whole mechanism.
+    Which made the id collision fatal here rather than merely untidy: the
+    page sent `e5b0`, two jobs carry it, and the 409 the person got back
+    three times was about the other one. So the posting's own URL is
+    accepted alongside the id and is what decides which job is meant
+    (`_resolve_job`).
     """
-    job, app_dir = _job_and_dir(job_id)
+    job, app_dir = _job_and_dir(job_id, decision.url or "")
     # From any live status, not only FILLED. FILLING was always accepted (the
     # human may finish the form while the agent is still poking at it; their
     # submission wins and the agent stops), and the same is true earlier:
@@ -632,17 +762,29 @@ def mark_submitted(job_id: str, decision: Decision) -> dict:
     # than recording one.
     if job.status in (Status.SUBMITTED, Status.SKIPPED):
         raise HTTPException(409, f"job is already {job.status.value}")
+    job_id = job.id
     killed = runner.stop_fill(job_id)
     note = decision.note or "submitted by hand"
     if killed:
         note += f" (fill {killed} still running, killed)"
     store.set_status(app_dir, Status.SUBMITTED, note)
-    queue.update(job_id, status=Status.SUBMITTED)
+    # By the row, not by the id: when the URL has just chosen between two
+    # colliding rows, writing by the id would refuse (`queue.Ambiguous`) the
+    # one write we are certain about.
+    queue.update_row(job, status=Status.SUBMITTED)
 
     # One last look at the form before its tab goes, so the changes the
     # human may still pick to remember are the final ones. Never fails
     # the submission; nothing is learned by itself.
-    corrections.capture(job.url, app_dir)
+    corrections.capture(form_url(job, app_dir), app_dir)
+
+    # The follow-up emails are prepared from here on (2026-10-30, asked
+    # for): "Once the job is submitted, it should automatically go to a new
+    # state where it is going through a follow... I do not have to do
+    # anything." Preparation only - the people, the drafts, the resume
+    # attached - and every one of them waits unsent for a click, because
+    # delivery is the one thing in this app that is never automation.
+    _prepare_follow_up(job.id)
 
     # Only this job's tab goes. The browser is the person's working set:
     # the Jobright list, the next job's form, their logins. Closing the
@@ -682,7 +824,7 @@ def submit_now(job_id: str) -> dict:
 
     # The last look at the form before it goes, so the changes the person may
     # still choose to remember are the ones they submitted.
-    corrections.capture(job.url, app_dir)
+    corrections.capture(form_url(job, app_dir), app_dir)
     try:
         result = press_submit.press_now(corrections.cdp_url(), target_id)
     except press_submit.NoSubmitControl as exc:
@@ -764,13 +906,29 @@ def handoff_reply(job_id: str, pasted: Pasted) -> dict:
             "warnings": result.warnings, "folder": app_dir.name}
 
 
+def form_url(job: Job, app_dir: Path) -> str:
+    """Where this job's form actually is.
+
+    The job's own URL, unless a Start now press recorded a different one: a
+    YC listing, an employer's careers page or a job board link is a posting
+    with the form one navigation away, and the tab the person reached is the
+    one every later look at "the form" means - the tab lookup, the snapshot
+    before a submission, the tab that closes when the job is finished with.
+    The job's URL is not rewritten; it is the identity key.
+    """
+    from browser import fill as filler
+
+    return filler.bound_form_url(app_dir) or job.url
+
+
 def _form_tab(job: Job, app_dir: Path) -> str:
     """The tab holding this job's form: the id the fill recorded when it is
     still open, else the tab on the same form URL, else ""."""
     from browser import forms
 
     saved = corrections._read(app_dir / corrections.FILL_REPORT)
-    return forms.find_target(corrections.cdp_url(), job.url, str(saved.get("target_id") or ""))
+    return forms.find_target(corrections.cdp_url(), form_url(job, app_dir),
+                             str(saved.get("target_id") or ""))
 
 
 @router.post("/{job_id}/files")
@@ -885,6 +1043,10 @@ def mark_seen(job: Job, app_dir: Path, url: str = "", quote: str = "", by: str =
         note += f" (fill {killed} still running, killed)"
     store.set_status(app_dir, Status.SUBMITTED, note)
     queue.update(job.id, status=Status.SUBMITTED)
+    # The same preparation as the button's path: a submission recognised in
+    # the browser is still a submission, and the follow-up should not depend
+    # on which of the four paths noticed it.
+    _prepare_follow_up(job.id)
     # The page has moved on to the confirmation; the last state the tab
     # reported before that is what the human can still pick from.
     return {"id": job.id, "status": Status.SUBMITTED.value, "marked": True,
@@ -900,7 +1062,11 @@ def form_state(job_id: str) -> dict:
     if job.status not in (Status.FILLED, Status.FILLING):
         return {"id": job_id, "captured": False, "reason": job.status.value,
                 "changes": corrections.changes(app_dir)}
-    return {"id": job_id, **corrections.capture(job.url, app_dir), "changes": corrections.changes(app_dir)}
+    # The bound URL, not `job.url`: a form the person reached themselves is
+    # on a URL our queue has never seen, and a snapshot aimed at the listing
+    # would overwrite a good form state with a job description.
+    return {"id": job_id, **corrections.capture(form_url(job, app_dir), app_dir),
+            "changes": corrections.changes(app_dir)}
 
 
 class Remember(BaseModel):
@@ -940,5 +1106,213 @@ def revise(job_id: str, revision: Revision) -> dict:
     return {
         "id": job_id,
         "folder": app_dir.name,
-        "status": (queue.get(job_id) or job).status.value,
+        "status": (_resolve_job(job_id) or job).status.value,
     }
+
+
+# ------------------------------------------------------------- Start now ----
+#
+# The fill stopped pressing Apply (2026-10-30, `browser/fill.py`). Pressing it
+# was the autopilot trying to get itself from a posting to a form: up to three
+# presses - posting, the system's chooser, "Apply Manually" - each of which can
+# open a tab, and 22 runs this month still ended "no application form on this
+# page". The person is already looking at the posting; their hand is both
+# cheaper and more reliable than that guess.
+#
+# So the gate hands the job back exactly as it does today and this endpoint is
+# the way forward: the person presses Apply themselves, the application's first
+# page comes up, and **Start now** on the banner says so. It is not a second
+# capture and not a second scheduler - it resolves the page to a job that is
+# already in autopilot and starts that job's fill through the one gate every
+# other start goes through (`runner.start_fill`), so one tab at a time still
+# holds and nothing about never-submit moves: the fill still ends at the filled
+# form.
+
+start_router = APIRouter(tags=["review"])
+
+
+class StartNow(BaseModel):
+    """`url` is the page the person is standing on; `job_id` when the page
+    already knows which job it is (the banner's match carries one)."""
+
+    url: str = ""
+    job_id: Optional[str] = None
+
+
+# Every status a Start now press may begin a fill from. AWAITING_REVIEW is
+# here and is the point of the endpoint: the job stopped at checkpoint 1
+# because no form was on the screen, and the person pressing Start now with
+# the form in front of them is the decision that was missing. QUEUED and
+# TAILORING are not: there are no documents yet, and this endpoint starts
+# fills, it does not start tailoring.
+STARTABLE = (Status.AWAITING_REVIEW,) + REFILLABLE
+
+
+def _start_reply(started: bool, state: str, job_id: str, note: str,
+                 candidates: Optional[list[dict]] = None) -> dict:
+    """The four keys the banner reads, plus `candidates` where a pick helps.
+
+    `state` is one of:
+
+    `started`   - a fill is now running for this job
+    `synced`    - a fill was already running for it; nothing new was started
+    `waiting`   - another job has the browser, or filling is switched off
+    `not_ready` - the job has no documents to put on the form yet
+    `submitted` / `rejected` - this job is finished with
+    `no_job`    - no job in autopilot is certainly this page
+    """
+    return {"started": started, "state": state, "job_id": job_id, "note": note,
+            "candidates": candidates or []}
+
+
+# What the page offers to pick from when it cannot name the job itself. In
+# flight means the fill is the next thing that has to happen to it.
+# Still live: a job somebody could be standing in front of right now.
+LIVE = (Status.AWAITING_REVIEW, Status.APPROVED, Status.FILLING, Status.FILLED)
+# A job that stopped is also one somebody may be standing in front of -
+# `failed` is exactly the state a person goes and finishes by hand - but
+# there are 70 of those on this install against 4 live ones, so they come
+# after the live jobs and only a few of them come at all.
+STOPPED = (Status.FAILED,)
+IN_FLIGHT = LIVE + STOPPED
+# How many the picker offers. Measured on the live install: an unbounded
+# list answered with 70 failed jobs, which is not a list anybody reads.
+PICK_LIMIT = 8
+
+
+def _in_flight() -> list[dict]:
+    """The jobs a person standing on a form could plausibly mean, newest first.
+
+    Needed because the identity ladder is right to answer "no job" here and
+    the button still has to work. A YC listing
+    (`ycombinator.com/companies/<org>/jobs/<id>`) is queued under YC's URL
+    while its Apply link goes out to the company's own ATS, so by the time
+    the person has signed in and reached the form they are on a Workday page
+    with no `jr_id` and nothing in common with the URL on file. Nothing is
+    guessed from that: the page asks which job this is, and the pick is sent
+    back as `job_id`.
+    """
+    jobs = queue.all_jobs()
+
+    def newest(rows):
+        return sorted(rows, key=lambda job: job.added_at, reverse=True)
+
+    # Live jobs first and all of them; then the most recent stopped ones to
+    # fill the list up. Ordering by status before date is the whole point:
+    # the one job that is filling right now must never be pushed off the
+    # list by a month of failures that happen to be newer.
+    rows = newest([job for job in jobs if job.status in LIVE])
+    rows += newest([job for job in jobs if job.status in STOPPED])[:max(0, PICK_LIMIT - len(rows))]
+    return [{"id": job.id, "title": job.title, "company": job.company,
+             "status": job.status.value} for job in rows[:PICK_LIMIT]]
+
+
+def _bind_tab(job: Job, app_dir: Path, url: str) -> bool:
+    """Record that this job's form was reached at `url`, not at `job.url`.
+
+    This is what makes the button work for a posting whose form is
+    somewhere else entirely. The fill reads the last line of `form_url.txt`
+    and starts in that tab (`browser/fill.bound_form_url`), through the tab
+    finder it already uses, so there is no second way of locating a tab.
+    Appended, never overwritten: the job's own URL stays the identity key
+    the never-applied-twice ladder is built on, and the earlier landings are
+    part of the record.
+    """
+    from browser import fill as filler
+
+    if not url or seen.is_source_page(url):
+        return False
+    if identity_keys.canonical(url) == identity_keys.canonical(job.url):
+        return False
+    if filler.bound_form_url(app_dir) == url:
+        return True          # already recorded; one line per new landing
+    store.write_or_append(app_dir, filler.FORM_URL_FILE, f"{utcnow()} {url}\n")
+    return True
+
+
+@start_router.post("/start-now")
+def start_now(body: StartNow) -> dict:
+    """The person's hand where the automatic Apply press used to be.
+
+    Never queues anything: a page that is not already a job answers
+    `no_job`, because adding a posting is the Add button's decision and it
+    screens first. Never starts a second fill either - `runner.fill_pid` and
+    `runner.any_fill_running` are the existing one-tab-at-a-time gate and
+    this asks them rather than working around them.
+    """
+    url = (body.url or "").strip()
+    asked = (body.job_id or "").strip()
+    job = _resolve_job(asked, url)
+    if job is None:
+        # The ladder is right to say no, and the button still has to work:
+        # the person may have walked from a YC listing out to the employer's
+        # own ATS, so the tab in front of them has nothing in common with
+        # the URL on file. Nothing is guessed - the jobs that are waiting
+        # for a fill go back with the answer, and the page asks.
+        return _start_reply(False, "no_job", "",
+                            "I cannot tell which job this page is: pick the one you are "
+                            "applying for, or add this posting if it is new",
+                            _in_flight())
+    if job.status is Status.SUBMITTED:
+        return _start_reply(False, "submitted", job.id,
+                            "this application has already been submitted")
+    if job.status is Status.SKIPPED:
+        return _start_reply(False, "rejected", job.id,
+                            "this job was rejected; use Try again on its page to reopen it")
+
+    # Already working: say so rather than opening a second tab on one form.
+    # Two fills on one job fight each other and undo each other's steps.
+    running = runner.fill_pid(job.id)
+    if running:
+        return _start_reply(False, "synced", job.id,
+                            f"a fill is already running for this job (pid {running})")
+
+    if job.status not in STARTABLE or not job.app_dir:
+        return _start_reply(False, "not_ready", job.id,
+                            f"this job is {job.status.value}; there is nothing tailored "
+                            f"to put on the form yet")
+    app_dir = Path(job.app_dir)
+    if not app_dir.exists() or not _tailored(app_dir):
+        return _start_reply(False, "not_ready", job.id,
+                            "this job has no tailored resume yet; open it in autopilot")
+
+    other = runner.any_fill_running()
+    if other and other != job.id:
+        return _start_reply(False, "waiting", job.id,
+                            "another job is being filled right now; this one goes next")
+
+    # A fill is started as `apply.py <job id>`, so a job whose short id
+    # names two rows cannot be aimed at: the URL told us which row the
+    # person means, and the subprocess has only the id. Said plainly rather
+    # than started and left to fail in a log nobody opens.
+    if len(queue.rows_for(job.id)) > 1:
+        return _start_reply(False, "not_ready", job.id,
+                            f"two jobs share the id {job.id}, so a fill cannot be aimed "
+                            f"at it; reject the duplicate and press again")
+
+    # The tab the person is standing on is the form, whatever the job's own
+    # URL says. Recorded before the fill starts, because the fill reads it.
+    bound = _bind_tab(job, app_dir, url)
+
+    # apply.py only touches an approved job, and a stuck FILLING must not be
+    # able to wedge one, so the row goes to APPROVED first - the same step
+    # `/fill` takes. The press itself is the approval: the person is looking
+    # at the form.
+    note = "start now, pressed on the page"
+    if bound:
+        note += f"; the form was reached at {url}"
+    store.set_status(app_dir, Status.APPROVED, note)
+    queue.update_row(job, status=Status.APPROVED)
+
+    # `force`, because this is a human pressing on one job in front of them,
+    # which is the same exception `/fill` makes - the hold exists to stop six
+    # jobs opening six tabs by themselves, not to stop this one.
+    pid = runner.start_fill(job.id, force=True)
+    if not pid:
+        return _start_reply(False, "waiting", job.id,
+                            "approved, but the fill did not start: filling is switched "
+                            "off (AUTOPILOT_AUTOFILL)")
+    store.set_status(app_dir, Status.APPROVED, f"filling started from the page (pid {pid})")
+    return _start_reply(True, "started", job.id,
+                        "filling this form now - I will stop at the filled form for you"
+                        + (" (on this tab)" if bound else ""))

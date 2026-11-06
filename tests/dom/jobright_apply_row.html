@@ -1,0 +1,31 @@
+<!doctype html><meta charset=utf-8><title>Jobright - the posting's own button row</title>
+<!-- The shape of the row our Add button is inserted into: a flex row with
+     Jobright's Apply in it, inside a main content area carrying the
+     `min-width: 1200px` they hard-code (which is why the injector overrides
+     it for the split, and why a button added here has to be measured rather
+     than assumed to fit). Their class names are hashed and rotate with every
+     build, so the fixture keeps only the part before the hash, which is what
+     content.js matches on anyway.
+
+     Constructed from the rules in content.js's own declutter section rather
+     than captured: what it pins is that our button never makes their row
+     scroll sideways, at full width and at half a screen. -->
+<style>
+  body { margin: 0; }
+  .index_jobs-page-main-content__aB1 { min-width: 1200px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px; }
+  .row > * { flex: 0 0 auto; }
+  button.primary { height: 40px; border-radius: 20px; padding: 0 28px;
+                   font: 600 15px system-ui; background: #1f1f1f; color: #fff; border: 0; }
+  button.ghost { height: 40px; border-radius: 20px; padding: 0 18px; font: 15px system-ui; }
+</style>
+<body>
+<main class="index_jobs-page-main-content__aB1">
+  <h1>Software Engineer, New Grad</h1>
+  <div class="row">
+    <button class="primary">APPLY NOW</button>
+    <button class="ghost">Save</button>
+    <button class="ghost">Not interested</button>
+  </div>
+</main>
+</body>

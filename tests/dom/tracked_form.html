@@ -1,0 +1,22 @@
+<!doctype html><meta charset=utf-8><title>A form to be tracked</title>
+<!-- Shaped like the pages the tracker meets: a field an extension fills and
+     the person then corrects, a password beside it, an error that appears and
+     goes away, and a button that opens a blank tab the way Jobright's
+     "Autofill for Another Job" does. -->
+<body>
+<form id="apply">
+  <label for="email">Email Address*</label>
+  <input id="email" data-automation-id="email" type="text">
+  <label for="pw">Password*</label>
+  <input id="pw" data-automation-id="password" type="password">
+  <label for="first">First Name*</label>
+  <input id="first" type="text">
+  <div id="complaint" style="display:none" role="alert">First Name is required</div>
+  <button id="opener" type="button">Autofill for Another Job</button>
+  <button id="closer" type="button">Close me</button>
+</form>
+<script>
+  document.getElementById("opener").addEventListener("click", () => window.open("", "_blank"));
+  document.getElementById("closer").addEventListener("click", () => window.close());
+</script>
+</body>

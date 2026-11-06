@@ -62,3 +62,53 @@ def test_a_closed_tab_is_skipped_never_submitted(tmp_path, monkeypatch):
 def test_the_watch_is_off_by_env(monkeypatch):
     monkeypatch.setenv(watch.ENV, "0")
     assert watch.start() is False
+
+
+def test_the_watch_follows_the_url_the_person_bound_not_the_listing(tmp_path, monkeypatch):
+    """A YC listing is not where the form is.
+
+    The queue holds `ycombinator.com/companies/<org>/jobs/<id>` and the
+    application is on the employer's own Workday under a URL we have never
+    seen (measured 2026-10-30: that job's `form_fill.json` recorded the
+    listing and `fields: 0`). Start now binds the job to the tab the person
+    reached themselves, and the watch has to look there - aimed at the
+    listing it finds no tab, or finds the listing and calls the real form
+    "another site's form", which is how a submission goes unrecorded.
+    """
+    from browser import fill as filler
+
+    app = tmp_path / "yc_job"
+    app.mkdir()
+    (app / corrections.FILL_REPORT).write_text(json.dumps({"target_id": "TAB1"}))
+    bound = "https://acme.wd1.myworkdayjobs.com/acme/job/Remote/Engineer_R1/apply"
+    (app / filler.FORM_URL_FILE).write_text(f"2026-10-30T12:00:00Z {bound}\n")
+    job = Job(url="https://www.ycombinator.com/companies/acme/jobs/abc-engineer",
+              status=Status.FILLED, app_dir=str(app))
+
+    assert watch.form_url(job, app) == bound
+
+    asked = []
+    monkeypatch.setattr(watch.forms, "find_target",
+                        lambda url, job_url, saved: asked.append(job_url) or "TAB1")
+    sited = []
+    monkeypatch.setattr(watch.forms, "same_site",
+                        lambda url, target, job_url: sited.append(job_url) or True)
+
+    async def snapshot(url, target, detail=False):
+        return {"fields": {"First Name": "J", "Last Name": "D", "Email": "j@d"},
+                "meta": {}, "text": "Apply", "url": bound}
+    monkeypatch.setattr(watch.forms, "snapshot", snapshot)
+
+    assert watch.look_at(job, app) == {"looked": True, "captured": 3}
+    assert asked == [bound] and sited == [bound]
+
+
+def test_an_unbound_job_is_still_watched_at_its_own_url(tmp_path, monkeypatch):
+    """The binding is read, never required: the ordinary job whose queued
+    URL is the form is the common case and must not change."""
+    app = tmp_path / "ordinary"
+    app.mkdir()
+    (app / corrections.FILL_REPORT).write_text(json.dumps({"target_id": "TAB1"}))
+    job = Job(url="https://job-boards.greenhouse.io/acme/jobs/1",
+              status=Status.FILLED, app_dir=str(app))
+    assert watch.form_url(job, app) == job.url

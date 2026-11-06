@@ -1,6 +1,7 @@
 """Capturing a job starts the pipeline; nothing past checkpoint 1 starts."""
 
 import pathlib
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -184,15 +185,20 @@ def test_use_opus_pressed_on_jobrights_page_reaches_the_employer_tabs_capture(la
     assert "6aad9999" not in app_module.PREMIUM_PREFS, "used once; a later capture is not bound by it"
 
 
-def test_the_countdown_is_two_seconds_and_opus_does_not_cancel_it():
-    """Two seconds (2026-10-03, asked for; three from 2026-09-24 to give the
-    Opus button room). Arming Opus never cancelled the countdown, and the
-    thread's own "Re-tailor with Opus" catches a press made after the job
-    has gone in, so the extra second bought nothing."""
+def test_arming_opus_is_a_choice_about_the_job_and_not_an_instruction_to_add_it():
+    """Pressing "Use Opus" records which model will tailor this one job; it
+    adds nothing by itself, and the add that follows reads the choice.
+
+    This test used also to pin the auto-add countdown at two seconds. That
+    countdown was withdrawn on 2026-10-30 at the maintainer's request - it
+    had queued `login.usc.edu/login` twice, a SAP page titled "Career
+    Opportunities: Sign In" and a bare careers homepage, two of them marked
+    submitted - so there is no duration left to assert. What it must not do
+    is come back, and that is
+    `test_nothing_on_the_posting_page_acts_by_itself` below.
+    """
     content = (runner.ROOT / "capture" / "content.js").read_text()
-    assert "const AUTO_ADD_MS = 2000;" in content
     assert 'data-act="opus"' in content
-    # Armed, not pressed: the countdown is not cancelled by the choice.
     assert "usePremium = !usePremium;" in content
     assert "addToQueue(autoFill(), usePremium)" in content
 
@@ -245,8 +251,10 @@ def test_a_decided_job_is_described_by_its_outcome_not_by_where_it_is_kept():
     # this one: the block is the loudest thing the banner draws and the
     # badge keeps its colour, so holding it open was holding one bar open
     # for good. The two that do not fold are the two that are not an
-    # answer yet - a screen still running, and a countdown about to queue.
-    assert 'if (!pending && !(add && add.classList.contains("counting"))) {' in script
+    # answer yet - which is now only a screen still running.
+    # One exception now, not two: the countdown that was the other one is
+    # gone (2026-10-30), so this asserts that no second exception exists.
+    assert "if (!pending) {" in script
     assert "const AUTO_COLLAPSE_MS = 3000;" in script
     # Opening the badge is a decision to keep the bar (2026-09-30, reversing
     # the rule above for this one case): a bar that opened itself folds
@@ -276,12 +284,16 @@ def test_the_submission_watch_only_silences_a_confirmation_page():
 
 
 def test_the_banner_can_take_a_job_back_out():
-    """Auto-add is a countdown, and a countdown runs out while someone is
-    still reading. The button that added the job is the one that undoes it,
-    and the server side is the review page's own reject, so the folder and
-    the record stay."""
+    """A click can be a mistake, so the button that added the job is the one
+    that takes it back out, and the server side is the review page's own
+    reject - the folder and the record stay. (It was built because a
+    countdown ran out while someone was still reading; the countdown went on
+    2026-10-30 and Undo stays, because the reason is now the click itself.)
+
+    The assertion on "click to stop" was dropped with the countdown: it had
+    stopped matching anything but a CSS comment quoting the old label.
+    """
     script = (runner.ROOT / "capture" / "content.js").read_text()
-    assert "click to stop" in script, "the countdown says it can be stopped"
     assert 'data-act = "undo"' in script.replace(".dataset.act = ", "data-act = ")
     assert '"changed_my_mind"' in script
     assert "/reject" in script
@@ -367,3 +379,249 @@ def test_the_jobright_apply_press_waits_and_is_a_real_press():
     assert "while (!button && performance.now() < until) {" in script
     assert "await new Promise((r) => setTimeout(r, APPLY_SETTLE_MS));" in script
     assert "if (await openJob()) {" in script
+
+
+def test_nothing_on_the_posting_page_acts_by_itself():
+    """The one promise the whole 2026-10-30 change is: the banner screens,
+    the banner says, and the banner waits.
+
+    This reads the source, which this file is otherwise sparing with - but
+    here the **absence** is the promise, the way invariant 6 promises that
+    the agent cannot import the submit presser. A countdown reintroduced
+    under any name is the defect coming back, and the only honest check for
+    "there is no timer that queues a job" is that there is no timer that
+    queues a job.
+
+    What it queued while it existed, off the rows it left behind:
+    `login.usc.edu/login` twice, a SAP SuccessFactors page whose title is
+    "Career Opportunities: Sign In", a bare `careers.vituity.com/`
+    homepage - two of those marked submitted - and a row whose entire title
+    is `Apply`. A marked tab stays marked through every navigation, so a
+    single-sign-on redirect inside one was screened and queued as the job.
+    """
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    for gone in ("AUTO_ADD_MS", "AUTO_ADD ", 'classList.add("counting")',
+                 'add.classList.remove("counting")'):
+        assert gone not in script, f"the auto-add countdown is back: {gone!r}"
+
+    # `act()` queues the job and `openJob()` presses Jobright's Apply.
+    # Neither may be reached from a timer, an interval or a frame callback:
+    # the only call site of each is a listener on a control.
+    for name in ("act(", "openJob()"):
+        for call in re.finditer(re.escape(name), script):
+            line = script[script.rfind("\n", 0, call.start()) + 1:
+                          script.index("\n", call.start())]
+            assert "setTimeout" not in line and "setInterval" not in line \
+                and "requestAnimationFrame" not in line, \
+                f"{name} is reached from a timer: {line.strip()!r}"
+
+
+def test_the_add_button_says_what_pressing_it_does_on_each_kind_of_page():
+    """Jobright's own posting page cannot be queued (the server refuses a
+    jobright.ai URL), so there Add means "press their Apply, and add it from
+    the page that opens" - and the button says so instead of claiming the
+    job went in. Everywhere else it is the capture itself."""
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert '"Opened — adding it there…"' in script
+    assert 'label("Adding…")' in script
+    # The Jobright label no longer instructs a second press, because
+    # `/asked` carries the first one across to the employer tab. Asserted as
+    # an absence as well, so the old wording cannot drift back in beside the
+    # new one (guardian's condition, 2026-10-31).
+    assert "press Add on the job page" not in script
+
+
+def test_the_add_press_crosses_the_two_tabs_and_is_spent_once():
+    """One press on the posting is the whole decision.
+
+    `/capture` refuses a `jobright.ai` URL, so the only queueable URL is the
+    employer's, and the only way there is Jobright's own Apply - a second
+    tab. Without a channel between them, removing the countdown turned one
+    press into two. `/asked` is that channel and it carries one fact: the
+    person asked for this posting. It is spent on the first read, so one
+    press can never queue two jobs.
+    """
+    from server import app as app_module
+
+    app_module.ASKED_PREFS.clear()
+    client = TestClient(app)
+    assert client.post("/asked", json={"jr_id": "abc123"}).json()["asked"] is False
+
+    client.post("/prefs", json={"jr_id": "abc123", "asked": True, "auto_fill": False})
+    assert client.post("/asked", json={"jr_id": "abc123"}).json()["asked"] is True
+    # Spent: the employer tab that already queued it cannot queue it again,
+    # and neither can the next tab to carry the same tag.
+    assert client.post("/asked", json={"jr_id": "abc123"}).json()["asked"] is False
+    # The decisions it travelled with are still the posting's own.
+    assert app_module.AUTO_FILL_PREFS.get("abc123") is False
+
+
+def test_a_press_does_not_keep():
+    """A decision expires. Somebody who pressed Add an hour ago and has
+    since wandered onto another employer's page in a tab that still carries
+    the tag has not asked for *that* job.
+
+    The clock is moved by ageing the stored press, not by patching
+    `time.monotonic`: that patch reaches the whole interpreter, including
+    the HTTP client's own waiting, and the request then never returns (it
+    hung this file's run for 400 s before it was found).
+    """
+    import time as real_time
+
+    from server import app as app_module
+
+    app_module.ASKED_PREFS.clear()
+    client = TestClient(app)
+    client.post("/prefs", json={"jr_id": "stale", "asked": True})
+    app_module.ASKED_PREFS["stale"] = real_time.monotonic() - app_module.ASKED_TTL - 1
+    assert client.post("/asked", json={"jr_id": "stale"}).json()["asked"] is False
+    # Expired, and taken off the shelf rather than left to be reconsidered.
+    assert "stale" not in app_module.ASKED_PREFS
+
+    # A press inside the window still counts, so the test above is about the
+    # age and not about the key.
+    client.post("/prefs", json={"jr_id": "fresh", "asked": True})
+    assert client.post("/asked", json={"jr_id": "fresh"}).json()["asked"] is True
+
+
+def test_nothing_is_asked_for_by_default():
+    """The flag is only ever written by a press: `/prefs` carrying the
+    per-job decisions and no `asked` must not arm anything."""
+    from server import app as app_module
+
+    app_module.ASKED_PREFS.clear()
+    client = TestClient(app)
+    client.post("/prefs", json={"jr_id": "quiet", "auto_fill": True, "premium": True})
+    assert app_module.ASKED_PREFS == {}
+    assert client.post("/asked", json={"jr_id": "quiet"}).json()["asked"] is False
+
+
+def test_an_honoured_press_is_spent_only_on_a_page_that_reads_as_a_job():
+    """`canAdd` is not the gate, and the guardian was right to insist.
+
+    The Add *button* is offered on a reject, a failed screen and a
+    `not_a_job` page on purpose: a person overruling a verdict with it in
+    front of them is a decision they are allowed to make. Honouring a press
+    made on the posting is not that - a `jr_id` tag survives a redirect, so
+    a marked tab that follows single sign-on to a university or an
+    employer's login still carries it, and that is precisely the three bad
+    captures the countdown made (a USC SSO page, a SuccessFactors sign-in,
+    a bare careers homepage). A press behind them would not make them good.
+    """
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert 'const QUEUEABLE = new Set(["ok", "caution"]);' in script
+    # The call site is gated on the verdict, not only on `canAdd`.
+    assert "canAdd && QUEUEABLE.has(verdict)" in script
+
+
+def test_an_honoured_add_needs_a_tag_a_job_verdict_and_no_wall():
+    """What authorises queueing a page nobody clicked on.
+
+    It used to be a press: Add on Jobright wrote a flag the employer tab
+    spent. The maintainer retired that on 2026-10-31 - "As soon as we open
+    from Jobright, I want it to be auto-applied... else I have to manually
+    add every job, which is again pointless" - so the authorisation is now
+    the `jr_id` tag, which only Jobright's extension puts on, and `/asked`
+    decides the wording and nothing else.
+
+    The rule underneath did not move: this must never queue a wall or a
+    page that is not a posting. Three gates carry it now, and this is the
+    test of all three.
+    """
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    body = script.split("async function honourTheAdd(", 1)[1].split("\n}\n", 1)[0]
+
+    # 1. The tag is the authorisation.
+    assert "if (!id) return;" in body
+    # 2. A wall is refused, and refused *before* the round trip: a page
+    #    asking for a password must not depend on the server answering.
+    assert "if (looksLikeSignIn()) return;" in body
+    assert body.index("looksLikeSignIn()") < body.index("try {")
+    # 3. The verdict gate at the call site, which is the one that did not
+    #    move - a failed screen, an auto-reject and a `not_a_job` page keep
+    #    their Add button and may not be queued without a click on it.
+    call = script.split("honourTheAdd(label, act)", 1)[0].rsplit("if (", 1)[1]
+    assert "QUEUEABLE.has(verdict)" in call
+    assert 'const QUEUEABLE = new Set(["ok", "caution"]);' in script
+    # 4. The press is still the last thing in the function, so the catch
+    #    falling through to it reads as deliberate rather than as a hole.
+    assert body.rstrip().endswith("await act();")
+
+
+def test_the_pages_list_of_identity_hosts_covers_the_servers():
+    """One list, two languages, and the server's is where a host gets added.
+
+    `browser/signin.py` is the full version of this question and is what
+    the fill consults; the page has a small copy so it can refuse to queue
+    a wall without asking anybody. A host known to the server and missing
+    from the page would be refused by the fill and queued by the banner,
+    which is the worst of both. The page may hold more (university single
+    sign-on is ours), never fewer.
+    """
+    from browser import signin
+
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    listed = script.split("const IDENTITY_HOSTS = [", 1)[1].split("];", 1)[0]
+    page_hosts = set(re.findall(r'"([^"]+)"', listed))
+    missing = set(signin.IDENTITY_HOSTS) - page_hosts
+    assert not missing, f"known to the server, invisible to the page: {sorted(missing)}"
+
+
+def test_the_cold_button_on_every_page_says_add_rather_than_screen():
+    """A button on any page, and its label is the person's intent.
+
+    2026-11-03, asked for: "When I open a page from outside, I want a start
+    button or something that starts the process... I need to click 'Add this
+    to job queue' or something. Let's show that button on every page." The
+    orb on its own offered "click to screen this posting", which is the
+    machine's first step and not what the press is for, and the real
+    decision sat behind a second press on a banner nobody had asked to read.
+    """
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    cold = script.split("function renderCold()", 1)[1].split("\n}\n", 1)[0]
+    assert ">Add to autopilot</span>" in cold
+    assert "Screen this page with Job Autopilot" not in script
+    # The press is a press, not a timer, and it arms the add rather than
+    # queueing from here: the banner's own `act()` is the one implementation.
+    assert "coldAdd = true;" in cold
+    assert "addToQueue(" not in cold
+
+
+def test_a_cold_press_adds_the_job_without_a_second_press():
+    """One press for both halves: the screen the pipeline needs, then the
+    queue. The banner's own Add is what runs, so auto-approve, Opus and Undo
+    all keep working exactly as they do when the button is pressed by hand.
+    """
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    honour = script.split("if (coldAdd && canAdd", 1)[1].split("\n  }\n", 1)[0]
+    # Spent before it is honoured, so a re-render of the same banner (the
+    # job picker, the thread, a file list landing) cannot add twice.
+    assert honour.index("coldAdd = false;") < honour.index("act()")
+    # A wall is not a posting, however it was reached - the same rule the
+    # Jobright path carries, and the two captures the old countdown made.
+    assert "looksLikeSignIn()" in honour
+    # Already in autopilot: no Add to press, so nothing to honour.
+    assert "canAdd && !seen && !onJobright" in script
+
+
+def test_no_markup_is_written_through_a_raw_html_sink():
+    """A Trusted Types page must still get the button.
+
+    Google's own careers pages send `require-trusted-types-for 'script'`,
+    and under it `innerHTML =` throws - so the badge never rendered there at
+    all, which on a job board is the whole feature missing. `DOMParser` is
+    not a way round it: it is the same sink and throws the same way
+    (measured live on that page before this was written). The policy is,
+    and the markup it blesses is written in this file and never anything the
+    page said.
+    """
+    script = (runner.ROOT / "capture" / "content.js").read_text()
+    assert 'tt.createPolicy("job-autopilot"' in script
+    # One sink, inside the helper. Anything else is a page that renders
+    # nothing under a policy nobody notices until a job cannot be added.
+    sinks = [line.strip() for line in script.splitlines()
+             if ".innerHTML = " in line or "parseFromString(" in line]
+    assert sinks == ["root.innerHTML = trustedHTML(html);"], sinks
+    # A site whose own directive names its policies refuses to make ours;
+    # the markup still goes on, because most pages have no policy at all.
+    assert "htmlPolicy = null;" in script

@@ -573,3 +573,929 @@ def test_a_press_that_removes_nothing_stops_the_loop_and_says_so(browser):
     cleared, errors = on_page(browser, "workday_two_resumes_live.html", work)
     assert cleared == 0, f"nothing came off the slot, so nothing may be reported cleared"
     assert any("changed nothing" in e for e in errors), errors
+
+
+# -- The selector table, against the pages it was written from ------------
+#
+# `browser/forms/table.json` is data, and data that has never been run
+# against markup is a guess. Every expression the Workday entry carries is
+# evaluated here on `workday_two_resumes_live.html` and
+# `workday_work_experience.html` - two pages of one real application - and
+# on the review fixture, which is the one shape no recording reached.
+
+def on_page_with_rules(cdp: str, name: str, work, documents=None):
+    """`on_page`, with a `steps.Runner` over the table's own rules instead
+    of the engine. The URL a fixture is served from is a file:// one, so the
+    rules are taken by name rather than by host."""
+    from browser.forms import steps as step_runner
+    from browser.forms import table as form_table
+
+    rules = form_table.load()["workday"]
+
+    async def inner(e, page):
+        return await work(step_runner.Runner(page, rules, documents or {}), page)
+
+    return on_page(cdp, name, inner)
+
+
+def test_the_resume_slot_resolves_on_the_live_workday_page(browser):
+    """One element, and it is the one holding the file input - not the
+    button that shares its id, and not the skills dropzone beside it."""
+    async def work(runner, page):
+        rule = runner.rules.field("resume")
+        found = [await runner.first(expr) for expr in rule.paths]
+        return [(f.ref, f.tag) if f else None for f in found]
+    found = on_page_with_rules(browser, "workday_two_resumes_live.html", work)
+    assert found[0] is not None, "the resume slot's own path matched nothing"
+    assert found[0][1] == "div"
+
+
+def test_the_slot_knows_how_many_resumes_are_on_it(browser):
+    """The page carries two, which is the bug it was recorded for. A count
+    is what tells a clear that cleared from a press that did nothing."""
+    async def work(runner, page):
+        slot = await runner.first(runner.rules.field("resume").paths[0])
+        return await runner.slot_rows(slot.ref)
+    assert on_page_with_rules(browser, "workday_two_resumes_live.html", work) == 2
+
+
+def test_the_clearing_control_is_found_inside_the_slot_and_nowhere_else(browser):
+    """Scoped to the slot, so there is no fourteen-ancestor climb to reach a
+    Work Experience "Delete" or a phone country selector (2026-10-11)."""
+    async def work(runner, page):
+        slot = await runner.first(runner.rules.field("resume").paths[0])
+        path, scope = runner._scoped(runner.rules.slots["clear"], slot.ref)
+        inside = await runner.all(path, scope)
+        return [(f.tag, f.label or f.text) for f in inside]
+    inside = on_page_with_rules(browser, "workday_two_resumes_live.html", work)
+    assert len(inside) == 2, inside
+    assert all(tag == "button" for tag, _ in inside)
+
+
+def test_continue_is_found_and_submit_is_not_on_a_form_page(browser):
+    async def work(runner, page):
+        advance = await runner.first(runner.rules.page("advance"))
+        submit = await runner.first(runner.rules.page("submit"))
+        return (advance.text if advance else None), (submit.text if submit else None)
+    for fixture in ("workday_two_resumes_live.html", "workday_work_experience.html"):
+        advance, submit = on_page_with_rules(browser, fixture, work)
+        assert advance == "Save and Continue", fixture
+        assert submit is None, fixture
+
+
+def test_on_the_review_page_it_is_submit_and_never_continue(browser):
+    """The same `data-automation-id`, the other text. Our walk used to tell
+    these apart by asking the guard about the label, which answers yes to
+    "Apply" as well - the table's two expressions are the discrimination."""
+    async def work(runner, page):
+        advance = await runner.first(runner.rules.page("advance"))
+        submit = await runner.first(runner.rules.page("submit"))
+        return (advance.text if advance else None), (submit.text if submit else None)
+    advance, submit = on_page_with_rules(browser, "workday_review_submit.html", work)
+    assert advance is None, "the continue expression matched a Submit button"
+    assert submit == "Submit"
+
+
+def test_the_runner_refuses_to_press_the_submit_control(browser):
+    """`advance()` is the only press it has, and on the review page it finds
+    nothing to press. Were the table edited so that it did, the guard reads
+    the label and refuses - which is the half that is not data."""
+    async def work(runner, page):
+        asked = await runner.advance()
+        loosened = dict(runner.rules.pages)
+        loosened["advance"] = ".//button[@data-automation-id='pageFooterNextButton']"
+        runner.rules = type(runner.rules)(**{**runner.rules.__dict__, "pages": loosened})
+        forced = await runner.advance()
+        return (asked.done, asked.why), (forced.done, forced.why)
+    (asked_done, asked_why), (forced_done, forced_why) = on_page_with_rules(
+        browser, "workday_review_submit.html", work)
+    assert not asked_done and "no continue button" in asked_why
+    assert not forced_done and "reads as a submit" in forced_why
+
+
+def test_the_review_page_is_recognised_by_its_own_id(browser):
+    async def work(runner, page):
+        return await runner.at("review"), await runner.at("container")
+    review, container = on_page_with_rules(browser, "workday_review_submit.html", work)
+    assert review and container
+    on_form = on_page_with_rules(browser, "workday_work_experience.html", work)
+    assert on_form == (False, True)
+
+
+def test_the_education_fields_resolve_on_the_page_that_has_them(browser):
+    """`workday_work_experience.html` is a real My Experience page: school,
+    field of study and grade average are each a `formField-*` block."""
+    async def work(runner, page):
+        out = {}
+        for key in ("school", "field_of_study", "grade_average", "first_name", "email"):
+            found = None
+            for expr in runner.rules.field(key).paths:
+                found = await runner.first(expr)
+                if found:
+                    break
+            out[key] = (found.tag if found else None)
+        return out
+    out = on_page_with_rules(browser, "workday_work_experience.html", work)
+    assert out["school"] == "input" and out["field_of_study"] == "input"
+    assert out["grade_average"] == "input"
+    # Not on this page, and a field that is not there is not an error.
+    assert out["first_name"] is None and out["email"] is None
+
+
+def test_a_broken_expression_raises_instead_of_reading_as_an_empty_page(browser):
+    """A selector that does not compile answering "no fields here" is how a
+    broken table would look exactly like a sign-in wall."""
+    async def work(runner, page):
+        try:
+            await runner.all(".//div[")
+            return "no error"
+        except ValueError as error:
+            return str(error)[:40]
+    assert on_page_with_rules(browser, "workday_review_submit.html", work) != "no error"
+
+
+def test_a_text_field_is_written_through_the_native_setter(browser):
+    async def work(runner, page):
+        rule = runner.rules.field("school")
+        out = await runner.run_field(rule, "Example University")
+        read = await page.evaluate(
+            "document.querySelector('[data-automation-id=\"formField-schoolName\"] input').value")
+        return out.done, out.why, read
+    done, why, read = on_page_with_rules(browser, "workday_work_experience.html", work)
+    assert done, why
+    assert read == "Example University"
+
+
+def test_a_press_that_removes_nothing_stops_the_loop_and_claims_nothing(browser):
+    """On a saved page the bin does nothing, because there is no application
+    behind it. That is the 2026-10-11 case exactly: the loop must press once,
+    see the row count hold still, stop, and report that nothing went - rather
+    than press four times and report "resume replaced" over a form carrying
+    two resumes."""
+    async def work(runner, page):
+        await page.evaluate("window.__presses = 0;"
+                            "document.addEventListener('click', (e) => {"
+                            " if (e.target.closest('[data-automation-id=\"delete-file\"]'))"
+                            "   window.__presses += 1; }, true)")
+        slot = await runner.first(runner.rules.field("resume").paths[0])
+        gone = await runner.clear_slot(slot.ref)
+        return gone, await runner.slot_rows(slot.ref), await page.evaluate("window.__presses")
+    gone, left, presses = on_page_with_rules(browser, "workday_two_resumes_live.html", work)
+    assert gone == 0, "nothing went, so nothing may be reported as having gone"
+    assert left == 2
+    assert presses == 1, f"pressed {presses} times at a control that changes nothing"
+
+
+def test_every_file_on_the_dropzone_is_cleared_not_one(browser, tmp_path):
+    """The whole sequence where the rows really go: both are cleared, ours
+    goes on, and the name is read back off the page rather than taken from
+    the upload's own word for it."""
+    document = tmp_path / "tailored_resume.pdf"
+    document.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    async def work(runner, page):
+        out = await runner.run_field(runner.rules.field("resume"))
+        slot = await runner.first(runner.rules.field("resume").paths[0])
+        return (out.done, out.why, out.notes, await runner.slot_rows(slot.ref),
+                await page.evaluate("window.__presses"))
+    done, why, notes, left, presses = on_page_with_rules(
+        browser, "workday_dropzone_rows.html", work, documents={"resume": document})
+    assert done, f"{why} {notes}"
+    assert presses == 2, "a dropzone keeps a row per file; clearing once leaves the rest"
+    assert left == 1, "ours, and only ours"
+
+
+def test_the_upload_fails_honestly_when_there_is_no_document(browser):
+    async def work(runner, page):
+        out = await runner.run_field(runner.rules.field("resume"))
+        return out.done, out.why
+    done, why = on_page_with_rules(browser, "workday_dropzone_rows.html", work)
+    assert not done and "no resume to put on" in why
+
+
+# -- The tracker's own listener, against a page -----------------------------
+#
+# `tracking/recorder.js` reads somebody else's markup and decides what is a
+# secret, what was corrected and why a tab opened. None of those can be
+# honestly tested without running it, which is the whole reason this file
+# exists.
+
+def tracked(cdp: str, name: str, work):
+    """`on_page`, with `tracking/recorder.js` armed and classified the way
+    `collector.py` arms and classifies it."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    from tracking import policy as _policy
+    source = (_Path(__file__).resolve().parent.parent / "tracking" / "recorder.js").read_text()
+
+    async def inner(e, page):
+        await page.evaluate(source)
+        fields = _json.loads(await page.evaluate("window.__trkFields()") or "[]")
+        secrets = [f["ref"] for f in fields
+                   if _policy.secret_field(f.get("type", ""), f.get("name", ""),
+                                           f.get("id", ""), f.get("label", ""),
+                                           f.get("autocomplete", ""))]
+        await page.evaluate(f"window.__trkClassify({_json.dumps(secrets)}, "
+                            f"{_json.dumps([f['ref'] for f in fields])})")
+        await page.evaluate("window.__trkDrain()")       # drop the arming row
+        return await work(page, fields, secrets)
+
+    return on_page(cdp, name, inner)
+
+
+async def _drain(page):
+    import json as _json
+    return _json.loads(await page.evaluate("window.__trkDrain()") or "[]")
+
+
+def test_the_tracker_knows_which_box_is_the_password(browser):
+    async def work(page, fields, secrets):
+        return [(f["id"], f["label"], f["ref"] in secrets) for f in fields]
+    out = tracked(browser, "tracked_form.html", work)
+    assert ("email", "Email Address*", False) in out
+    assert ("pw", "Password*", True) in out
+    assert ("first", "First Name*", False) in out
+
+
+def test_what_was_typed_is_kept_and_a_password_is_not(browser):
+    async def work(page, fields, secrets):
+        await page.evaluate("""(() => {
+          const set = (id, v) => { const el = document.getElementById(id);
+            el.focus();
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+            el.dispatchEvent(new Event('input', {bubbles: true})); };
+          set('email', 'ada@example.com');
+          set('pw', 'hunter2-very-secret');
+        })()""")
+        return await _drain(page)
+    rows = await_rows = tracked(browser, "tracked_form.html", work)
+    typed = {r["el"]["id"]: r.get("value") for r in await_rows if r["kind"] == "input"}
+    assert typed["email"] == "ada@example.com", "an ordinary value is kept as typed"
+    assert typed["pw"] is None, "a password's value may never be recorded"
+
+
+def test_a_key_in_a_password_box_is_counted_but_never_named(browser):
+    async def work(page, fields, secrets):
+        await page.evaluate("""(() => {
+          const hit = (id, key) => document.getElementById(id)
+              .dispatchEvent(new KeyboardEvent('keydown', {key: key, bubbles: true}));
+          hit('first', 'A'); hit('pw', 'h'); hit('pw', 'Backspace');
+        })()""")
+        return await _drain(page)
+    keys = [(r["el"]["id"], r["key"]) for r in tracked(browser, "tracked_form.html", work)
+            if r["kind"] == "key"]
+    assert ("first", "A") in keys
+    assert ("pw", "<secret>") in keys and ("pw", "h") not in keys
+    assert sum(1 for i, _ in keys if i == "pw") == 2, "the keystrokes still count"
+
+
+def test_a_correction_of_an_autofill_is_told_from_ones_own_typing(browser):
+    """The row the whole tracker exists for: what a script put there, what it
+    was left as, and whether that was a correction.
+
+    The person's half has to go through CDP. An event a script dispatches is
+    `isTrusted: false` however it is made, and that flag is the only thing
+    that tells a hand from an extension - so a test that types with
+    `dispatchEvent` is testing the script path twice.
+    """
+    async def work(page, fields, secrets):
+        ref = [f for f in fields if f["id"] == "first"][0]["ref"]
+        await page.evaluate("""(() => {
+          const el = document.getElementById('first');
+          el.focus();
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+              .set.call(el, 'Adaa');                       // a script's value
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          el.setSelectionRange(3, 4);                      // select the stray 'a'
+        })()""")
+        await page.send("Input.insertText", {"text": ""})   # a real deletion
+        await page.evaluate("document.getElementById('first').blur()")
+        return ref, await _drain(page)
+    ref, rows = tracked(browser, "tracked_form.html", work)
+    mine = [r for r in rows if r["kind"] == "input" and r.get("trusted")]
+    assert mine, "CDP input must arrive trusted, or this tests nothing"
+    edits = [r for r in rows if r["kind"] == "edit"]
+    assert len(edits) == 1, rows
+    edit = edits[0]
+    assert edit["was"] == "" and edit["now"] == "Ada"
+    assert edit["filled"] == "Adaa", "what the script had put there is kept"
+    assert edit["corrected"] is True
+
+
+def test_an_error_is_recorded_when_it_appears_and_again_when_it_clears(browser):
+    async def work(page, fields, secrets):
+        import asyncio as _a
+        await page.evaluate("document.getElementById('complaint').style.display = 'block'")
+        await _a.sleep(1.2)
+        first = await _drain(page)
+        await page.evaluate("document.getElementById('complaint').style.display = 'none'")
+        await _a.sleep(1.2)
+        return first, await _drain(page)
+    appeared, cleared = tracked(browser, "tracked_form.html", work)
+    raised = [r for r in appeared if r["kind"] == "error"]
+    gone = [r for r in cleared if r["kind"] == "error"]
+    assert raised and raised[0]["what"] == "raised"
+    assert "First Name is required" in raised[0]["says"]
+    assert gone and gone[0]["what"] == "cleared"
+
+
+def test_a_blank_tab_carries_the_click_that_opened_it(browser):
+    """Three things can open a blank tab on a Workday page and from the
+    outside they are identical. The patched `window.open` records the call's
+    own stack and the last control the person touched."""
+    async def work(page, fields, secrets):
+        await page.evaluate("""(() => {
+          const b = document.getElementById('opener');
+          b.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
+          b.click();
+        })()""")
+        return await _drain(page)
+    rows = tracked(browser, "tracked_form.html", work)
+    opens = [r for r in rows if r["kind"] == "window.open"]
+    assert len(opens) == 1, rows
+    asked = opens[0]
+    assert asked["name"] == "_blank" and asked["wanted"] == ""
+    touched = (asked.get("after") or {}).get("el") or {}
+    assert touched.get("says") == "Autofill for Another Job"
+    assert asked["sinceTouch"] is not None and asked["sinceTouch"] < 2000
+    assert asked["from"], "the call's own stack is what names a script"
+
+
+def test_a_tab_that_closes_itself_says_so(browser):
+    """The difference between "I close these tabs" and "something closes
+    them": one leaves a `window.close` row with a stack, the other leaves
+    nothing in the page at all.
+
+    `window.close` is replaced with a no-op *before* the recorder wraps it,
+    because the recorder calls through to the real one and a tab that really
+    closes takes the evidence with it.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from tracking import policy as _policy
+    source = (_Path(__file__).resolve().parent.parent / "tracking" / "recorder.js").read_text()
+
+    async def inner(e, page):
+        await page.evaluate("window.close = function () { window.__closed = true; };")
+        await page.evaluate(source)
+        fields = _json.loads(await page.evaluate("window.__trkFields()") or "[]")
+        await page.evaluate(f"window.__trkClassify([], {_json.dumps([f['ref'] for f in fields])})")
+        await page.evaluate("window.__trkDrain()")
+        await page.evaluate("""(() => {
+          const b = document.getElementById('closer');
+          b.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
+          b.click();
+        })()""")
+        return _json.loads(await page.evaluate("window.__trkDrain()") or "[]"), \
+            await page.evaluate("!!window.__closed")
+
+    rows, called = on_page(browser, "tracked_form.html", inner)
+    assert called, "the wrapper must call through to the real window.close"
+    closes = [r for r in rows if r["kind"] == "window.close"]
+    assert len(closes) == 1
+    assert ((closes[0].get("after") or {}).get("el") or {}).get("says") == "Close me"
+    assert closes[0]["from"], "the stack is what names the caller"
+
+
+def test_the_listener_refuses_to_arm_on_an_off_limits_page(browser):
+    """The guard is in the injected source, not in the poll loop: a tab that
+    walks from a careers page into webmail must go quiet by itself. Asked of
+    the predicate, since serving a page from mail.google.com is not
+    something a test can do."""
+    from tracking import collector
+
+    async def work(e, page):
+        await page.evaluate(collector._armed())
+        return await page.evaluate("""JSON.stringify([
+          window.__trkAllowed("acme.wd1.myworkdayjobs.com"),
+          window.__trkAllowed("mail.google.com"),
+          window.__trkAllowed("a.b.mail.google.com"),
+          window.__trkAllowed("notchase.com"),
+          window.__trkAllowed("www.chase.com"),
+          typeof window.__trkDrain,
+        ])""")
+    import json as _json
+    workday, mail, deep, lookalike, bank, armed = _json.loads(
+        on_page(browser, "tracked_form.html", work))
+    assert workday and lookalike, "an ordinary host is read"
+    assert not mail and not deep and not bank, "mail and banking are never read"
+    assert armed == "function", "a local fixture is not off limits, so it arms"
+
+
+# -- the put chip: a caption above a slot is not the slot's own identity ---
+
+def test_a_caption_above_the_panel_does_not_disqualify_the_real_slot(browser):
+    """Workday's own offer is captioned "Autofill with Resume", and on a
+    tenant that puts it at the head of the panel holding the Resume/CV
+    dropzone, `slotWords` climbs past the dropzone - which names itself
+    nothing - to that heading and hands it back as the slot's name. The put
+    chip then read the system's own parser hint on the one control that is
+    not one and refused the page.
+
+    The rescue reads the control's own identity and the block beside it, and
+    the test that it is a rescue rather than a hole is the next one down:
+    Ashby's real parser still refuses, on its own live markup.
+    """
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => { window.prompt = () => { throw new Error('asked'); };"
+            f" {put_source()}\n"
+            " const f = new File([new Uint8Array([1])], 'tailored_resume.pdf');"
+            " const out = await putFile(f, 'resume');"
+            " const on = [...document.querySelectorAll('input[type=file]')]"
+            "   .map((el) => (el.files && el.files.length) ? el.files[0].name : '');"
+            " return {out: out, on: on}; })()")
+    got = on_page(browser, "workday_autofill_caption.html", work)
+    assert got["out"]["ok"] is True, got["out"]
+    assert got["on"] == ["tailored_resume.pdf"], got["on"]
+
+
+def test_the_rescue_still_refuses_ashbys_own_parser(browser):
+    """The other half. On the second pass Ashby has dropped the real slot's
+    input and its parser is the only file input left - and that parser
+    describes itself in the block the input sits in ("Autofill from resume.
+    Upload your resume here to autofill key application fields."), which is
+    what the control's own identity means. A rescue that read it as a slot
+    would put the tailored resume into the thing that parses it over the
+    fields instead of attaching it."""
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => { window.prompt = () => null;"
+            f" {put_source()}\n"
+            " const f = new File([new Uint8Array([1])], 'tailored_resume.pdf');"
+            " const out = await putFile(f, 'resume');"
+            " const on = [...document.querySelectorAll('input[type=file]')]"
+            "   .map((el) => (el.files && el.files.length) ? el.files[0].name : '');"
+            " return {out: out, on: on}; })()")
+    got = on_page(browser, "ashby_resume_taken.html", work)
+    assert got["out"]["ok"] is False
+    assert "not the resume slot" in got["out"]["note"]
+    assert got["on"] == [""], "the resume went onto the parser"
+
+
+def test_the_real_workday_dropzone_is_never_read_as_a_parser(browser):
+    """And the shape that is on disk from a real page: the concern was that
+    Workday's caption reaches the dropzone's own name and filters it out. It
+    does not - the climb stops at `resumeAttachments--attachments`, which is
+    the slot naming itself - and this pins that, so the rescue above is never
+    asked to do the work that the ordinary path already does."""
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => { window.prompt = () => { throw new Error('asked'); };"
+            f" {put_source()}\n"
+            " const f = new File([new Uint8Array([1])], 'tailored_resume.pdf');"
+            " const out = await putFile(f, 'resume');"
+            " const on = document.querySelector('input[type=file]').files[0].name;"
+            " return {out: out, on: on}; })()")
+    got = on_page(browser, "workday_dropzone_rows.html", work)
+    assert got["out"]["ok"] is True, got["out"]
+    # Found without asking (the prompt throws) and without the rescue: the
+    # slot named itself, so the caption never came into it.
+    assert got["on"] == "tailored_resume.pdf", got["on"]
+
+
+# -- the banner's file chips, run in a browser -----------------------------
+
+def html_sink_source() -> str:
+    """`trustedHTML` and `setHTML`, which every piece of markup in
+    `content.js` goes through since a Trusted Types page refused the raw
+    sink (2026-11-03). Spliced in wherever a function is lifted out of the
+    file on its own: without it the lifted code is missing the one call it
+    makes to render anything."""
+    source = CONTENT_JS.read_text()
+    start = source.index("let htmlPolicy;")
+    end = source.index("const LABELS = {")
+    return source[start:end]
+
+
+def files_source() -> str:
+    """`loadFiles` as it ships: the chips, the context line, the Finder
+    button and the drag handler. Taken with `put_source()` because the chips
+    call `putFile`."""
+    source = CONTENT_JS.read_text()
+    start = source.index("async function loadFiles(")
+    end = source.index("// Takes whatever is already on a slot")
+    return source[start:end]
+
+
+# What the server's `/review/<id>/files` answers with, as the chips expect
+# it: the upload name, the type, and the bytes in base64 because the page's
+# bridge carries json and not bytes.
+FILES_STUB = """
+    const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[ch]));
+    const post = async (path, body) => ({
+      ok: true, status: 200, json: async () => (path.endsWith("/files") ? {
+        resume: {name: "tailored_resume.pdf", type: "application/pdf", b64: btoa("%PDF-1.4 resume")},
+        cover_letter: {name: "cover_letter.pdf", type: "application/pdf", b64: btoa("%PDF-1.4 letter")},
+      } : {opened: true, revealed: ["tailored_resume.pdf"]})});
+    const shadow = document.createElement("div");
+    shadow.attachShadow({mode: "open"}).innerHTML = '<div class="files" id="files"></div>';
+    shadow.shadowRoot.getElementById = (id) => shadow.shadowRoot.querySelector("#" + id);
+    document.body.appendChild(shadow);
+"""
+
+
+def test_the_chip_carries_the_real_pdf_bytes_into_the_drag(browser):
+    """The chip is `draggable` and its `dragstart` puts the document into the
+    DataTransfer as a `File`, so a drop zone or an `<input type=file>` takes
+    it as it would a file from the desktop. What is measured here is that the
+    handler really loads the bytes the server sent - not a name, not a URL -
+    because a drag that carries only text looks identical until the drop.
+    """
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => {"
+            f" {html_sink_source()}\n{FILES_STUB}\n{put_source()}\n{files_source()}\n"
+            " await loadFiles(shadow.shadowRoot, 'abcd', 'filled');"
+            " const row = shadow.shadowRoot.getElementById('files');"
+            " const chip = row.querySelector('.chip[data-key=resume]');"
+            " const dt = new DataTransfer();"
+            " chip.dispatchEvent(new DragEvent('dragstart', {dataTransfer: dt, bubbles: true}));"
+            " const text = await (dt.files[0] ? dt.files[0].text() : Promise.resolve(''));"
+            " return {draggable: chip.getAttribute('draggable'),"
+            "   count: dt.files.length, name: dt.files[0] && dt.files[0].name,"
+            "   type: dt.files[0] && dt.files[0].type, body: text,"
+            "   download: dt.getData('DownloadURL'), plain: dt.getData('text/plain'),"
+            "   what: row.querySelector('.what').textContent,"
+            "   finder: !!row.querySelector('button.finder')}; })()")
+    got = on_page(browser, "workday_dropzone_rows.html", work)
+    assert got["draggable"] == "true"
+    assert got["count"] == 1 and got["name"] == "tailored_resume.pdf"
+    assert got["type"] == "application/pdf"
+    assert got["body"] == "%PDF-1.4 resume", "the drag carried a name, not the document"
+    # And the two fallbacks for a target that reads neither: Chrome's own
+    # download channel, and the filename as plain text.
+    assert got["download"].startswith("application/pdf:tailored_resume.pdf:")
+    assert got["plain"] == "tailored_resume.pdf"
+    # The context a person checking a filled form wants, without opening the
+    # review page: which resume and which letter went on this job.
+    assert "tailored_resume.pdf" in got["what"] and "cover_letter.pdf" in got["what"]
+    assert got["finder"], "no way back to the files in Finder"
+
+
+def test_a_drop_of_that_drag_lands_a_real_file_on_a_slot(browser):
+    """The other end of it: the DataTransfer the chip filled is what a drop
+    target reads, so a form's own dropzone gets a `File` with the bytes in
+    it. This is the in-page drop, which is what the ATS dropzones are; a
+    native drop target outside the browser is a different question and is
+    answered by the Finder button beside the chips."""
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => {"
+            f" {html_sink_source()}\n{FILES_STUB}\n{put_source()}\n{files_source()}\n"
+            " await loadFiles(shadow.shadowRoot, 'abcd', 'filled');"
+            " const chip = shadow.shadowRoot.querySelector('.chip[data-key=resume]');"
+            " const dt = new DataTransfer();"
+            " chip.dispatchEvent(new DragEvent('dragstart', {dataTransfer: dt, bubbles: true}));"
+            " const zone = document.querySelector('.dropzone');"
+            " let seen = null;"
+            " zone.addEventListener('drop', (ev) => {"
+            "   seen = [...ev.dataTransfer.files].map((f) => f.name); });"
+            " zone.dispatchEvent(new DragEvent('drop', {dataTransfer: dt, bubbles: true}));"
+            " return seen; })()")
+    assert on_page(browser, "workday_dropzone_rows.html", work) == ["tailored_resume.pdf"]
+
+
+# -- Start now, and the question thread ------------------------------------
+
+def start_source() -> str:
+    """`startNow`, `askThread` and `revealFiles` as they ship, from the first
+    through the end of the third."""
+    source = CONTENT_JS.read_text()
+    start = source.index("async function startNow(")
+    end = source.index("// The tailored PDFs for this job, as chips.")
+    return source[start:end]
+
+
+def drive(browser, script: str):
+    """The three functions above with the state they close over and a `post`
+    the test answers, so what is measured is the shipped handling of the
+    server's own contract."""
+    async def work(e, page):
+        return await page.evaluate(
+            "(async () => {"
+            " const START = {note: '', candidates: [], busy: false, state: ''};"
+            " const ASK = {jobId: null, turns: [], busy: false, note: '', open: true, draft: ''};"
+            " let jobHint = null;"
+            " const paintStart = () => {}; const paintAsk = () => {};"
+            " let sent = [];"
+            " let reply = {ok: true, status: 200, body: {}};"
+            " const post = async (path, body) => { sent.push([path, body]);"
+            "   return {ok: reply.ok, status: reply.status, json: async () => reply.body}; };"
+            f" {start_source()}\n"
+            f" {script}\n"
+            " })()")
+    return on_page(browser, "workday_dropzone_rows.html", work)
+
+
+def test_a_fill_already_running_is_joined_and_said_so(browser):
+    """`synced` is the one answer that has to be spoken: a fill was already
+    running for this job and this press joined it rather than starting a
+    second. Unsaid, a second press reads as the first having failed - and
+    two fills on one tab is the defect the one-at-a-time rule exists for."""
+    got = drive(browser, """
+      reply = {ok: true, status: 200, body:
+        {started: false, state: "synced", job_id: "ab12", note: ""}};
+      await startNow(null);
+      return {state: START.state, note: START.note, picks: START.candidates.length,
+              hint: jobHint && jobHint.id, sent: sent};
+    """)
+    assert got["state"] == "synced"
+    assert "already running" in got["note"].lower() and "joined" in got["note"].lower()
+    assert got["picks"] == 0
+    assert got["hint"] == "ab12", "the job it joined is this page's job from now on"
+    assert got["sent"] == [["/start-now", {"url": got["sent"][0][1]["url"]}]]
+
+
+def test_a_page_that_is_not_a_job_offers_the_jobs_that_are(browser):
+    """The YC case: the URL on file is the listing, the person is on the
+    employer's Workday form, and the identity ladder correctly says these
+    are not the same page. Before, that meant no chips, no Finder button and
+    no drag - the tailored resume was never offered. Now the in-flight jobs
+    come back and the person says which one it is."""
+    got = drive(browser, """
+      reply = {ok: true, status: 200, body: {started: false, state: "no_job", job_id: null,
+        note: "", candidates: [{id: "da8b", title: "Physical AI Infra", company: "Yondu"}]}};
+      await startNow(null);
+      return {state: START.state, note: START.note, picks: START.candidates,
+              hint: jobHint};
+    """)
+    assert got["state"] == "no_job"
+    assert got["picks"] == [{"id": "da8b", "title": "Physical AI Infra", "company": "Yondu"}]
+    assert "not a job in autopilot" in got["note"]
+    assert got["hint"] is None, "a candidate list is not a choice"
+
+
+def test_a_picked_job_is_started_in_this_very_tab(browser):
+    """With the job named, the server runs the fill in **this** tab instead
+    of opening one on the job's recorded URL - which for a job captured off
+    a listing site is the listing, not the form the person is looking at."""
+    got = drive(browser, """
+      reply = {ok: true, status: 200, body: {started: true, state: "started",
+        job_id: "da8b", note: "Filling this form."}};
+      await startNow("da8b");
+      return {sent: sent, state: START.state, note: START.note};
+    """)
+    assert got["sent"][0][0] == "/start-now"
+    assert got["sent"][0][1]["job_id"] == "da8b"
+    assert got["sent"][0][1]["url"].startswith("file://"), got["sent"]
+    assert got["state"] == "started" and got["note"] == "Filling this form."
+
+
+def test_a_visa_question_comes_back_refused_and_is_shown_as_the_answer(browser):
+    """The refusal lives server-side (`guard.ProtectedField` -> 422) and it
+    is the answer, not an error to retry: that one is the person's to answer
+    and nothing here may work around it. It lands in the thread, in red."""
+    got = drive(browser, """
+      ASK.draft = "Will you now or in the future require sponsorship?";
+      reply = {ok: false, status: 422, body:
+        {detail: "That is a visa / work-authorisation question; it is yours to answer."}};
+      await askThread({id: "ab12"});
+      return {kinds: ASK.turns.map((t) => t.kind), texts: ASK.turns.map((t) => t.text),
+              busy: ASK.busy, sent: sent};
+    """)
+    assert got["kinds"] == ["question", "error"]
+    assert "yours to answer" in got["texts"][1]
+    assert got["busy"] is False
+    # The job's own thread, not a second endpoint of our own.
+    assert got["sent"][0][0] == "/review/ab12/thread"
+    assert got["sent"][0][1]["action"] == "ask"
+
+
+def test_the_thread_keeps_the_turns_the_server_sends_back(browser):
+    """A thread, not a one-shot: the reply carries every turn of the job's
+    conversation, so the transcript is the server's and the next question
+    has the last answer above it."""
+    got = drive(browser, """
+      ASK.draft = "Why do you want to work here?";
+      reply = {ok: true, status: 200, body: {turns: [
+        {kind: "question", text: "Why do you want to work here?"},
+        {kind: "answer", text: "Because of the inference work.", model: "cheap/model"}]}};
+      await askThread({id: "ab12"});
+      const before = ASK.draft;
+      return {kinds: ASK.turns.map((t) => t.kind), draft: before, note: ASK.note};
+    """)
+    assert got["kinds"] == ["question", "answer"]
+    assert got["draft"] == "", "the box is cleared once the question is sent"
+    assert got["note"] == ""
+
+
+def test_an_empty_question_is_not_sent(browser):
+    """A button that needs text says so rather than doing nothing: three
+    clicks on an empty box with no message is how the review page's own
+    Re-tailor read as broken (2026-09-24)."""
+    got = drive(browser, """
+      ASK.draft = "   ";
+      await askThread({id: "ab12"});
+      return {sent: sent.length, note: ASK.note, turns: ASK.turns.length};
+    """)
+    assert got["sent"] == 0 and got["turns"] == 0
+    assert got["note"] == "Type the question first."
+
+
+# -- Add to autopilot, in Jobright's own button row ------------------------
+
+def jr_add_source() -> str:
+    """The button, from `const JR_ADD_ID` through the end of
+    `fitJobrightAdd`: the constants, the builder and the fit."""
+    source = CONTENT_JS.read_text()
+    start = source.index('const JR_ADD_ID = ')
+    end = source.index("function mountJobrightAdd()")
+    return source[start:end]
+
+
+def apply_control_source() -> str:
+    """`applyControl`, which both the big button and the press agree on."""
+    source = CONTENT_JS.read_text()
+    start = source.index("const APPLY_LABEL = /^")
+    return source[start:source.index("\n// A real press,")]
+
+
+def place_jr_add(browser, width: int) -> dict:
+    async def work(e, page):
+        await page.send("Emulation.setDeviceMetricsOverride", {
+            "width": width, "height": 800, "deviceScaleFactor": 1, "mobile": False})
+        return await page.evaluate(
+            "(() => {"
+            f" {html_sink_source()}\n{apply_control_source()}\n{jr_add_source()}\n"
+            " const row = document.querySelector('.row');"
+            " const before = {scroll: row.scrollWidth, client: row.clientWidth,"
+            "   kids: row.children.length};"
+            " const apply = applyControl();"
+            " const built = buildJobrightAdd();"
+            " fitJobrightAdd(built.host, apply, built.root.querySelector('button.go'));"
+            " const host = document.getElementById('job-autopilot-jr-add');"
+            " const go = built.root.querySelector('button.go');"
+            " const box = go.getBoundingClientRect(), ab = apply.getBoundingClientRect();"
+            " return {before: before, after: {scroll: row.scrollWidth, client: row.clientWidth},"
+            "   inRow: host.parentElement === row, afterApply: apply.nextElementSibling === host,"
+            "   label: go.textContent, fixed: getComputedStyle(host).position,"
+            "   height: Math.round(box.height), applyHeight: Math.round(ab.height),"
+            "   radius: getComputedStyle(go).borderRadius,"
+            "   applyRadius: getComputedStyle(apply).borderRadius,"
+            "   docScroll: document.documentElement.scrollWidth,"
+            "   rowMin: getComputedStyle(document.querySelector('main')).minWidth}; })()")
+    return on_page(browser, "jobright_apply_row.html", work)
+
+
+def test_the_add_button_is_a_sibling_of_their_apply_and_matches_it(browser):
+    """Their size, their row: the height and the radius are taken from Apply
+    itself rather than guessed, so the two read as one row. Only the colour
+    is ours, which is how you tell whose button it is."""
+    got = place_jr_add(browser, 1440)
+    assert got["inRow"] and got["afterApply"]
+    assert got["fixed"] == "inline-flex" or got["fixed"] == "static", got["fixed"]
+    assert got["height"] == got["applyHeight"], got
+    assert got["radius"] == got["applyRadius"], got
+    assert got["label"] == "Add to autopilot"
+
+
+def test_the_add_button_never_pushes_their_layout_sideways(browser):
+    """Jobright hard-codes `min-width: 1200px` on its main content, and the
+    injector overrides it so the page reads at half a screen - which is where
+    this button usually lives. There it has to give way rather than push:
+    the label shortens, and if the row still overflows the button leaves the
+    row and floats under the badge. Measured against the row's own box
+    before and after, at a full screen and at half of one."""
+    for width in (1440, 720, 420):
+        got = place_jr_add(browser, width)
+        grew = got["after"]["scroll"] - got["before"]["scroll"]
+        fits = got["after"]["scroll"] <= got["after"]["client"] + 1
+        if got["fixed"] == "fixed":
+            # It gave up the row entirely, which is the last resort.
+            assert grew <= 0, (width, got)
+        else:
+            assert fits or got["before"]["scroll"] > got["before"]["client"], (width, got)
+            assert got["label"] in ("Add to autopilot", "Add"), (width, got)
+        # And their own minimum is never written over by this: that is the
+        # injector's decision for the split, not this button's.
+        assert got["rowMin"] == "1200px", (width, got)
+
+
+# -- the whole banner, injected and answered -------------------------------
+
+# The bridge the injector binds (`browser/inject.py`): the page hands a
+# json request to `__autopilotRequest` and the reply comes back through
+# `__autopilotReply`. Answering it here is what lets the whole of
+# `content.js` run in a browser - and the point of running the whole of it
+# is that `/capture` is a call the test can watch for and never see.
+BRIDGE = """
+  window.__calls = [];
+  window.__autopilotRequest = (raw) => {
+    const req = JSON.parse(raw);
+    window.__calls.push(req.path);
+    const body = req.path === "/screen" ? window.__screenReply
+      : req.path.endsWith("/files") ? {
+          resume: {name: "tailored_resume.pdf", type: "application/pdf", b64: btoa("%PDF resume")},
+          cover_letter: {name: "cover_letter.pdf", type: "application/pdf", b64: btoa("%PDF letter")}}
+      : {};
+    setTimeout(() => window.__autopilotReply(req.id, true, 200, body), 0);
+  };
+"""
+
+
+# A closed shadow root cannot be read from outside, so the probe runs inside
+# the page with the root handed to it by patching attachShadow before the
+# script is injected. That patch is the test's, not the shipping code's.
+OPEN_ROOTS = """
+  const realAttach = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function (init) {
+    const root = realAttach.call(this, {...init, mode: "open"});
+    return root;
+  };
+"""
+
+
+def banner(browser, screen_reply: dict, wait: float, probe: str):
+    async def work(e, page):
+        await page.evaluate(f"(() => {{ {OPEN_ROOTS}\n{BRIDGE}\n"
+                            f" window.__screenReply = {json.dumps(screen_reply)}; }})()")
+        await page.evaluate(CONTENT_JS.read_text())
+        await asyncio.sleep(wait)
+        return await page.evaluate(
+            "(() => { const host = document.getElementById('job-autopilot-screen');"
+            " const r = host.shadowRoot;"
+            f" {probe} }})()")
+    return on_page(browser, "banner_live.html", work)
+
+
+CLEAN = {"verdict": "ok", "summary": "No hard or soft flags found",
+         "facts_source": "profile", "flags": []}
+
+
+def test_a_clean_verdict_queues_nothing_and_presses_nothing(browser):
+    """The whole of the 2026-10-30 change, measured rather than read off the
+    source: a clean verdict on a page nobody has pointed at a job used to
+    call `/capture` two seconds later, and on Jobright's own posting page to
+    press their Apply. It queued `login.usc.edu/login` twice, a SAP page
+    titled "Career Opportunities: Sign In" and a bare careers homepage.
+
+    The banner is given four seconds - twice the old countdown - and the
+    only call it may have made is the screen itself.
+    """
+    got = banner(browser, CLEAN, 4.0,
+                 " return {calls: window.__calls,"
+                 "   add: r.querySelector('button.add') && r.querySelector('button.add').textContent,"
+                 "   counting: !!r.querySelector('.counting'),"
+                 "   verdict: r.querySelector('.tag').textContent.trim(),"
+                 "   summary: r.querySelector('.summary').textContent};")
+    assert got["calls"] == ["/screen"], got["calls"]
+    assert got["add"] == "Add to autopilot", got["add"]
+    assert got["counting"] is False, "something is still counting down"
+    # And the verdict is still screened and still shown: it is information,
+    # and only acting on it by itself was the problem.
+    assert got["verdict"] == "OK"
+    assert got["summary"] == "No hard or soft flags found"
+
+
+def test_start_now_waits_under_the_orb_until_it_is_pressed(browser):
+    """"It has to stop. It should not automatically start playing." The bar
+    says the verdict and folds into the badge after three seconds; what is
+    left on the screen is the orb and, under it, Start now - the one control
+    that hands the form to the autopilot, and only when pressed."""
+    # The screen settles at 1.5 s and the bar folds 3 s after the verdict is
+    # painted, so six seconds is the first moment the badge is the whole of
+    # what is on the screen.
+    got = banner(browser, CLEAN, 6.0,
+                 " const s = r.querySelector('.startnow');"
+                 " const b = s.getBoundingClientRect();"
+                 " const badge = r.querySelector('button.badge').getBoundingClientRect();"
+                 " return {calls: window.__calls, off: s.classList.contains('off'),"
+                 "   label: r.querySelector('button.start').textContent,"
+                 "   collapsed: host.dataset.collapsed,"
+                 "   below: Math.round(b.top) >= Math.round(badge.bottom),"
+                 "   left: Math.round(b.left), shown: b.height > 0};")
+    assert got["collapsed"] == "true", "the bar did not fold into the badge"
+    assert got["off"] is False and got["shown"] is True
+    assert got["label"] == "Start now"
+    assert got["below"], "Start now is over the orb, not under it"
+    assert got["left"] <= 12
+    # Drawing it costs nothing: still only the screen has been called.
+    assert got["calls"] == ["/screen"]
+
+
+def test_a_matched_job_brings_its_files_its_names_and_its_thread(browser):
+    """A page the screen matched to a job in autopilot carries that job's
+    own context: which resume and letter went on it, the chips to drag or
+    put, the way back to them in Finder, and somewhere to ask about the
+    form's own questions. All of it used to mean opening the review page."""
+    reply = dict(CLEAN, seen={"id": "ab12", "status": "approved", "level": "high",
+                              "company": "Yondu", "title": "Infra Engineer",
+                              "at": "2026-10-29T10:00:00+00:00"})
+    got = banner(browser, reply, 4.0,
+                 " const files = r.getElementById('files');"
+                 " return {calls: window.__calls,"
+                 "   what: files.querySelector('.what').textContent,"
+                 "   chips: [...files.querySelectorAll('.chip')].length,"
+                 "   finder: !!files.querySelector('button.finder'),"
+                 "   ask: !!r.querySelector('[data-act=ask-open]'),"
+                 "   start: !!r.querySelector('button.start')};")
+    assert "/review/ab12/files" in got["calls"]
+    assert "tailored_resume.pdf" in got["what"] and "cover_letter.pdf" in got["what"]
+    assert got["chips"] == 4, "two files, each with a drag chip and a put chip"
+    assert got["finder"] and got["ask"] and got["start"]
+    # Still nothing queued and nothing started.
+    assert "/capture" not in got["calls"] and "/start-now" not in got["calls"]

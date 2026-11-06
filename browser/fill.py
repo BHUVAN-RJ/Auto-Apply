@@ -550,6 +550,31 @@ async def _press_again(cdp_url: str, url: str) -> "autofill.AutofillResult":
         return autofill.AutofillResult(note=f"failed: {error}")
 
 
+# One line per Start now press, newest last: "<when> <url>". Appended rather
+# than rewritten, because nothing under `applications/` is overwritten and
+# the earlier attempts are part of the record of this application.
+FORM_URL_FILE = "form_url.txt"
+
+
+def bound_form_url(app_dir: Path) -> str:
+    """The URL a person's Start now press said the form was on, or "".
+
+    Read out of the application folder rather than passed in, the same way
+    `form_fill.json`, `workday.json` and the screenshot are written there:
+    the fill is started as a detached process by `runner.launch`, so a file
+    beside its own output is the only channel that survives.
+    """
+    path = app_dir / FORM_URL_FILE
+    if not path.exists():
+        return ""
+    lines = [line.strip() for line in path.read_text(errors="replace").splitlines()
+             if line.strip()]
+    if not lines:
+        return ""
+    # "<timestamp> <url>", and a bare URL is accepted too.
+    return lines[-1].split()[-1]
+
+
 async def fill_async(
     url: str,
     resume_pdf: Path,
@@ -581,7 +606,21 @@ async def fill_async(
     # the agent does it as before.
     filled = forms.Report(note="skipped")
     pressed = autofill.AutofillResult(note="skipped")
-    adapter = forms.adapter_for(url)
+    # Where the form actually turned out to be, when that is not where the
+    # job was captured from. A YC listing (`ycombinator.com/companies/<org>/
+    # jobs/<id>`) is a posting with no form on it at all and an Apply link
+    # out to the company's own ATS, which nothing here follows: the fill ran
+    # against the YC page, found `fields: 0`, and reported the application
+    # as being behind an account that did not exist. So when the person
+    # navigates it themselves - YC, Apply, a Workday account, the form - and
+    # presses **Start now**, `POST /start-now` records the URL of the tab
+    # they are standing on (`FORM_URL_FILE`, appended, newest last) and this
+    # is where the run picks it up. The job's own URL is never rewritten: it
+    # is the identity key the never-applied-twice ladder is built on.
+    landed = bound_form_url(screenshot_to.parent) or url
+    if landed != url:
+        log.info("starting on the tab the person reached: %s", landed)
+    adapter = forms.adapter_for(landed)
     # The page with the form on it, which is not always the page the job was
     # captured from. Ashby's posting (`/<org>/<id>`) and Lever's (`/<org>/<id>`)
     # are overview pages with no form at all: the fill opened one of those,
@@ -589,8 +628,8 @@ async def fill_async(
     # "could not attach", while the application was one known path away
     # (2026-10-03, asked for). The adapter knows that path, and it is
     # deterministic - no Apply press, no guessing.
-    form_url = adapter.apply_url(url) if adapter else url
-    if form_url != url:
+    form_url = adapter.apply_url(landed) if adapter else landed
+    if form_url != landed:
         log.info("the form is on %s, not the posting page", form_url)
     # Loaded whatever the system: the adapter path below wants one, and so
     # does the contact-field fallback, which is not adapter-specific.
@@ -620,23 +659,32 @@ async def fill_async(
 
             gate_tab = [""]
             gate_tab[0] = autofill.find_tab(cdp_url, form_url)
-            # Workday is waited for, never pressed (2026-10-09, asked for).
-            # Pressing its Apply was opening empty tabs and chooser pages
-            # nobody asked for, and its account step is the one thing the
-            # autopilot must not touch - so on Workday the fill opens the
-            # page, says what it is waiting for, and does nothing at all
-            # until the application's first page is on the screen. Every
-            # other system keeps the press: the account there is not offered
-            # until Apply has been pressed.
-            hands_off = workday.is_workday(form_url) or workday.is_workday(url)
+            # Apply is not pressed by the automatic path any more
+            # (2026-10-30), on any system. Workday stopped being pressed on
+            # 2026-10-09 for its own reasons; the measurements since say the
+            # rest of them should never have been either. Getting from a
+            # posting to a form is up to three presses - the posting, the
+            # system's own chooser, "Apply Manually" - and each of them can
+            # open a tab, which is where the stray tabs kept coming from;
+            # and it bought little, because 22 runs this month still ended
+            # "no application form on this page". So the watch does exactly
+            # what it does on Workday: it opens the page, says what it is
+            # waiting for, and touches nothing. When no form appears the job
+            # comes back to the person as before (`NOT_A_FORM`,
+            # `needs_sign_in.txt`, checkpoint 1), and the way forward is the
+            # person pressing Apply themselves and then **Start now**
+            # (`POST /start-now`), which starts this same fill from the
+            # application's first page.
+            #
+            # `browser/open_apply.py` keeps its guards, its tests and its
+            # invariant; it is simply no longer called from here.
+            hands_off = workday.is_workday(form_url) or workday.is_workday(landed)
             tab, gate = await signin.ready_tab(cdp_url, form_url, notify=say,
-                                               press_apply=not hands_off,
+                                               press_apply=False,
                                                patient=hands_off,
                                                timeout=workday.wait_seconds() if hands_off
                                                else signin.SIGNIN_TIMEOUT)
             gate_tab[0] = tab
-            if gate.applied:
-                log.info("pressed Apply (%s), %d time(s)", gate.applied, gate.pressed)
             if gate.saw_signin:
                 log.info("sign-in wall: waited %.0fs, form %s",
                          gate.waited, "reached" if gate.ready else "never appeared")
@@ -666,7 +714,7 @@ async def fill_async(
     # shape, so it has its own walk; the account and the questions are the
     # person's, the resume and the page turns are ours.
     easy = None
-    if (not filled.attempted and linkedin_apply.is_linkedin(url)
+    if (not filled.attempted and linkedin_apply.is_linkedin(landed)
             and os.environ.get(LINKEDIN_ENV, "1") != "0" and form_is_up):
         tab = (gate.target_id if gate is not None and gate.target_id
                else autofill.find_tab(cdp_url, url))
@@ -695,7 +743,7 @@ async def fill_async(
     # times and then shows a review page, so filling only the first one left
     # most of the work where it was.
     walk = None
-    if (easy is None and not filled.attempted and workday.is_workday(url)
+    if (easy is None and not filled.attempted and workday.is_workday(landed)
             and os.environ.get(WORKDAY_ENV, "1") != "0"):
         tab = (gate.target_id if gate is not None and gate.target_id
                else autofill.find_tab(cdp_url, url))
@@ -885,7 +933,7 @@ async def fill_async(
         await _detach(browser)
         # The form as the agent left it, for the correction loop: what the
         # human changes between now and submitting is what was wrong.
-        await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, url, target_id)
+        await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, form_url, target_id)
         if target_id:
             await autofill.notify(cdp_url, target_id, "done", "Filled and ready; your check, then Submit")
         _sweep_blank(tabs_before)
@@ -961,7 +1009,7 @@ async def _finish_without_agent(cdp_url: str, url: str, target_id: str, filled: 
     the tailored resume is on the form. Touches nothing itself; the
     documents and the answers went on in `run_documents`."""
     shot = await _screenshot_cdp(cdp_url, target_id, screenshot_to) if target_id else None
-    await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, url, target_id)
+    await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, form_url, target_id)
     errors = list(filled.errors)
     if not filled.resume_uploaded:
         errors.insert(0, "the tailored resume was never uploaded; the form still has whatever autofill attached")

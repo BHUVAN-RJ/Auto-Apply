@@ -20,6 +20,38 @@ const WAIT_MS = 1000;
 const WAIT_MAX = 20;
 const HOST_ID = "job-autopilot-screen";
 
+// Some sites send a Trusted Types CSP - Google's own careers pages do - and
+// under one every HTML sink throws instead of rendering: `innerHTML`, and
+// `DOMParser.parseFromString` with it, which is why parsing the markup
+// somewhere else is not the way out. The badge, and with it every way into
+// the autopilot, was simply absent on those pages, with one "script threw"
+// line in the injector's log to say so (2026-11-03, found while putting the
+// Add button on every page).
+//
+// A policy of our own is the sanctioned way through: the markup here is
+// ours, written in this file, and never anything the page said. A site whose
+// `trusted-types` directive names its policies refuses to make this one, so
+// both of the other sinks are tried after it rather than throwing - a page
+// with no Trusted Types at all, which is nearly all of them, never reaches
+// the policy in the first place.
+let htmlPolicy;
+function trustedHTML(html) {
+  const tt = window.trustedTypes;
+  if (!tt || !tt.createPolicy) return html;
+  if (htmlPolicy === undefined) {
+    try {
+      htmlPolicy = tt.createPolicy("job-autopilot", { createHTML: (s) => s });
+    } catch {
+      htmlPolicy = null;
+    }
+  }
+  return htmlPolicy ? htmlPolicy.createHTML(html) : html;
+}
+
+function setHTML(root, html) {
+  root.innerHTML = trustedHTML(html);
+}
+
 const LABELS = {
   perm: "PERM ad",
   experience: "Experience",
@@ -48,16 +80,22 @@ const COLOURS = {
 
 const CHECKS = "years of experience, visa and sponsorship, export control, clearance and citizenship, start date and graduation window, location, degree, seniority, PERM ads";
 
-// An ok or caution verdict queues the job on its own after this long; the
-// bar across the button is the countdown, and a click on it cancels. A
-// reject never queues itself: the button waits for the person.
-// Two seconds (2026-10-03, asked for; it was 3 from 2026-09-24 to give the
-// "Use Opus" button room inside the window). Arming Opus does not cancel the
-// countdown, so a press after the job has gone in is the thread's
-// "Re-tailor with Opus" instead, which sets the model on the row and
-// re-tailors - one click either way.
-const AUTO_ADD_MS = 2000;
-const AUTO_ADD = new Set(["ok", "caution"]);
+// Nothing on this page acts by itself any more (2026-10-30, asked for).
+//
+// The countdown used to queue a job, and on Jobright's own posting page to
+// press their Apply, two seconds after a clean verdict. What it actually
+// queued, measured off the rows it left behind: `login.usc.edu/login`
+// twice, a SAP "Career Opportunities: Sign In" page, a bare careers
+// homepage - two of them marked submitted - and a row whose entire title
+// is "Apply". A marked tab stays marked through every navigation, so a
+// single-sign-on redirect inside one was screened and queued as though it
+// were the job.
+//
+// The verdict is still screened and still shown, because a verdict is
+// information and costs nothing but a local rule run. What is gone is
+// anything that acts on it: `act()` and `openJob()` are now reached only
+// from a click, and the person decides on a page they are looking at.
+// "We will enhance the human and will not replace him."
 // Once the bar has a verdict to give, it has done its work: it closes
 // itself after this long, counted down in red across the ✕, and becomes
 // the corner badge in the verdict's colour. Every banner, on every page -
@@ -84,22 +122,30 @@ const onJobright = /(^|\.)jobright\.ai$/.test(location.hostname);
 // not a job: email, a bank, a search. A cold page reads nothing and calls
 // nothing - no `/screen`, no posting text, no request of any kind - it draws
 // the badge and waits. The click on it is the whole decision, and from
-// there the page behaves like any form opened by hand: it screens, it
-// offers, it never counts down and never queues itself.
+// there the page behaves like any other: it screens, it offers, and the
+// click on its Add button is the only thing that queues anything.
 const cold = !!window.__autopilotCold;
-if (cold) window.__autopilotHandOpened = true;
-// The click on a cold badge is not a page being read, it is a decision: the
-// person looked at this posting and asked for it. So a clean verdict counts
-// down and queues itself from here, exactly as it does on a tab Jobright's
-// Apply opened. What the hand-opened rule protects against is a banner
-// nobody asked for acting by itself, which is still the case for an ATS form
-// that got the script on its host alone.
+// `window.__autopilotHandOpened` is still set by the injector and by the
+// extension, and nothing here reads it any more (2026-10-30). It existed to
+// hold the countdown off a page nobody had pointed at a job; with no
+// countdown on any page there is nothing for it to hold off, and a flag read
+// in one place and set in three is how "it never queues a hand-opened tab"
+// turned out to be true of one injection path and not the other.
+// Whether the person asked for this page to be screened by tapping its
+// cold badge. Nothing counts down any more, so this no longer decides
+// whether the banner may act - it decides whether the tab is the person's:
+// a tab they are standing in front of is never closed under them once the
+// job is queued, where the tab Jobright's Apply opened was.
 let askedByHand = false;
+// Whether that press was the person asking for this page to go in. The cold
+// button says "Add to autopilot", so the banner it renders into owes them
+// the add without a second press; it is spent the moment it is honoured, so
+// a later re-render of the same banner never adds anything twice.
+let coldAdd = false;
 
 // "Use Opus": tailor this one job with the expensive model. Armed by the
-// button during the countdown and read when the job is queued, so pressing
-// it does not cut the countdown short — the job goes in as it would have,
-// with the model changed. Per tab, per job; the default is the cheap model.
+// button and read when Add is pressed, so the two are one decision in
+// either order. Per tab, per job; the default is the cheap model.
 let usePremium = false;
 
 // A posting already in autopilot (`seen` on the screen reply) is never
@@ -188,6 +234,53 @@ async function rememberPicked() {
     CHANGES.busy = false; paintChanges();
   }
 }
+
+// Which job in autopilot this page is about, when the screen could not say.
+//
+// 2026-10-30, found on a YC-sourced job. `/screen` matches the page against
+// the queue, and for a job captured from `ycombinator.com/companies/...` the
+// URL on file is the **listing**, not the employer's form - YC links out to
+// the company's own ATS, so the Workday page the person signs in to has no
+// `jr_id`, no resemblance to the URL on file, and the identity ladder
+// correctly answers "not the same job". No match meant no chips, no Finder
+// button and no drag: the tailored resume was never offered, rather than
+// offered and broken.
+//
+// So the person can say which job it is. The list comes back from
+// `/start-now` when it answers `no_job` (in-flight jobs, newest first), and
+// the same list serves both this and Start now - one question, asked once.
+// Kept here rather than in the DOM: the banner is re-rendered on every
+// screen and collapse.
+let jobHint = null;      // {id, title, company}, chosen by hand
+
+// Start now: the page is a form the person has reached - signed in, past the
+// account wall, the fields on the screen - and the autopilot takes it from
+// here. The whole point of the button is that the fill **waited**: "It has
+// to stop. It should not automatically start playing."
+//
+// The server's contract (2026-10-30): POST /start-now {url} answers
+// {started, state: started|synced|no_job, job_id, note}, and takes an
+// explicit {job_id} for a page it could not match itself. `synced` means a
+// fill is already running for that job and this one joined it rather than
+// starting a second, which is the one answer that has to be said out loud:
+// otherwise a second press reads as the first one having failed.
+const START = { note: "", candidates: [], busy: false, state: "" };
+let paintStart = () => {};
+
+// One question about this job, then another: a thread, not a one-shot.
+// "In some cases where we need to give answers to questions, we'll maybe
+// make another call to answer that particular question... It sort of should
+// be like a chat." Ashby autofills; Workday asks things.
+//
+// This is `POST /review/<id>/thread` with `action: "ask"` - the endpoint the
+// review page's own thread uses, so the turns are kept in the job's one
+// conversation and are there on the review page afterwards. A visa /
+// sponsorship / work-authorisation question is refused server-side, and the
+// refusal is shown as it comes back rather than worked around.
+//
+// Nothing here types anything into the form. The answer is to read and copy.
+const ASK = { jobId: null, turns: [], busy: false, note: "", open: false, draft: "" };
+let paintAsk = () => {};
 
 const STATE_PING_MS = 5000;
 let stateTimer = null;
@@ -359,25 +452,37 @@ function pageText() {
   return (main.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-// The badge on a page nobody has said anything about: the assistant's own
-// orb, at rest, in the corner. It is a button and nothing else - no text
-// read, no fetch - and clicking it hands the page to `screen`, which
-// replaces this host with the banner.
+// The button on a page nobody has said anything about: the assistant's own
+// orb with its offer written beside it, in the corner. It is a button and
+// nothing else - no text read, no fetch - and pressing it is the whole
+// decision (2026-11-03, asked for: "When I open a page from outside, I want
+// a start button... I need to click 'Add this to job queue' or something.
+// Let's show that button on every page"). The orb alone said only "click to
+// screen this posting", which is the machine's first step and not the
+// person's intent, and it left the real decision behind a second press on a
+// banner they had not asked to read.
+//
+// So the press screens the page and then queues it, one press for both,
+// through the banner's own Add. Nothing is applied for: the job goes in,
+// the resume is tailored, and the fill still stops at the filled form.
 function renderCold() {
   document.getElementById(HOST_ID)?.remove();
   const host = document.createElement("div");
   host.id = HOST_ID;
   const shadow = host.attachShadow({ mode: "closed" });
-  shadow.innerHTML = `
+  setHTML(shadow, `
     <style>
       :host { all: initial; }
       button.badge { position: fixed; top: 6px; left: 6px; z-index: 2147483647;
-                     width: 52px; height: 52px; display: flex; align-items: center;
-                     justify-content: center; padding: 0; background: transparent;
-                     border: 0; box-shadow: none; cursor: pointer; opacity: .75;
-                     transition: opacity .15s ease; }
-      button.badge:hover, button.badge:focus-visible { opacity: 1; outline: none; }
-      .badge svg { width: 52px; height: 52px; overflow: visible; }
+                     display: flex; align-items: center; gap: 2px; padding: 0 14px 0 0;
+                     background: #15131c; color: #fff; border: 2px solid #000;
+                     border-radius: 28px; box-shadow: 3px 3px 0 #000; cursor: pointer;
+                     font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+                     letter-spacing: .02em; transition: transform .15s ease; }
+      button.badge:hover, button.badge:focus-visible { transform: translateY(-1px); outline: none; }
+      button.badge[disabled] { cursor: default; }
+      .badge svg { width: 44px; height: 44px; overflow: visible; flex: 0 0 auto; }
+      .badge span { white-space: nowrap; }
       .assistant-shadow { fill: #000; }
       .assistant-ring { fill: #fff; stroke: #000; stroke-width: 5; }
       .assistant-core { fill: #b48cff; transform-box: fill-box; transform-origin: center;
@@ -387,14 +492,15 @@ function renderCold() {
       @keyframes flow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.7); } }
       @media (prefers-reduced-motion: reduce) { .badge.live .assistant-core { animation: none; transform: scale(1.4); } }
     </style>
-    <button class="badge" aria-label="Screen this page with Job Autopilot"
-            title="Job Autopilot — click to screen this posting">
+    <button class="badge" aria-label="Add this job to Job Autopilot"
+            title="Add this posting to Job Autopilot: it screens it, tailors the resume and the letter, and fills the form. It never submits.">
       <svg class="assistant-logo" viewBox="-70 -70 140 140" aria-hidden="true">
         <circle class="assistant-shadow" cx="7" cy="7" r="50"/>
         <circle class="assistant-ring" r="50"/>
         <circle class="assistant-core" r="11"/>
       </svg>
-    </button>`;
+      <span>Add to autopilot</span>
+    </button>`);
   const button = shadow.querySelector("button.badge");
   button.addEventListener("click", () => {
     // `screen` waits for a client-rendered page's text, which can take
@@ -402,7 +508,9 @@ function renderCold() {
     // this host.
     button.classList.add("live");
     button.disabled = true;
+    button.querySelector("span").textContent = "Reading the posting…";
     askedByHand = true;
+    coldAdd = true;
     screen();
   });
   document.documentElement.appendChild(host);
@@ -416,6 +524,17 @@ function render(result, { pending = false } = {}) {
 
   const verdict = pending ? "pending" : result.verdict in COLOURS ? result.verdict : "error";
   const seen = pending ? null : result.seen || null;
+  // The job this page is about: the one the screen matched, else the one the
+  // person picked off the candidate list when it matched nothing. Both get
+  // the same thing - the files, which resume and letter went on, the Finder
+  // button and the question thread - because a form reached through a
+  // listing site is exactly where those are wanted.
+  const job = seen
+    ? { id: seen.id, status: seen.status, title: seen.title || "", company: seen.company || "" }
+    : jobHint
+      ? { id: jobHint.id, status: jobHint.status || "", title: jobHint.title || "",
+          company: jobHint.company || "", picked: true }
+      : null;
   const c = COLOURS[verdict];
   const tag = c.tag;
   // Facts derived from the resume say nothing about visa status or dates,
@@ -448,7 +567,7 @@ function render(result, { pending = false } = {}) {
   const canAdd = !pending && !(seen && seen.level === "high") && verdict !== "submitted";
   const canRetry = !pending && (verdict === "error" || verdict === "not_a_job");
 
-  shadow.innerHTML = `
+  setHTML(shadow, `
     <style>
       :host { all: initial; }
       /* Wraps rather than squeezes. The controls do not shrink (their
@@ -507,11 +626,8 @@ function render(result, { pending = false } = {}) {
                text-transform: uppercase; cursor: pointer; }
       button:hover { background: #fff; color: #000; }
       button:disabled { opacity: .5; cursor: default; }
-      button.add { background: ${c.tone}; color: #000; border-color: ${c.tone}; position: relative; overflow: hidden; }
+      button.add { background: ${c.tone}; color: #000; border-color: ${c.tone}; }
       button.add:hover { background: #fff; border-color: #fff; }
-      button.add.counting { background: #fff; color: #000; border-color: #fff; }
-      button.add .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: ${c.tone}; }
-      button.add span { position: relative; z-index: 1; }
       button.add.done { background: #000; color: ${c.tone}; border-color: ${c.tone}; cursor: default; }
       button.opus { background: #000; color: #3ddc84; border-color: #3ddc84; padding: 8px 16px; font-size: 13px; }
       button.opus:hover { background: #3ddc84; color: #000; }
@@ -547,6 +663,58 @@ function render(result, { pending = false } = {}) {
       .applied.pending:hover, .applied.pending:focus-visible { background: #3a2a08; }
       .files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; align-items: center; }
       .files .hint { color: #a0a0a0; font-size: 11px; }
+      .files .what { color: #a0a0a0; font-size: 11px; display: block; width: 100%; }
+      .files .what b { color: #fff; font-weight: 600; }
+      button.finder { background: #000; color: #fff; border-color: #fff; }
+      /* Start now: the standing control on a job's own tab. The bar folds
+         itself away after three seconds and the orb is what is left, so this
+         sits under the orb when collapsed and under the bar while it is
+         open - never on top of either. The offset is set in code, because
+         the bar's height depends on how far its own row wrapped. */
+      .startnow { position: fixed; left: 6px; top: 64px; z-index: 2147483646;
+                  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+                  max-width: min(360px, calc(100vw - 16px)); }
+      .startnow.off { display: none; }
+      button.start { background: #3ddc84; color: #000; border-color: #3ddc84;
+                     font-size: 13px; padding: 8px 14px; box-shadow: 4px 4px 0 #000; }
+      button.start:hover, button.start:focus-visible { background: #000; color: #3ddc84; }
+      button.start:disabled { opacity: .6; cursor: default; }
+      .startnow .note { background: #000; color: #fff; border: 2px solid #3ddc84;
+                        padding: 4px 8px; font-size: 11px; line-height: 1.35; }
+      .startnow .picks { background: #000; border: 2px solid #3ddc84; padding: 5px 6px;
+                         display: flex; flex-direction: column; gap: 3px; max-height: 40vh;
+                         overflow-y: auto; }
+      .startnow .picks button { background: #000; color: #fff; border-color: #333;
+                                text-align: left; text-transform: none; letter-spacing: 0;
+                                font-size: 11px; padding: 4px 6px; white-space: normal; }
+      .startnow .picks button:hover { background: #3ddc84; color: #000; border-color: #3ddc84; }
+      /* The picks box sets its own display, and an explicit display
+         declaration beats the user agent rule that hides an element with
+         the hidden attribute - so hiding it did nothing, and an empty
+         candidate list rendered as a small black square with a green
+         border under the button (reported 2026-10-31 with a screenshot).
+         Fixed here rather than by swapping the attribute for a class,
+         because everything else in this sheet hides by the attribute.
+         Note for whoever edits this stylesheet: it lives inside a
+         template literal, so a backtick in a comment ends the string. */
+      .startnow .picks[hidden] { display: none; }
+      /* The question thread. A transcript and a box, in the bar's own body:
+         the answer is read and copied, never typed into the form by us. */
+      .ask { margin-top: 6px; border-top: 1px solid #333; padding-top: 6px; }
+      .ask .turns { display: flex; flex-direction: column; gap: 5px; max-height: 40vh;
+                    overflow-y: auto; margin-bottom: 5px; }
+      .ask .turn { font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+      .ask .turn.you { color: #3ddc84; }
+      .ask .turn.them { color: #fff; border-left: 2px solid #b48cff; padding-left: 6px; }
+      .ask .turn.refused { color: #ff5c5c; border-left-color: #ff5c5c; }
+      .ask .turn button.copy { margin-left: 6px; padding: 1px 5px; font-size: 10px; }
+      .ask .compose { display: flex; gap: 6px; align-items: flex-start; }
+      .ask textarea { flex: 1 1 auto; min-width: 0; background: #111; color: #fff;
+                      border: 2px solid #333; font: inherit; font-size: 11px; padding: 4px 6px;
+                      resize: vertical; min-height: 46px; }
+      .ask textarea:focus { border-color: #b48cff; outline: none; }
+      .ask .note { color: #b48cff; font-size: 11px; display: block; margin-top: 4px; }
+      .ask button.send { background: #b48cff; color: #000; border-color: #b48cff; }
       .changes { display: none; margin-top: 6px; border-top: 1px solid #333; padding-top: 6px; }
       .changes.on { display: block; }
       .changes .hint { color: #a0a0a0; font-size: 11px; display: block; margin-bottom: 4px; }
@@ -591,6 +759,12 @@ function render(result, { pending = false } = {}) {
           <circle class="assistant-core" r="11"/>
         </svg>
       </button>
+      <div class="startnow off">
+        <button class="start" data-act="start" type="button"
+          title="Hand this form to the autopilot: it fills it in and stops at the filled form. It never submits.">Start now</button>
+        <span class="note" hidden></span>
+        <span class="picks" hidden></span>
+      </div>
       <div class="bar">
         <span class="tag${pending ? " live" : ""}">${tag}</span>
         <div class="body">
@@ -601,50 +775,40 @@ function render(result, { pending = false } = {}) {
           ${seen && !applied ? `<span class="seen${DECIDED[seen.status] ? " decided" : ""}"
             ${DECIDED[seen.status] ? 'data-act="open" role="button" tabindex="0"' : ""}
             >${esc(seenLine(seen))}</span>` : ""}
-          ${seen ? `<div class="files" id="files"></div>` : ""}
+          ${job ? `<div class="files" id="files"></div>` : ""}
           <div class="changes" id="changes"></div>
+          ${job ? `<div class="ask" id="ask"></div>` : ""}
           ${flags ? `<ul>${flags}</ul>` : ""}
         </div>
         <div class="actions">
           ${seen && !applied ? `<button class="open" data-act="open"><span>${esc(openLabel(seen))}</span></button>` : ""}
           ${canRetry ? `<button data-act="again">Again</button>` : ""}
           ${canAdd ? `<label class="approve" title="Checked: once the resume is tailored the fill starts by itself. Unchecked: it waits for your approval on the review page."><input type="checkbox" checked> auto-approve</label>` : ""}
-          ${canAdd ? `<button class="opus" data-act="opus" aria-pressed="${usePremium}" title="Tailor this job's resume and cover letter with the expensive model. About eight times the cost of a normal job, and it rewrites far more of the resume. The countdown keeps running.">${usePremium ? "Opus on" : "Use Opus"}</button>` : ""}
-          ${canAdd ? `<button class="add" data-act="add"><i class="fill"></i><span>${seen ? "Add anyway" : onJobright ? "Open job page" : "Add to autopilot"}</span></button>` : ""}
+          ${canAdd ? `<button class="opus" data-act="opus" aria-pressed="${usePremium}" title="Tailor this job's resume and cover letter with the expensive model. About eight times the cost of a normal job, and it rewrites far more of the resume. Nothing is added until you press Add.">${usePremium ? "Opus on" : "Use Opus"}</button>` : ""}
+          ${canAdd ? `<button class="add" data-act="add"><span>${seen ? "Add anyway" : onJobright ? "Open job page" : "Add to autopilot"}</span></button>` : ""}
           <button class="close" data-act="close" aria-label="Minimize Job Autopilot"><i class="fill"></i><span>−</span></button>
         </div>
       </div>
-    </div>`;
+    </div>`);
 
   // On the employer's page the button queues the job; on Jobright's own
   // posting page it presses Jobright's Apply, which opens the employer's
   // page in a new tab, where this script runs again and queues from there.
-  // An ok or caution verdict does either by itself after a countdown drawn
-  // left to right across the button; a click during the countdown cancels.
+  // Neither happens without this button being pressed.
   const add = shadow.querySelector("button.add");
-  const bar = add?.querySelector(".fill");
-  // Auto-approve, per job, decided here during the countdown. On the
-  // employer's page it travels with the capture; on Jobright's page the
-  // employer tab queues the job, so the choice goes ahead by posting id.
+  // Auto-approve, per job, decided here before Add. On the employer's page
+  // it travels with the capture; on Jobright's page the employer tab queues
+  // the job, so the choice goes ahead by posting id.
   const approve = shadow.querySelector("label.approve input");
   const autoFill = () => (approve ? approve.checked : null);
   approve?.addEventListener("change", () => {
     if (onJobright && postingId()) post("/prefs", { jr_id: postingId(), auto_fill: approve.checked }).catch(() => {});
   });
   const label = (text) => { add.querySelector("span").textContent = text; };
-  const idle = seen ? "Add anyway" : onJobright ? "Open job page" : "Add to autopilot";
   const closeBar = shadow.querySelector("button.close .fill");
-  let timer = null;
-  let started = 0;
-  let frame = 0;
   // The id of the job this bar put into autopilot, while it can still be
   // taken out again.
   let added = null;
-  const draw = () => {
-    const done = Math.min(1, (performance.now() - started) / AUTO_ADD_MS);
-    bar.style.width = `${done * 100}%`;
-    if (done < 1 && timer) frame = requestAnimationFrame(draw);
-  };
   const shell = shadow.querySelector(".shell");
   const badge = shadow.querySelector("button.badge");
   const auto = shadow.querySelector(".auto");
@@ -653,10 +817,10 @@ function render(result, { pending = false } = {}) {
     const box = shadow.getElementById("changes");
     if (!box) return;
     const rows = CHANGES.rows;
-    if (!rows.length && !CHANGES.note) { box.classList.remove("on"); box.innerHTML = ""; return; }
+    if (!rows.length && !CHANGES.note) { box.classList.remove("on"); setHTML(box, ""); return; }
     box.classList.add("on");
     const open = rows.filter((r) => !r.remembered);
-    box.innerHTML = `<span class="hint">${open.length
+    setHTML(box, `<span class="hint">${open.length
         ? "Changed since autofill. Tick what Jobright got wrong and every next form gets your value:"
         : rows.length ? "Everything you changed here is on file." : ""}</span>`
       + rows.map((r) => `<label class="row${r.remembered ? " kept" : ""}" title="${esc(r.label)}">
@@ -665,7 +829,7 @@ function render(result, { pending = false } = {}) {
           ${r.was ? `<span class="was">${esc(r.was)}</span>` : ""}
           <span class="now">${esc(r.now)}</span>${r.remembered ? " ✓" : ""}</label>`).join("")
       + `<div class="row-actions">${open.length ? `<button class="remember" data-act="remember" ${CHANGES.busy || !CHANGES.picked.size ? "disabled" : ""}>Remember ${CHANGES.picked.size || ""}</button>` : ""}
-          ${CHANGES.note ? `<span class="note">${esc(CHANGES.note)}</span>` : ""}</div>`;
+          ${CHANGES.note ? `<span class="note">${esc(CHANGES.note)}</span>` : ""}</div>`);
     for (const input of box.querySelectorAll("input[type=checkbox]:not(:disabled)")) {
       input.addEventListener("change", () => {
         if (input.checked) CHANGES.picked.add(input.dataset.label); else CHANGES.picked.delete(input.dataset.label);
@@ -675,6 +839,96 @@ function render(result, { pending = false } = {}) {
     }
   };
   paintChanges();
+
+  // ---- Start now ---------------------------------------------------------
+  const startBox = shadow.querySelector(".startnow");
+  const startButton = shadow.querySelector("button.start");
+  const startNote = shadow.querySelector(".startnow .note");
+  const startPicks = shadow.querySelector(".startnow .picks");
+  // Nothing to start on a page whose job has already gone out, and nothing
+  // to start while the screen is still running.
+  const canStart = !pending && verdict !== "submitted";
+  paintStart = () => {
+    startBox.classList.toggle("off", !canStart);
+    if (!canStart) return;
+    startButton.disabled = START.busy;
+    // The server answers with more than three states, and the button says
+    // which one it got rather than sitting on "Start now" over a refusal:
+    // `waiting` is another job's fill holding the one tab, `submitted` and
+    // `skipped` are a job that is finished with. The note carries the
+    // server's own sentence underneath in every case.
+    startButton.textContent = START.busy ? "Starting…"
+      : START.state === "synced" ? "Already applying — joined it"
+      : START.state === "started" ? "Applying now"
+      : START.state === "waiting" ? "Waiting — another job is filling"
+      : START.state === "submitted" ? "Already submitted"
+      : START.state === "skipped" ? "This job was rejected"
+      : job && job.picked ? `Start now · ${job.company || job.title || "this job"}`
+      : "Start now";
+    startNote.hidden = !START.note;
+    startNote.textContent = START.note;
+    startPicks.hidden = !START.candidates.length;
+    if (START.candidates.length) {
+      setHTML(startPicks, START.candidates.map((c) =>
+        `<button type="button" data-act="pickjob" data-job="${esc(c.id)}"
+          title="Use this job's tailored resume and letter on this page">${
+          esc([c.company, c.title].filter(Boolean).join(" — ") || c.id)}</button>`).join(""));
+    }
+  };
+  paintStart();
+  // Under the orb when the bar has folded away, under the bar while it is
+  // open. The bar's height is not knowable in CSS - it wraps to a second row
+  // at half a screen - so it is measured.
+  const placeStart = () => {
+    const bar = shadow.querySelector(".bar");
+    const top = bannerCollapsed ? 64 : Math.round(bar.getBoundingClientRect().height) + 6;
+    startBox.style.top = `${top}px`;
+  };
+
+  // ---- the question thread ----------------------------------------------
+  paintAsk = () => {
+    const box = shadow.getElementById("ask");
+    if (!box || !job) return;
+    if (ASK.jobId !== job.id) { ASK.jobId = job.id; ASK.turns = []; ASK.note = ""; }
+    if (!ASK.open) {
+      setHTML(box, `<button data-act="ask-open" type="button"
+        title="Ask about this job - a question off the form, answered from the posting, your tailored resume, the letter and your profile">Ask about this job</button>`);
+      return;
+    }
+    // `kind` says what a turn is, not who said it: question and change are
+    // the person's, answer and result are the model's, error is a refusal
+    // (a visa question, server-side) or a failure.
+    const turns = ASK.turns.map((t, i) => {
+      const mine = t.kind === "question" || t.kind === "change";
+      const refused = t.kind === "error";
+      const body = esc(t.text || "");
+      return `<div class="turn ${mine ? "you" : "them"}${refused ? " refused" : ""}">${
+        mine ? "› " : ""}${body}${mine || refused ? "" :
+        `<button class="copy" data-act="copy" data-i="${i}" type="button">copy</button>`}</div>`;
+    }).join("");
+    setHTML(box, `<div class="turns">${turns || ""}</div>
+      <div class="compose">
+        <textarea rows="2" placeholder="The form's question, in its own words"
+          ${ASK.busy ? "disabled" : ""}></textarea>
+        <button class="send" data-act="ask-send" type="button" ${ASK.busy ? "disabled" : ""}>${
+          ASK.busy ? "…" : "Ask"}</button>
+      </div>
+      ${ASK.note ? `<span class="note">${esc(ASK.note)}</span>` : ""}`);
+    const text = box.querySelector("textarea");
+    text.value = ASK.draft;
+    text.addEventListener("input", () => { ASK.draft = text.value; });
+    // The answer is what is wanted, not the markup round it: copy takes that
+    // turn's own text off the state by its index, never the rendered node.
+    for (const button of box.querySelectorAll("button.copy")) {
+      button.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const turn = ASK.turns[Number(button.dataset.i)];
+        navigator.clipboard?.writeText(turn?.text || "").then(
+          () => { button.textContent = "copied"; }, () => { button.textContent = "copy failed"; });
+      });
+    }
+  };
+  paintAsk();
 
   applyAutomation = () => {
     shell.classList.remove("working", "done", "error");
@@ -688,12 +942,14 @@ function render(result, { pending = false } = {}) {
     bannerCollapsed = true;
     host.dataset.collapsed = "true";
     shell.classList.add("collapsed");
+    placeStart();
   };
   const expand = () => {
     openedByHand = true;
     bannerCollapsed = false;
     host.dataset.collapsed = "false";
     shell.classList.remove("collapsed");
+    placeStart();
     // A bar that opened itself folds itself away; a bar the person opened
     // stays open. Tapping the badge is how someone asks for the files, the
     // verdict's reasons, or the way back to the job - all of which take
@@ -733,55 +989,63 @@ function render(result, { pending = false } = {}) {
     };
     closing = requestAnimationFrame(tick);
   };
+  // Reached from a click and from nowhere else. On Jobright's posting page
+  // that click presses their Apply, which is how the employer URL - the
+  // only URL worth queueing - is reached at all; on an employer page it
+  // queues this posting.
   const act = async () => {
-    timer = null;
-    cancelAnimationFrame(frame);
-    add.classList.remove("counting");
-    bar.style.width = "0";
     add.disabled = true;
-    let queuedId = null;
-    let result = null;
-    if (onJobright) {
-      label("Opening job page…");
-      if (await openJob()) {
-        label("Opened, waiting for the job page…");
-        queuedId = await waitQueued();
-        label(queuedId ? "Added" : "Job page did not add it");
-      } else {
-        label("No Apply button found");
-      }
-    } else {
-      label("Adding…");
-      result = await addToQueue(autoFill(), usePremium);
-      label(result.label);
-      queuedId = result.id;
-      // The pipeline is now tailoring; keep the core purple until the
-      // browser agent (or a failure) says otherwise, so the badge never
-      // reads "done" while something is still running for this job.
-      if (result.created) {
-        AUTOMATION.pipeline = true;
-        window.__autopilotAutomation("working", "Added; tailoring the resume");
-      }
-    }
-    add.classList.add("done");
-    // Added by a countdown nobody asked to stop in time, or by a click made
-    // too quickly: the decision is still the person's, so the button that
-    // added it is the one that takes it back. It drops the job (the same
-    // reject the review page makes) and stops the tailoring with it.
-    if (queuedId) {
+    // A job that has gone in, and can still be taken straight back out: the
+    // decision is the person's, so the button that added it is the button
+    // that undoes it. It drops the job (the same reject the review page
+    // makes) and stops the tailoring with it.
+    const landed = async (queuedId) => {
       added = queuedId;
       add.disabled = false;
       add.classList.remove("done");
       add.dataset.act = "undo";
       label("Undo · take it out again");
-    }
-    if (queuedId) {
       // The review tab is pointed at the job but stays where it is: the
       // person is reading the posting, and the fill opens its own tab
       // when the tailoring is done. Only "Open in autopilot" focuses.
       await openReview(queuedId, { focus: false });
       autoCollapse();
+    };
+    if (onJobright) {
+      label("Opening job page…");
+      // The same press, carried to the tab that can queue it. See the big
+      // button's own call for why this is not the countdown returning.
+      if (postingId()) {
+        await post("/prefs", { jr_id: postingId(), auto_fill: autoFill(),
+                               premium: usePremium, asked: true }).catch(() => {});
+      }
+      if (await openJob()) {
+        // Their Apply opens the employer's page in a tab of its own, and
+        // that page is where the job goes in: its URL is the one worth
+        // queueing (the server refuses a jobright.ai URL outright), and the
+        // decision belongs on the page being looked at. Nothing is awaited
+        // here - the poll exists only so this bar can offer Undo if the job
+        // does land, and awaiting it left this button dead for the ninety
+        // seconds it waits.
+        label("Opened — adding it there…");
+        waitQueued().then((id) => { if (id) landed(id); });
+      } else {
+        label("No Apply button found");
+      }
+      return;
     }
+    label("Adding…");
+    const result = await addToQueue(autoFill(), usePremium);
+    label(result.label);
+    // The pipeline is now tailoring; keep the core purple until the
+    // browser agent (or a failure) says otherwise, so the badge never
+    // reads "done" while something is still running for this job.
+    if (result.created) {
+      AUTOMATION.pipeline = true;
+      window.__autopilotAutomation("working", "Added; tailoring the resume");
+    }
+    add.classList.add("done");
+    if (result.id) await landed(result.id);
     // This tab has done its job once the pipeline has it: the fill opens
     // its own tab on approve. Only a job created just now; an "already in
     // autopilot" tab may be the one a fill is working on.
@@ -800,37 +1064,20 @@ function render(result, { pending = false } = {}) {
   shell.addEventListener("mouseleave", leave);
   shell.addEventListener("focusout", leave);
 
-  const cancel = () => {
-    clearTimeout(timer); timer = null;
-    cancelAnimationFrame(frame);
-    add.classList.remove("counting");
-    bar.style.width = "0";
-    label(idle);
-  };
-  // A tab the person opened themselves is never queued by a countdown: the
-  // injector marks only Jobright's own Apply tabs, and a form found by hand
-  // is a page being read, not a decision made. Clicking the cold badge is
-  // the decision, so that one does count down.
-  if (add && AUTO_ADD.has(verdict) && !seen && (askedByHand || !window.__autopilotHandOpened)) {
-    add.classList.add("counting");
-    label(onJobright ? "Opening job page · click to stop" : "Adding to autopilot · click to stop");
-    started = performance.now();
-    timer = setTimeout(act, AUTO_ADD_MS);
-    frame = requestAnimationFrame(draw);
-  }
   // Every banner folds itself away, not only the ones that had nothing left
   // to ask. The bar's job is to say the verdict; the badge is what stays,
   // in the verdict's own colour, and one tap brings the bar back with the
-  // same result and no second screen. The two exceptions are the only ones
-  // that are not a finished answer: a screen still running, and a countdown
-  // that is about to queue the job (that one collapses when it lands).
+  // same result and no second screen. The one exception is the only state
+  // that is not a finished answer: a screen still running. (It used to be
+  // two - the other was a countdown about to queue the job, and there is
+  // no countdown any more.)
   //
   // The applied block used to be held out of this, because a line inside a
   // bar that folded away after five seconds is how one job was applied for
   // twice. It is not a line inside a bar any more - it is the loudest thing
   // the banner draws, and the badge behind it keeps the colour - so it
   // folds like everything else.
-  if (!pending && !(add && add.classList.contains("counting"))) {
+  if (!pending) {
     autoCollapse();
   }
 
@@ -849,7 +1096,6 @@ function render(result, { pending = false } = {}) {
       // The host's own listener re-expands a collapsed bar on any click
       // that reaches it; this one must not.
       e.stopPropagation();
-      if (timer) cancel();
       clearTimeout(collapseTimer); collapseTimer = null;
       cancelAnimationFrame(closing);
       collapse();
@@ -857,10 +1103,36 @@ function render(result, { pending = false } = {}) {
     if (action === "expand") expand();
     if (action === "again") screen({ force: true });
     if (action === "open" && seen) openReview(seen.id);
+    if (action === "start") {
+      e.stopPropagation();
+      stopCollapse();
+      startNow(job && job.picked ? job.id : null).then(() => {
+        // The server may have named a job this page did not know it was.
+        // Then the banner owes it the rest: its files, its names and its
+        // thread, which only a re-render puts on.
+        if (jobHint && !job) render(result);
+      });
+    }
+    if (action === "pickjob") {
+      // The person has said which job this page is: from here it behaves
+      // exactly like a page the screen matched - the files, the context, the
+      // Finder button and the thread - and Start now carries the id, so the
+      // fill runs in this tab rather than opening one on the job's own URL.
+      e.stopPropagation();
+      stopCollapse();
+      const id = e.target.closest("[data-job]").dataset.job;
+      jobHint = START.candidates.find((c) => c.id === id) || { id };
+      START.candidates = [];
+      START.note = "Using this job's files. Press Start now when the form is on the screen.";
+      render(result);
+    }
+    if (action === "reveal" && job) { e.stopPropagation(); revealFiles(shadow, job.id); }
+    if (action === "ask-open") { e.stopPropagation(); stopCollapse(); ASK.open = true; paintAsk(); }
+    if (action === "ask-send") { e.stopPropagation(); stopCollapse(); askThread(job); }
     if (action === "remember") { e.stopPropagation(); rememberPicked(); }
     if (action === "opus") {
-      // Armed, not pressed: the countdown is deliberately left running, so
-      // one click is the whole decision and the job still adds itself.
+      // Armed, not pressed: the model is a decision about the job, not an
+      // instruction to add it, so this never adds anything by itself.
       e.stopPropagation();
       usePremium = !usePremium;
       const button = shadow.querySelector("button.opus");
@@ -871,10 +1143,7 @@ function render(result, { pending = false } = {}) {
       // way auto-approve does.
       if (onJobright && postingId()) post("/prefs", { jr_id: postingId(), premium: usePremium }).catch(() => {});
     }
-    if (action === "add" && !add.disabled) {
-      if (timer) cancel();
-      else act();
-    }
+    if (action === "add" && !add.disabled) act();
     if (action === "undo" && added && !add.disabled) {
       e.stopPropagation();
       stopCollapse();
@@ -888,11 +1157,273 @@ function render(result, { pending = false } = {}) {
     }
   });
   document.documentElement.appendChild(host);
+  placeStart();
   // The tailored files are offered for any match, certain or likely: the
   // form a person opened by hand is exactly where "put" is wanted, and the
   // match there is often `confident` rather than `high`. Nothing is put on
   // the form without the click.
-  if (seen) loadFiles(shadow, seen.id, seen.status);
+  if (job) loadFiles(shadow, job.id, job.status);
+  // One press, on the posting, is the whole decision - and this is the tab
+  // that can act on it. See `tagId` and `app.ASKED_PREFS`.
+  //
+  // `canAdd` is not the gate: it is true for a `reject`, a failed screen
+  // and a `not_a_job` page, because the *button* is offered there on
+  // purpose - the person overruling a verdict is a decision they are
+  // allowed to make, with the verdict in front of them. Honouring a press
+  // made on the posting is not that: the page this tab landed on may not be
+  // the posting at all. A `jr_id` tag survives a redirect, so a marked tab
+  // that follows single sign-on to USC or an employer's SuccessFactors
+  // login still carries it - which is exactly the three bad captures the
+  // countdown made, and a press behind them would not make them good.
+  // `QUEUEABLE` is therefore the same narrow pair the countdown itself
+  // acted on, and anything else waits for a click on this page.
+  if (canAdd && QUEUEABLE.has(verdict) && !seen && !onJobright && !cold) {
+    honourTheAdd(label, act);
+  }
+  // The cold button's own press, carried into the banner it rendered into.
+  // Unlike the Jobright tag, this is a press made on *this* page by the
+  // person reading it, so the verdict is not the gate: a `reject`, a failed
+  // screen or a page that does not read as a job is theirs to overrule, and
+  // the banner puts the verdict in front of them either way. What does gate
+  // it is the pair that is never a posting: a job already in autopilot has
+  // no Add to press (`canAdd`), and a sign-in page is a wall however it was
+  // reached - the two bad captures the old countdown made were both walls.
+  if (coldAdd && canAdd && !seen && !onJobright) {
+    coldAdd = false;
+    if (looksLikeSignIn()) {
+      label("A sign-in page, not a posting — press Add when the job is up");
+    } else {
+      stopCollapse();
+      label("Adding…");
+      act();
+    }
+  }
+}
+
+
+// The verdicts that a press made on the posting may be spent on. A screen
+// that failed, a page that does not read as a job, and an auto-reject are
+// all pages to put in front of the person, not pages to queue unseen.
+const QUEUEABLE = new Set(["ok", "caution"]);
+
+
+// The `jr_id` Jobright's extension puts on the employer URL its Apply
+// opens. `postingId()` reads Jobright's own `/jobs/info/<id>` path, which
+// this tab does not have; the tag is the same id by another route, and it
+// is what pairs the two tabs for `/queued` and `/asked`.
+function tagId() {
+  try {
+    return new URL(location.href).searchParams.get("jr_id") || "";
+  } catch {
+    return "";
+  }
+}
+
+
+// Queue this posting because the person already pressed Add, on Jobright,
+// seconds ago.
+//
+// This is not the countdown coming back, and the difference is the whole
+// point of the 2026-10-30 change. The countdown acted on a *verdict*: it
+// queued whatever page it found itself marked in, which is how a USC
+// single-sign-on page, a SuccessFactors sign-in and a bare careers
+// homepage became jobs. This acts on a *press*, made by the person, on the
+// posting they were reading, and spent once (`/asked` pops it, and it
+// expires). No press, no tag, or a tag the server does not recognise, and
+// this tab waits for a click like every other page in the browser.
+async function honourTheAdd(label, act) {
+  const id = tagId();
+  if (!id) return;
+  // A tab Jobright opened is one the person asked for by pressing Apply
+  // over there, whether or not they used our own Add button to do it
+  // (2026-10-31, asked for: "As soon as we open from Jobright, I want it
+  // to be auto-applied... else I have to manually add every job, which is
+  // again pointless"). Only Jobright's extension puts the tag on, so
+  // carrying it *is* the redirect, and that is the whole gate for queueing.
+  //
+  // What stops this being the countdown again is the pair of checks either
+  // side of it: `QUEUEABLE` at the call site, and `looksLikeSignIn` here.
+  // The tag survives a redirect, so a marked tab that followed single sign-
+  // on still has it - and a sign-in page is a wall, not a posting, however
+  // it was reached and whoever asked for it. That is how `login.usc.edu`
+  // and a SuccessFactors sign-in became jobs the first time.
+  if (looksLikeSignIn()) return;
+  // Whether they pressed our Add or Jobright's own Apply changes what this
+  // says and nothing else. Consumed either way, so a press cannot sit in
+  // the server's memory until it expires.
+  let pressed = false;
+  try {
+    const res = await post("/asked", { jr_id: id });
+    pressed = !!(await res.json()).asked;
+  } catch {
+    // The server is away - then `act()` has nowhere to queue to either, and
+    // it will say so on the button rather than failing silently here.
+  }
+  label(pressed ? "Adding — you pressed Add on the posting"
+                : "Adding — opened from Jobright");
+  await act();
+}
+
+
+// Does this page want a password rather than an application?
+//
+// Deliberately small and deliberately strict. `browser/signin.py` is the
+// full version of this question and it takes a page apart to answer it;
+// here the only job is to refuse to queue a wall, so the two signals that
+// are never wrong on their own are enough: somewhere to type a password,
+// or an identity provider's host. A posting that merely has "Sign In" in
+// its header is not a wall - every Workday tenant's does - which is why no
+// text is matched at all (the 2026-09-30 lesson, applied).
+//
+// It only ever refuses, and the asymmetry is the point: a false positive
+// costs one click on the Add button, a false negative costs a sign-in page
+// queued as a job.
+//
+// **This list must stay a superset of `signin.IDENTITY_HOSTS`**, and a test
+// asserts it: the server's list is where a host is added after a bad
+// capture, and a host known there but missing here would be refused by the
+// fill and queued by the page. The extras below are ours: `login.usc.edu`
+// and `shibboleth` are the university single sign-on this actually hit.
+const IDENTITY_HOSTS = [
+  // Kept in step with browser/signin.py.
+  "accounts.google.com", "login.microsoftonline.com", "login.live.com",
+  "appleid.apple.com", "www.linkedin.com/oauth", "linkedin.com/oauth",
+  "github.com/login", "okta.com", "oktapreview.com", "auth0.com",
+  "onelogin.com", "pingidentity.com", "signin.aws.amazon.com",
+  "id.workday.com", "authn.workday.com", "wd1.myworkday.com/wday/authgwy",
+  // Ours, from what this has met: university single sign-on.
+  "login.usc.edu", "shibboleth", "secure.login.gov", "login.salesforce.com",
+];
+
+function looksLikeSignIn() {
+  const host = location.hostname.toLowerCase();
+  // The same three comparisons `signin.host_is_identity` makes, and for the
+  // same reason: some entries are a host and some are a host with a path
+  // ("github.com/login"), so the whole URL has to be looked at too. A bare
+  // `host.includes(h)` was tried and is wrong - it makes "okta.com" match
+  // "notokta.command.example.com".
+  const whole = location.href.toLowerCase();
+  if (IDENTITY_HOSTS.some((h) => host === h || host.endsWith(`.${h}`) || whole.includes(h))) {
+    return true;
+  }
+  return !!document.querySelector('input[type="password"]');
+}
+
+// Hand this page to the autopilot, now, because the person can see that the
+// form is on the screen - signed in, past the account wall, the fields in
+// front of them. This is the whole of the 2026-10-30 change from the other
+// side: nothing starts a fill by itself any more, so something has to start
+// it, and the one thing that knows the form is ready is the person looking
+// at it.
+//
+// `job_id` is sent only when they have picked the job themselves off the
+// candidate list; then the server runs the fill in **this** tab rather than
+// opening one on the job's recorded URL, which for a job captured from a
+// listing site is the listing and not the form.
+//
+// Three answers, all of which have to be said out loud:
+//   started  - the autopilot has it.
+//   synced   - a fill was already running for this job and this one joined
+//              it rather than starting a second. Without saying so, a
+//              second press reads as the first one having failed.
+//   no_job   - this page is not a job in autopilot. Then the in-flight jobs
+//              come back as candidates, and Add is the other way out.
+async function startNow(jobId) {
+  if (START.busy) return;
+  START.busy = true; START.note = ""; START.candidates = []; START.state = "";
+  paintStart();
+  try {
+    const body = jobId ? { url: location.href, job_id: jobId } : { url: location.href };
+    const res = await post("/start-now", body);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `server ${res.status}`);
+    START.state = data.state || "";
+    START.note = data.note || (
+      data.state === "synced" ? "A fill was already running for this job; this tab joined it."
+      : data.state === "started" ? "The autopilot has this form. It stops at the filled form."
+      : "");
+    // `synced` has to be said whatever the server worded it as: without it a
+    // second press reads as the first one having failed, and two fills on one
+    // form is the defect the one-at-a-time rule exists for.
+    if (data.state === "synced" && !/joined|already/i.test(START.note)) {
+      START.note = `A fill was already running for this job; this tab joined it. ${START.note}`.trim();
+    }
+    if (data.state === "no_job") {
+      START.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      START.note = START.candidates.length
+        ? "This page is not a job in autopilot. Which of these is it? Or press Add to put it in."
+        : "This page is not a job in autopilot, and nothing is in flight. Press Add to put it in.";
+    }
+    // A job the server named is this page's job from now on: its files and
+    // its thread are what the banner should be offering.
+    if (data.job_id && data.state !== "no_job" && (!jobHint || jobHint.id !== data.job_id)) {
+      jobHint = { ...(jobHint || {}), id: data.job_id };
+    }
+  } catch (err) {
+    START.note = `Could not start: ${err.message}`;
+  } finally {
+    START.busy = false;
+    paintStart();
+  }
+}
+
+// One turn of the job's own conversation. The endpoint is the review page's
+// thread, so the question and its answer are kept in the one place the job's
+// conversation lives and are there afterwards; the reply carries every turn,
+// so the transcript fills itself in from the server rather than from here.
+//
+// A visa / sponsorship / work-authorisation question is refused server-side
+// (`guard.ProtectedField` -> 422), and the refusal is shown as it comes
+// back. There is nothing to work around: that answer is the person's.
+async function askThread(job) {
+  if (!job || ASK.busy) return;
+  const text = (ASK.draft || "").trim();
+  if (!text) { ASK.note = "Type the question first."; paintAsk(); return; }
+  ASK.busy = true; ASK.note = "Answering…";
+  // Shown at once, so the thread reads as a conversation rather than as a
+  // box that goes quiet; the server's own copy replaces it on the reply.
+  ASK.turns = [...ASK.turns, { kind: "question", text }];
+  ASK.draft = "";
+  paintAsk();
+  try {
+    const res = await post(`/review/${job.id}/thread`, { text, action: "ask" });
+    const data = await res.json();
+    if (!res.ok) {
+      // 422 is the protected-question refusal, and it is the answer, not an
+      // error to retry: it is shown in the thread in red.
+      ASK.turns = [...ASK.turns, { kind: "error", text: data.detail || `server ${res.status}` }];
+      ASK.note = "";
+      return;
+    }
+    if (Array.isArray(data.turns)) ASK.turns = data.turns;
+    ASK.note = "";
+  } catch (err) {
+    ASK.turns = [...ASK.turns, { kind: "error", text: `Could not ask: ${err.message}` }];
+  } finally {
+    ASK.busy = false;
+    paintAsk();
+  }
+}
+
+// The two named copies in Finder, with the resume selected: for the forms
+// whose screener never reaches the assistant and whose files are quicker
+// dragged in by hand. The same endpoint the review page's own button uses,
+// so the named copies are made if the fill has not made them yet.
+async function revealFiles(shadow, jobId) {
+  const row = shadow.getElementById("files");
+  const say = (text) => {
+    const note = row?.querySelector(".hint");
+    if (note) note.textContent = text;
+  };
+  try {
+    const res = await post(`/review/${jobId}/reveal`, {});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `server ${res.status}`);
+    say(data.opened ? `Showing ${data.revealed?.join(", ") || "the folder"} in Finder.`
+                    : (data.note || "Could not open Finder."));
+  } catch (err) {
+    say(`Finder: ${err.message}`);
+  }
 }
 
 // The tailored PDFs for this job, as chips. Drag one onto the form's own
@@ -909,18 +1440,24 @@ async function loadFiles(shadow, jobId, status) {
     data = await res.json();
     if (!res.ok) throw new Error(data.detail || `server ${res.status}`);
   } catch (err) {
-    row.innerHTML = `<span class="hint">Files: ${esc(err.message)}</span>`;
+    setHTML(row, `<span class="hint">Files: ${esc(err.message)}</span>`);
     return;
   }
   const entries = [["resume", "Resume"], ["cover_letter", "Cover letter"]].filter(([k]) => data[k]);
-  if (!entries.length) { row.innerHTML = `<span class="hint">No tailored files yet.</span>`; return; }
-  // No sentence over the chips: a chip that can be dragged, clicked and put
-  // says so by being one, and the line explaining all three took more of the
-  // bar than the files did. What each one does is in its own title.
-  row.innerHTML = entries.map(([k, label]) =>
+  if (!entries.length) { setHTML(row, `<span class="hint">No tailored files yet.</span>`); return; }
+  // Which documents this job carries, under the names they go on a form
+  // with. The chips say what they do by being chips; this line says what
+  // they *are*, which is the one thing a person checking a filled form
+  // wants and had to open the review page for.
+  const what = `<span class="what">On this job: ${entries
+    .map(([k, label]) => `${label.toLowerCase()} <b>${esc(data[k].name)}</b>`).join(" · ")}</span>`;
+  setHTML(row, what + entries.map(([k, label]) =>
     `<span class="chip" draggable="true" data-key="${k}"
        title="${esc(data[k].name)} — drag onto a file slot, or click to download"><b>⇣</b> ${label} · ${esc(data[k].name)}</span>` +
-    `<span class="chip put" data-put="${k}" title="Set the form's ${label.toLowerCase()} file input to this file"><b>→</b> put</span>`).join("");
+    `<span class="chip put" data-put="${k}" title="Set the form's ${label.toLowerCase()} file input to this file"><b>→</b> put</span>`).join("")
+    + `<button class="finder" data-act="reveal" type="button"
+         title="Open the application folder in Finder with the resume selected, for a form whose own picker is the only way in">Show files in Finder</button>`
+    + `<span class="hint"></span>`);
   const files = {};
   for (const [k] of entries) {
     const bytes = Uint8Array.from(atob(data[k].b64), (c) => c.charCodeAt(0));
@@ -929,6 +1466,15 @@ async function loadFiles(shadow, jobId, status) {
   for (const chip of row.querySelectorAll(".chip")) {
     const file = files[chip.dataset.key];
     chip.addEventListener("dragstart", (e) => {
+      // Three channels, because a drop target may read any of them.
+      // `items.add(file)` is the one that works: measured in Chrome
+      // (tests/test_dom.py), the drag carries the document's own bytes and
+      // an in-page dropzone or file input takes it exactly as it takes a
+      // file from the desktop. What it does **not** do is reach a target
+      // outside the browser - Finder, Mail - because only Chrome's own
+      // `DownloadURL` channel leaves the renderer, and that writes a
+      // download rather than handing over a file. Hence the Finder button
+      // beside the chips: dragging into another application is its job.
       e.dataTransfer.effectAllowed = "copy";
       try { e.dataTransfer.items.add(file); } catch { /* older Chrome */ }
       const url = URL.createObjectURL(file);
@@ -951,11 +1497,11 @@ async function loadFiles(shadow, jobId, status) {
       // job the slot is its to write; the chip is for the forms it cannot
       // finish, and it says so instead of quietly adding a second file.
       if (status === "filling") {
-        button.innerHTML = `<b>✕</b> autopilot is filling this now`;
+        setHTML(button, `<b>✕</b> autopilot is filling this now`);
         return;
       }
       const result = await putFile(files[key], key);
-      button.innerHTML = `<b>${result.ok ? "✓" : "✕"}</b> ${esc(result.note)}`;
+      setHTML(button, `<b>${result.ok ? "✓" : "✕"}</b> ${esc(result.note)}`);
       // A slot the person filled from here is as much ours as one the fill
       // filled, and it was the one path with no logo in front of it, so a
       // form done this way looked untouched (2026-10-04, asked for). The
@@ -1068,11 +1614,15 @@ async function putFile(file, key) {
       .some((el) => /^\s*(remove|delete|clear)\b/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
     return { ok: false, note: taken ? "a file is already on the slot — remove it, then put" : "no file input on this page" };
   }
-  const describe = (el) => {
+  // What the control says about itself and what the page says right beside
+  // it, kept apart from what `slotWords` finds by climbing. Both are used;
+  // the difference matters only in the rescue below.
+  const own = (el) => {
     const label = el.labels && el.labels.length ? [...el.labels].map((l) => l.innerText).join(" ") : "";
     const near = el.closest("label, fieldset, section, div")?.innerText?.slice(0, 80) || "";
-    return `${el.name || ""} ${el.id || ""} ${el.getAttribute("aria-label") || ""} ${label} ${near} ${slotWords(el)}`.replace(/\s+/g, " ").trim();
+    return `${el.name || ""} ${el.id || ""} ${el.getAttribute("aria-label") || ""} ${label} ${near}`.replace(/\s+/g, " ").trim();
   };
+  const describe = (el) => `${own(el)} ${slotWords(el)}`.replace(/\s+/g, " ").trim();
   const want = key === "resume" ? /resume|\bcv\b|curriculum/i : /cover\s*letter/i;
   const other = key === "resume" ? /cover\s*letter/i : /resume|\bcv\b|curriculum/i;
   // Ashby, Workday and Lever all offer "upload a resume and we will fill the
@@ -1082,7 +1632,23 @@ async function putFile(file, key) {
   // it won every time (2026-10-06). `guard.describes_parse_slot` is the same
   // question asked on the Python side; this is the same answer in the page.
   const parse = /auto\s*-?\s*fill|\bparse\b|\bprefill\b|\bquick\s*apply\b|apply\s+with\s+(your\s+)?(resume|cv)/i;
-  const described = inputs.map((el) => ({ el, text: describe(el) })).filter((d) => !parse.test(d.text));
+  const all = inputs.map((el) => ({ el, text: describe(el), self: own(el) }));
+  let described = all.filter((d) => !parse.test(d.text));
+  if (!described.length) {
+    // Every file input on the page read as the system's own "upload a resume
+    // and we will fill the form in for you". That is usually true, and is
+    // why the filter exists - but `slotWords` climbs ancestors looking for
+    // the heading that names a slot, and a heading far enough up names the
+    // *panel*, which on a Workday tenant can carry that offer above the real
+    // Resume/CV dropzone. Before refusing, the question is asked again of
+    // the control's own identity and the block beside it - which is where
+    // Ashby's parser describes itself ("Autofill from resume. Upload your
+    // resume here to autofill key application fields.") and where a real
+    // dropzone says only "Drop files here". So a page with a genuine parser
+    // still refuses, and a real slot disqualified by a caption above it does
+    // not (2026-10-30).
+    described = all.filter((d) => !parse.test(d.self));
+  }
   if (!described.length) {
     return { ok: false, note: "the only upload here fills the form in for you — not the resume slot" };
   }
@@ -1380,6 +1946,188 @@ async function screen({ force = false, waited = 0 } = {}) {
   }
 }
 
+// ---- Add to autopilot, beside their own Apply ---------------------------
+//
+// Asked for 2026-10-30. With the countdown gone, adding a job is a click,
+// and the click belongs where the decision is made: on the posting, next to
+// the button the person already reaches for. The banner keeps its own Add
+// for every other page; this is Jobright's posting page only, where Add
+// cannot queue this URL (the server refuses a jobright.ai one) and so means
+// "press their Apply, and add it from the page that opens".
+//
+// A sibling of their Apply, not something bolted on: it is inserted into
+// Apply's own row and takes Apply's own height, radius, font and padding
+// from the computed style, keeping only the assistant's purple so it is
+// clear whose button it is. It never writes a width, a min-width or a
+// margin onto one of their nodes.
+const JR_ADD_ID = "job-autopilot-jr-add";
+const JR_LABEL = "Add to autopilot";
+// Jobright hard-codes a desktop minimum (min-width: 1200px on the main
+// content) and the injector overrides it so the page reads at half a
+// screen, which is where this button usually lives. There it has to give
+// way rather than push: first the label shortens, and if the row still
+// overflows the button leaves the row and floats under the badge. A button
+// that scrolls their layout sideways is worse than one that floats.
+const JR_LABEL_SHORT = "Add";
+// Copied from their Apply so the two read as one row. Deliberately not
+// colour: the colour is how you tell ours from theirs.
+const JR_COPY = ["height", "minHeight", "borderRadius", "fontFamily", "fontSize",
+                 "fontWeight", "paddingTop", "paddingBottom", "paddingLeft", "paddingRight"];
+
+let jrAutoApprove = true;
+
+function jrPrefs(fields) {
+  const id = postingId();
+  if (id) post("/prefs", { jr_id: id, ...fields }).catch(() => {});
+}
+
+// Returns the host and its root together: the root is closed, so Jobright's
+// own stylesheet cannot reach in - and neither can we, from the host. Asking
+// `host.shadowRoot` for a closed root answers null, which is how the first
+// version of this mounted a button it could then never wire up.
+function buildJobrightAdd() {
+  const host = document.createElement("div");
+  host.id = JR_ADD_ID;
+  const shadow = host.attachShadow({ mode: "closed" });
+  setHTML(shadow, `
+    <style>
+      :host { all: initial; }
+      .wrap { display: inline-flex; align-items: center; gap: 6px; position: relative;
+              font: 600 14px/1 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+      button { font: inherit; cursor: pointer; border: 2px solid #b48cff; box-sizing: border-box;
+               background: #b48cff; color: #000; white-space: nowrap; }
+      button.go { letter-spacing: .04em; }
+      button.go:hover, button.go:focus-visible { background: #000; color: #b48cff; outline: none; }
+      button.go:disabled { opacity: .6; cursor: default; }
+      button.more { background: #000; color: #b48cff; width: 28px; height: 28px; padding: 0;
+                    display: flex; align-items: center; justify-content: center; font-size: 13px; }
+      button.more[aria-expanded="true"], button.more:hover { background: #b48cff; color: #000; }
+      /* Absolutely positioned, so the decisions are reachable without the
+         row growing a second line of controls. */
+      .panel { display: none; position: fixed; z-index: 2147483647;
+               background: #000; color: #fff; border: 2px solid #b48cff; padding: 8px 10px;
+               font-size: 12px; min-width: 210px; }
+      .panel.on { display: block; }
+      .panel label { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; }
+      .panel input { accent-color: #b48cff; margin: 0; }
+      .panel .why { color: #a0a0a0; font-size: 11px; display: block; margin-top: 4px; }
+    </style>
+    <span class="wrap">
+      <button class="go" type="button" title="Screen and tailor this job. Nothing is submitted: the autopilot stops at the filled form.">${JR_LABEL}</button>
+      <button class="more" type="button" aria-expanded="false" aria-label="How this job is tailored" title="How this job is tailored">⋯</button>
+      <span class="panel" role="group">
+        <label><input type="checkbox" class="appr" checked> auto-approve</label>
+        <label><input type="checkbox" class="opus"> use Opus (costly)</label>
+        <span class="why">Auto-approve starts the fill once the resume is tailored. It never submits.</span>
+      </span>
+    </span>`);
+  return { host, root: shadow };
+}
+
+// Their Apply row, with the button in it and the overflow it caused undone.
+// Measured rather than guessed: the row is read before and after, and a row
+// that got wider than its own box hands the button back.
+function fitJobrightAdd(host, apply, go) {
+  const row = apply.parentElement;
+  if (!row) return false;
+  const style = getComputedStyle(apply);
+  for (const name of JR_COPY) go.style[name] = style[name];
+  // Never a width, a min-width or a margin on one of their nodes; only our
+  // own host is told how to behave as a flex item.
+  host.style.cssText = "display: inline-flex; flex: 0 0 auto; min-width: 0; max-width: 100%; margin-left: 8px;";
+  apply.insertAdjacentElement("afterend", host);
+  if (row.scrollWidth <= row.clientWidth + 1) return true;
+  go.textContent = JR_LABEL_SHORT;
+  if (row.scrollWidth <= row.clientWidth + 1) return true;
+  // Even shortened it does not fit. Out of the row, under the badge, where
+  // it costs their layout nothing.
+  go.textContent = JR_LABEL;
+  host.style.cssText = "position: fixed; top: 64px; left: 6px; z-index: 2147483646; display: inline-flex;";
+  document.documentElement.appendChild(host);
+  return true;
+}
+
+function mountJobrightAdd() {
+  if (!onJobright || cold || !isPosting()) {
+    document.getElementById(JR_ADD_ID)?.remove();
+    return;
+  }
+  const apply = applyControl();
+  const existing = document.getElementById(JR_ADD_ID);
+  // Jobright replaces its posting without a navigation, so the button has
+  // to be put back when their render takes it away - and moved when their
+  // Apply is re-created somewhere else.
+  if (existing) {
+    // Already beside their Apply, or already floating because it would not
+    // fit: either way it is placed. Re-measuring it every second would
+    // flicker and would take the open panel with it. The cost is that a
+    // window widened after it gave up the row keeps the floating button
+    // until the posting changes, which is a worse-looking button rather
+    // than a broken one.
+    if (existing.style.position === "fixed") return;
+    if (apply && existing.previousElementSibling === apply) return;
+    existing.remove();
+  }
+  const { host, root } = buildJobrightAdd();
+  const go = root.querySelector("button.go");
+  if (apply) {
+    if (!fitJobrightAdd(host, apply, go)) return;
+  } else {
+    // No Apply on the page (their render is not finished, or this posting
+    // has none): floating rather than silently absent.
+    host.style.cssText = "position: fixed; top: 64px; left: 6px; z-index: 2147483646; display: inline-flex;";
+    document.documentElement.appendChild(host);
+  }
+  const more = root.querySelector("button.more");
+  const panel = root.querySelector(".panel");
+  const appr = root.querySelector("input.appr");
+  const opus = root.querySelector("input.opus");
+  appr.checked = jrAutoApprove;
+  opus.checked = usePremium;
+  more.addEventListener("click", () => {
+    const on = panel.classList.toggle("on");
+    more.setAttribute("aria-expanded", String(on));
+    if (!on) return;
+    // Fixed, and placed against the button's own box: an ancestor of theirs
+    // with `overflow: hidden` would clip an absolutely positioned panel, and
+    // their class names are hashed and rotate so there is nothing to except.
+    const box = more.getBoundingClientRect();
+    panel.style.top = `${Math.round(box.bottom) + 6}px`;
+    panel.style.left = `${Math.max(6, Math.round(box.right) - 220)}px`;
+  });
+  appr.addEventListener("change", () => {
+    jrAutoApprove = appr.checked;
+    jrPrefs({ auto_fill: appr.checked });
+  });
+  opus.addEventListener("change", () => {
+    usePremium = opus.checked;
+    jrPrefs({ premium: opus.checked });
+  });
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    // The choices are sent before the press: the employer tab its Apply
+    // opens is what queues the job, so they have to be on file by the time
+    // that page calls /capture.
+    // `asked` is the press itself, travelling to the tab that can act on
+    // it: `/capture` refuses a jobright.ai URL, so the employer page is the
+    // only one worth queueing, and without this one press here became two -
+    // one here and one over there - which is worse than the countdown that
+    // was removed. It is spent once and expires (`app.ASKED_TTL`).
+    jrPrefs({ auto_fill: jrAutoApprove, premium: usePremium, asked: true });
+    go.textContent = "Opening the job page…";
+    if (!(await openJob())) { go.textContent = "No Apply button here"; return; }
+    // Their Apply opens the employer's own page in a tab of its own, and
+    // that page is where the job goes in: its URL is the one worth
+    // queueing. The poll is only so this button can say when it landed.
+    go.textContent = "Opened — adding it there…";
+    const id = await waitQueued();
+    if (id) {
+      go.textContent = "Added ✓";
+      openReview(id, { focus: false });
+    }
+  });
+}
+
 // ---- Jobright, decluttered ----------------------------------------------
 //
 // Asked for 2026-10-07. Jobright's window is now half the screen (the job
@@ -1460,10 +2208,15 @@ try { const kept = sessionStorage.getItem(JOB_KEY); if (kept) watchSubmission(ke
 // Watch the URL and the title rather than the DOM, which churns constantly.
 schedule();
 declutterJobright();
+mountJobrightAdd();
 setInterval(() => {
   if (location.href !== lastUrl) schedule();
   // Jobright swaps its page without a navigation and can take the style
   // node with it; putting it back is cheaper than watching the DOM.
   declutterJobright();
+  // Their Apply mounts late (their own extension draws over the posting) and
+  // is re-created when the posting changes under the same URL, so the button
+  // beside it is put back the same way.
+  mountJobrightAdd();
 }, 1000);
 })();

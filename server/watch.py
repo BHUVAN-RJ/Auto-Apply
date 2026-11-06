@@ -70,12 +70,32 @@ def looks_submitted(look: dict) -> Optional[str]:
     return text[start:match.end() + 60].strip()
 
 
+def form_url(job, app_dir: Path) -> str:
+    """Where this job's form actually is, which is not always `job.url`.
+
+    A person who pressed Start now on a tab they navigated to themselves
+    bound the job to that tab's URL (`browser/fill.bound_form_url`), and a
+    YC listing or an aggregator link is the whole reason that exists: the
+    form is on the employer's own system under a URL our queue has never
+    seen. Looking for `job.url` there finds no tab, or finds the listing and
+    calls it "another site's form". The job's own URL is never rewritten -
+    it is the identity key - so the binding is read, not substituted.
+
+    Imported here rather than at module scope: `browser.fill` reaches back
+    into the server package.
+    """
+    from browser import fill as filler
+
+    return filler.bound_form_url(app_dir) or job.url
+
+
 def look_at(job, app_dir: Path) -> dict:
     """One look at one job's tab. Returns what was done, for the log and
     the tests."""
     saved = corrections._read(app_dir / corrections.FILL_REPORT)
     url = corrections.cdp_url()
-    target = forms.find_target(url, job.url, str(saved.get("target_id") or ""))
+    wanted = form_url(job, app_dir)
+    target = forms.find_target(url, wanted, str(saved.get("target_id") or ""))
     if not target:
         return {"looked": False, "reason": "tab not open"}
     try:
@@ -84,7 +104,7 @@ def look_at(job, app_dir: Path) -> dict:
         return {"looked": False, "reason": str(error)[:200]}
     fields = look.get("fields") or {}
     if len(fields) >= corrections.MIN_FIELDS:
-        if not forms.same_site(url, target, job.url):
+        if not forms.same_site(url, target, wanted):
             return {"looked": True, "reason": "another site's form"}
         try:
             (app_dir / corrections.FORM_STATE).write_text(json.dumps(

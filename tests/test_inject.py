@@ -240,10 +240,27 @@ def test_navigating_off_jobright_in_the_same_tab_is_followed():
 
 
 def test_only_page_targets_are_touched():
+    """Nothing but the resume reaches a non-page target.
+
+    Narrowed 2026-10-29, from "nothing at all". A browser-level auto-attach
+    pauses any target a page opens - in Chrome 156 even with
+    `waitForDebuggerOnStart: False` - and a popup shares its opener's
+    renderer, so an unresumed target freezes the page that opened it
+    (Jobright's Apply left a blank tab with jobright.ai stopped behind it).
+    A paused target has an empty URL and may have any type, so every filter
+    the injector applies would skip it: the resume has to be sent
+    unconditionally, before the `type != page` return. That one call is the
+    whole of what moved. Driving a non-page target - enabling its domains,
+    binding to it, injecting the capture script, tiling it - is still
+    forbidden, so the list is compared exactly rather than searched, and the
+    resume is pinned at position one, which is the other half of the promise
+    (`test_signal_colours.py::test_an_auto_attached_target_is_resumed_before_anything_else`
+    reads the ordering off the source).
+    """
     r = Recorder()
     run(r, created("w1", JOBRIGHT, type_="service_worker"),
         attached("w1", JOBRIGHT, "s1", type_="service_worker"))
-    assert r.calls == []
+    assert r.calls == [("Runtime.runIfWaitingForDebugger", {}, "s1")]
 
 
 def test_the_bridge_answers_the_page_through_the_server(monkeypatch):

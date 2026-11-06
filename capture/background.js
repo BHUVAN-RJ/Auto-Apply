@@ -122,9 +122,11 @@ function notify(title, message) {
 // until it is clicked.
 const SOURCE_HOSTS = ["jobright.ai"];
 // An application form opened by hand is still a form. These hosts are
-// screened wherever they came from, but never marked: the banner offers,
-// and the countdown that queues a job by itself stays off (the content
-// script reads `__autopilotHandOpened`).
+// screened wherever they came from, but never marked, so the script knows
+// nobody pointed this page at a job: the banner offers and waits. (It used
+// to mean "do not let the countdown queue this one"; since 2026-10-30
+// nothing is queued without a click on any page, so the distinction is only
+// whether the page is screened on arrival or waits for the badge.)
 const ATS_HOSTS = [
   "myworkdayjobs.com", "myworkdaysite.com", "greenhouse.io", "ashbyhq.com",
   "lever.co", "smartrecruiters.com", "bamboohr.com", "workable.com",

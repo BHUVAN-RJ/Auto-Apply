@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from itertools import count
@@ -73,6 +74,9 @@ SOURCE_HOSTS = ("jobright.ai",)
 # our own page cannot be framed on an https site because Chrome refuses it a
 # private address - so the two halves are two windows.
 SPLIT_ENV = "AUTOPILOT_SPLIT"
+# A job's own tab opens behind the list it was opened from (2026-10-29).
+BACKGROUND_ENV = "AUTOPILOT_BACKGROUND_APPLY"
+REFOCUS = 1.0   # seconds; one job's tab asks for the front three times
 # Left for the list, right for the job. A gap of nothing: the two windows
 # meet, which is what "split" is asked to look like.
 SPLIT_SHARE = 0.5
@@ -206,6 +210,8 @@ class Injector:
         # applying does not end in thirty windows; `screen` is the usable
         # desktop, read once off a real page because CDP does not report it.
         self.split = os.environ.get(SPLIT_ENV, "1") != "0"
+        self.background_apply = os.environ.get(BACKGROUND_ENV, "1") != "0"
+        self.fronted_at = 0.0
         # The one tab on the right, reused for every job so a morning of
         # applying does not end in thirty windows, and a count per URL of
         # the tabs we are about to open there. The count is claimed *before*
@@ -294,11 +300,13 @@ class Injector:
             if opener and from_source(self.urls.get(opener, "")):
                 self.marked.add(info["targetId"])
                 log.info("marked new tab from %s", self.urls[opener])
+                await self.stay_on_the_list(info.get("url", ""), apply_opened_it=True)
                 await self.split_out(info["targetId"], info.get("url", ""))
             elif info.get("type") == "page" and (info.get("url") in self.opened or tagged(info.get("url", ""))):
                 self.opened.discard(info["url"])
                 self.marked.add(info["targetId"])
                 log.info("marked new window %s", info["url"])
+                await self.stay_on_the_list(info["url"])
                 await self.split_out(info["targetId"], info.get("url", ""))
 
         elif method == "Target.targetInfoChanged":
@@ -314,6 +322,12 @@ class Injector:
                 # was created blank.
                 self.marked.add(target_id)
                 log.info("marked tab leaving %s for %s", previous, url)
+                # The tab Apply opened is usually created blank and only
+                # becomes a job here, one event later, so this is where most
+                # of them are caught. A same-tab navigation off the list has
+                # no list left to go back to, and `focus_source` then finds
+                # nothing and does nothing.
+                await self.stay_on_the_list(url)
             self.urls[target_id] = url
 
         elif method == "Target.targetDestroyed":
@@ -328,9 +342,20 @@ class Injector:
 
         elif method == "Target.attachedToTarget":
             info = params["targetInfo"]
+            new_session = params["sessionId"]
+            # **Before anything else, and whatever the target is.** A
+            # browser-level auto-attach pauses a target a page opened, and in
+            # Chrome 156 it does so even with `waitForDebuggerOnStart: False`
+            # (measured 2026-10-29: `window.open` returns in 0.03 s with no
+            # auto-attach and blocks past 12 s with one). The popup shares its
+            # opener's renderer, so until somebody resumes it the opener's main
+            # thread is stopped: Jobright's Apply left a blank tab and froze
+            # jobright.ai behind it, with Chrome's own "Debugger paused in
+            # another tab" bar on top. Nothing we filter on is known yet - a
+            # paused blank tab has no URL - so this may not wait on a check.
+            await self.send("Runtime.runIfWaitingForDebugger", session=new_session)
             if info.get("type") != "page":
                 return
-            new_session = params["sessionId"]
             target_id = info["targetId"]
             self.sessions[new_session] = target_id
             self.urls.setdefault(target_id, info.get("url", ""))
@@ -645,11 +670,56 @@ class Injector:
             # The person is reading the list, not this. Give the front back.
             await self.focus_source()
 
+    async def stay_on_the_list(self, url: str = "", apply_opened_it: bool = False) -> None:
+        """A job Apply opened is work, not a page to read.
+
+        Jobright's extension creates the employer tab with `active: true`, so
+        every Apply took the screen away from the list the person is working
+        through - and the flow they want is to press Apply on one job after
+        another while each opened tab screens itself, queues itself and closes
+        itself behind them. The tab still does all of that in the background:
+        the injector attaches and injects on the target, not on the front one.
+
+        Only ever called for a tab we have just marked as a job's own, so a
+        tab the person opened themselves is never pulled out from under them.
+        **The fill's own tab is the exception, and it matters**: Jobright's
+        extension autofills the tab in front, so a fill whose tab we pushed
+        behind the list would quietly fill nothing. `apply.py` opens the same
+        tagged URL as Apply did, so the tag cannot tell them apart - the
+        queue can, which is the question `is_new_job` already asks the server
+        for the split. Only a tagged posting with no row of its own is Apply
+        doing something new; everything else keeps the front it was given.
+
+        `AUTOPILOT_BACKGROUND_APPLY=0` gives the old behaviour back.
+        """
+        if not self.background_apply:
+            return
+        # No list open, nowhere to go back to - and asking the server which
+        # job this is would be a question whose answer cannot be used.
+        if not any(from_source(u) for u in self.urls.values()):
+            return
+        # A tab opened *by* the list is Apply's by definition, even while it
+        # is still blank and has no URL to ask the server about.
+        if not apply_opened_it and not await self.is_new_job(url):
+            return
+        await self.focus_source()
+
     async def focus_source(self) -> None:
-        """Bring the list back to the front, if one is open."""
+        """Bring the list back to the front, if one is open.
+
+        One job's tab arrives as three events - created from its opener, the
+        blank tab turning into a tagged URL, and the attach that tiles it -
+        and each of them wants the list in front. Asking three times is three
+        round trips to say one thing, so a second ask inside `REFOCUS` is
+        dropped; the front does not move in between.
+        """
         source = next((t for t, u in self.urls.items() if from_source(u)), None)
         if source is None:
             return
+        now = time.monotonic()
+        if now - self.fronted_at < REFOCUS:
+            return
+        self.fronted_at = now
         try:
             await self.send("Target.activateTarget", {"targetId": source})
         except Exception as error:  # noqa: BLE001 - focus is a courtesy

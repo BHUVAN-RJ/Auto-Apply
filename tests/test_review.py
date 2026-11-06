@@ -1085,3 +1085,51 @@ def test_the_page_offers_the_button_on_a_stopped_job():
     assert '$("retry").onclick = () => retry(id, data)' in page
     assert "async function retry(id, data)" in page
     assert f'/retry`, {{ method: "POST"' in page
+
+
+def test_a_submission_starts_the_follow_up_drafts(client, monkeypatch):
+    """The follow-up is prepared by the submission itself, not by someone
+    remembering to open the Outreach card (2026-10-30, asked for: "Once the
+    job is submitted, it should automatically go to a new state ... I do not
+    have to do anything")."""
+    import outreach.follow as follow
+
+    started = []
+    monkeypatch.setattr(follow, "start", lambda job_id, force=False: started.append(job_id) or True)
+    job_id, _ = reviewable_job()
+
+    assert client.post(f"/review/{job_id}/submitted", json={}).json()["status"] == "submitted"
+    assert started == [job_id]
+
+
+def test_a_broken_follow_up_never_costs_the_submission(client, monkeypatch):
+    """A submission is the one fact in this app that must be recorded
+    whatever else is broken: the drafts are a convenience, and losing them
+    is a line on a card rather than an application nobody knows was sent."""
+    import outreach.follow as follow
+
+    def explode(job_id, force=False):
+        raise RuntimeError("Apollo is on fire")
+
+    monkeypatch.setattr(follow, "start", explode)
+    job_id, _ = reviewable_job()
+
+    assert client.post(f"/review/{job_id}/submitted", json={}).status_code == 200
+    assert queue.get(job_id).status is Status.SUBMITTED
+
+
+def test_a_confirmation_seen_in_the_browser_starts_them_too(client, monkeypatch):
+    """Four paths mark a submission and the follow-up must not depend on
+    which one noticed: the person who presses Submit and closes the tab gets
+    the same drafts as the person who presses the button here."""
+    import outreach.follow as follow
+    import server.review as review_module
+
+    started = []
+    monkeypatch.setattr(follow, "start", lambda job_id, force=False: started.append(job_id) or True)
+    monkeypatch.setattr(review_module.corrections, "changes", lambda app_dir: [])
+    job_id, app_dir = reviewable_job()
+    queue.update(job_id, status=Status.FILLED)
+
+    out = review_module.mark_seen(queue.get(job_id), app_dir, by="the watch")
+    assert out["marked"] is True and started == [job_id]

@@ -19,14 +19,18 @@ Two keys, because the two pages are known at different times:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel
 
 import paths
+
+log = logging.getLogger("postings")
 
 ROOT = Path(__file__).resolve().parent.parent
 DIR_ENV = "AUTOPILOT_POSTINGS"
@@ -59,12 +63,48 @@ def _path(kind: str, key: str) -> Path:
     return directory() / kind / f"{_safe(key)}.json"
 
 
-def _write(kind: str, key: str, saved: Saved) -> None:
+def _write(kind: str, key: str, saved: Saved) -> bool:
+    """Write one posting's copy atomically. True when it landed.
+
+    **The temp file is per writer, not per key** (2026-10-30). It used to be
+    `<key>.tmp`, which is one name for every writer of that posting, and
+    several tabs post at once: the banner screens Jobright's page in each of
+    them and each sends `POST /posting` for the same `jr_id`. Two requests
+    land in two threadpool threads, both write `<key>.tmp`, the first renames
+    it into place and the second finds nothing left to rename -
+    `FileNotFoundError: .../<id>.tmp -> .../<id>.json`, four times in
+    `logs/server.log`, each immediately followed by its sibling's `200 OK`.
+    A unique temp name makes the two writers independent: both write, both
+    rename, the later one wins, and neither can take the other's file away.
+    The rename is atomic either way, so a reader never sees half a file.
+
+    **And losing the copy must not fail the request.** This endpoint exists
+    to help the pipeline when a page's own fetch returns a shell; a tab
+    offering us that text gets a 500 for its trouble otherwise, and the
+    capture it was part of looks broken. A storage failure is logged with
+    the path and answered False.
+    """
     path = _path(kind, key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(saved.model_dump(), indent=2))
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Same directory as the target, so the rename stays within one
+        # filesystem and therefore stays atomic.
+        handle, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.stem}.",
+                                        suffix=".tmp")
+        tmp = Path(name)
+        try:
+            with os.fdopen(handle, "w") as out:
+                out.write(json.dumps(saved.model_dump(), indent=2))
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(tmp, path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+    except OSError as error:
+        log.warning("could not keep the %s copy of %s: %s", kind, key, error)
+        return False
+    return True
 
 
 def _read(kind: str, key: str) -> Optional[Saved]:
@@ -106,11 +146,11 @@ def _source_metadata(saved: Saved) -> tuple[str, str]:
     return saved.title, saved.company
 
 
-def save_source(posting_id: str, saved: Saved) -> None:
+def save_source(posting_id: str, saved: Saved) -> bool:
     title, company = _source_metadata(saved)
     if (title, company) != (saved.title, saved.company):
         saved = saved.model_copy(update={"title": title, "company": company})
-    _write("source", posting_id, saved)
+    return _write("source", posting_id, saved)
 
 
 def source_meta(url: str) -> tuple[str, str]:
@@ -133,8 +173,8 @@ def source_for(url: str) -> Optional[Saved]:
     return source.model_copy(update={"title": title, "company": company})
 
 
-def save_captured(job_id: str, saved: Saved) -> None:
-    _write("captured", job_id, saved)
+def save_captured(job_id: str, saved: Saved) -> bool:
+    return _write("captured", job_id, saved)
 
 
 def fallbacks(job_id: str, url: str) -> list[Saved]:
