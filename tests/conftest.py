@@ -44,3 +44,32 @@ def _no_real_fills(request, monkeypatch):
         return
     monkeypatch.setattr(runner, "any_fill_running", lambda: None)
     monkeypatch.setattr(runner, "_pgrep_fill", lambda job_id: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gmail_or_linkedin(monkeypatch):
+    """No test drives the person's own Gmail or LinkedIn.
+
+    Both bridges shell out to tools on this machine that act in a real,
+    signed-in account: one writes a draft into their mailbox, the other sends
+    a connection request to a stranger. They are switched off for every test,
+    and a test that wants the path stubs the bridge itself.
+    """
+    from outreach import gmailthing, linkedinthing
+
+    monkeypatch.setenv(gmailthing.ENV, "0")
+    monkeypatch.setenv(linkedinthing.ENV, "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_web_research(monkeypatch):
+    """No test reaches the Claude Code CLI or the public web.
+
+    The outreach path asks the subscription to find a company's recruiters
+    before it asks Apollo, and that call is a real subprocess doing real web
+    searches. The suite stubs every model; this is one, and a test that wants
+    it stubs `outreach.people` itself.
+    """
+    from outreach import people
+
+    monkeypatch.setenv(people.ENV, "0")

@@ -76,7 +76,7 @@ def write(context: Context, contact: Contact, job_title: str, company: str,
         raise OutreachError("the posting and tailored resume are required")
     if not contact.name:
         raise OutreachError("the contact needs a name")
-    model = model or llm.tailor_model()
+    model = model or llm.outreach_model()
     user = context.as_message() + (
         "\n\n## Recipient\n\n"
         f"Name: {contact.name}\nTitle: {contact.title or 'unknown'}\n"
@@ -125,3 +125,75 @@ def draft(context: Context, contact: Contact, job_title: str, company: str,
         resume_folder=resume_folder,
         model=written.model,
     )
+
+
+# --- LinkedIn connection notes --------------------------------------------
+
+NOTE_LIMIT = 300        # LinkedIn's own hard limit
+NOTE_AIM = 200          # what their guide asks for, so every reading fits
+NOTE_ATTEMPTS = 3
+NOTE_SYSTEM = """You write one LinkedIn connection note, and nothing else.
+
+A note is at most 200 characters, addressed to one person by first name, and
+it says who the candidate is, what they are after, and one reason this person
+was chosen. It is the whole message the person sees beside the request.
+
+The guide below is the candidate's own, written from what they have had
+accepted. Follow it exactly, including what it refuses.
+
+Reply with the note itself on one line. No quotes, no sign-off, no subject,
+no explanation."""
+
+
+def note_problems(note: str) -> list[str]:
+    found = []
+    if len(note) > NOTE_AIM:
+        found.append(f"the note was {len(note)} characters; keep it under {NOTE_AIM}")
+    if not note.strip():
+        found.append("the note was empty")
+    if "\n" in note.strip():
+        found.append("the note ran to more than one line")
+    if cover.has_dash(note):
+        found.append("the note used a dash as punctuation")
+    for banned in ("pick your brain", "be my mentor", "I came across your profile",
+                   "any open roles", "I'd love to connect"):
+        if banned.lower() in note.lower():
+            found.append(f"the note used a phrase the guide refuses: {banned!r}")
+    return found
+
+
+def note(contact: Contact, job_title: str, company: str, candidate: str,
+         guide: str, applied: bool = True, model: Optional[str] = None) -> tuple[str, str]:
+    """One connection note for one person. Returns the note and the model.
+
+    The guide is passed in rather than read here, because it belongs to the
+    person's own LinkedIn tool and that tool is where they edit it.
+    """
+    if not contact.name:
+        raise OutreachError("the contact needs a name")
+    model = model or llm.outreach_model()
+    user = (
+        f"## The guide\n\n{guide.strip()}\n\n"
+        "## The candidate\n\n"
+        f"Name: {candidate}\n"
+        f"They have just applied for: {job_title} at {company}\n"
+        if applied else
+        f"## The guide\n\n{guide.strip()}\n\n## The candidate\n\nName: {candidate}\n"
+    )
+    user += (
+        "\n## The person\n\n"
+        f"Name: {contact.name}\n"
+        f"Title: {contact.title or 'unknown'}\n"
+        f"They are the: {contact.role.replace('_', ' ')}\n"
+        f"Company: {company or contact.company}\n"
+    )
+    problems_found: list[str] = []
+    for _ in range(NOTE_ATTEMPTS):
+        reply = llm.complete(NOTE_SYSTEM, user, model=model, temperature=0.5, max_tokens=300)
+        written = " ".join(reply.strip().strip('"').split())
+        problems_found = note_problems(written)
+        if not problems_found:
+            return written, model
+        user += ("\n\n## Previous note rejected\n\n" + "; ".join(problems_found)
+                 + ". Write it again, shorter, keeping the person's first name.")
+    raise OutreachError("the connection note broke the guide: " + "; ".join(problems_found))

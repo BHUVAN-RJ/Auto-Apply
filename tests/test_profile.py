@@ -90,9 +90,10 @@ def test_story_dirs_skip_interviewer_state(tmp_path):
 
 def test_settings_default_and_roundtrip():
     assert settings.load() == {"use_profile": True, "auto_fill": True, "auto_learn": False,
+                               "outreach_backfill": True,
                                "learn_prompts": True, "onboarded": False,
                                "scout_checks_per_day": 4, "hold_fills": True,
-                               "opus_by_hand": True}
+                               "opus_by_hand": True, "claude_code": False}
     settings.save(use_profile=False)
     assert settings.use_profile() is False
     assert settings.auto_fill() is True

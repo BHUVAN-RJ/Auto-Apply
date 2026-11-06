@@ -175,6 +175,17 @@ def enrich(contact: Contact, client: Optional[httpx.Client] = None) -> Contact:
     status = str(person.get("email_status") or "").strip().lower()
     if not email:
         raise ApolloError(f"Apollo has no business email for {contact.name}")
+    # The employer is checked here and not only in `search`, because the
+    # people may come from somewhere else entirely now: the web research step
+    # returns a name and a LinkedIn URL, and enriching one of those by URL
+    # asks Apollo nothing about where the person works. Measured live on a
+    # Qualtrics job (2026-11-03): an "Engineering Manager" found on the web
+    # enriched to an address at apollo.io, and a draft was written to them
+    # about somebody else's opening.
+    found = _person_company(person)
+    if contact.company and found and not _same_company(contact.company, found):
+        raise ApolloError(
+            f"{contact.name} works at {found}, not {contact.company}")
     enriched = contact.model_copy(update={
         "name": str(person.get("name") or contact.name).strip() or contact.name,
         "title": str(person.get("title") or contact.title).strip() or contact.title,

@@ -7,6 +7,7 @@ the server binds to loopback -- nothing outside this machine can reach it.
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -33,7 +34,7 @@ from identity.api import router as identity_router
 from .github import router as github_router
 from .keys import router as keys_router
 from .outreach import router as outreach_router
-from .review import router as review_router
+from .review import router as review_router, start_router
 from .scout import router as scout_router
 from .screen import router as screen_router
 from .screening import router as screening_router
@@ -101,6 +102,28 @@ app.include_router(scout_router)
 app.include_router(prompts_router)
 app.include_router(report_router)
 app.include_router(identity_router)
+# Top level rather than under /review: the banner on a posting's own page
+# presses it, and the page is asking "start this job now", not asking about a
+# job it is already reading.
+app.include_router(start_router)
+
+
+@app.exception_handler(queue.Ambiguous)
+def _ambiguous_job_id(request, error: queue.Ambiguous):
+    """A four-hex id that names two jobs is answered, never guessed.
+
+    Every handler that takes a `{job_id}` reaches `queue.get` sooner or later,
+    and the one thing that must not happen is acting on whichever row came
+    first in the file (KNOWN_ISSUES #1: a submitted mark aimed at a queued
+    Zoox row kept landing on a skipped Dayforce row). `server/review.py`
+    answers this itself, with the posting's URL as the tie-breaker where the
+    page can supply one; this is the floor under every other route.
+    """
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=409, content={"detail": {
+        "error": "ambiguous_id", "id": error.job_id, "message": str(error),
+        "candidates": error.candidates()}})
 
 
 @app.on_event("startup")
@@ -123,6 +146,15 @@ def _start_watch() -> None:
     # comes off the approved jobs are filled one after another.
     from server import runner as job_runner
     job_runner.start_serial()
+    # The clock behind a scheduled follow-up: an approved email waits for
+    # its hour and goes then, one a minute. It sends nothing a click did
+    # not already approve.
+    from server import sendlater
+    sendlater.start()
+    # Every application already submitted taken through the follow-up step,
+    # one at a time, until none is left. A new submission prepares itself.
+    from server import followqueue
+    followqueue.start()
 
 
 @app.get("/health")
@@ -205,10 +237,38 @@ AUTO_FILL_PREFS: dict[str, bool] = {}
 PREMIUM_PREFS: dict[str, bool] = {}
 
 
+# The person pressed Add on Jobright's posting page, by posting id and when.
+#
+# Why this exists at all (2026-10-30): the countdown that used to queue a job
+# by itself is gone, and `/capture` refuses a `jobright.ai` URL outright, so
+# the only queueable URL is the employer's and the only way to reach it is
+# Jobright's own Apply. Without a channel between the two tabs, one press on
+# Jobright became two - one there, one on the page it opened - which is worse
+# than the thing that was removed. This is the channel, and it carries one
+# fact: *the person asked for this posting*. It is not auto-queueing coming
+# back; it is a click seconds earlier, in another tab, being honoured.
+ASKED_PREFS: dict[str, float] = {}
+
+# How long that press means anything. A decision does not keep: somebody who
+# pressed Add an hour ago and has since wandered onto another employer's page
+# in a tab that still carries the tag has not asked for *that* job.
+ASKED_TTL = 300.0
+
+
+def asked_for(jr_id: str) -> bool:
+    """Did the person press Add for this posting, recently, and not yet
+    spent it? Reading it consumes it, so one press queues one job."""
+    when = ASKED_PREFS.pop(jr_id, None)
+    if when is None:
+        return False
+    return (time.monotonic() - when) <= ASKED_TTL
+
+
 class PrefRequest(BaseModel):
     jr_id: str
     auto_fill: Optional[bool] = None
     premium: Optional[bool] = None
+    asked: Optional[bool] = None
 
 
 @app.post("/prefs")
@@ -219,7 +279,25 @@ def prefs(req: PrefRequest) -> dict:
         AUTO_FILL_PREFS[req.jr_id] = req.auto_fill
     if req.premium is not None:
         PREMIUM_PREFS[req.jr_id] = req.premium
+    if req.asked:
+        ASKED_PREFS[req.jr_id] = time.monotonic()
     return {"ok": True}
+
+
+class AskedRequest(BaseModel):
+    jr_id: str
+
+
+@app.post("/asked")
+def asked(req: AskedRequest) -> dict:
+    """Was Add pressed for this posting on Jobright? Answered once.
+
+    The employer tab asks this of itself: yes, and it queues the job the
+    way the countdown used to - because the press has already happened, on
+    the posting, by the person. No, and it waits for a click, which is every
+    other page in the browser.
+    """
+    return {"asked": asked_for(req.jr_id)}
 
 
 class AutofilledRequest(BaseModel):
@@ -294,11 +372,24 @@ def jobs() -> list[dict]:
     off its own folder's history.
     """
     from archive import store
+    from outreach import store as outreach_store
     from server.models import Status
 
+    # Submitting is not the end of the job: the follow-up emails are written
+    # by the submission itself and then wait for a click, so the list needs
+    # to know which applications still have one. A submitted row always
+    # carries this key, empty when nothing has been prepared, because
+    # "prepared nothing" and "never asked" look the same on a missing key.
+    outreach = outreach_store.summaries()
+    blank = {"prepare_status": "", "total": 0, "sent": 0, "unsent": 0,
+             "contacts": 0, "note": "", "error": ""}
     out = []
     for job in queue.all_jobs():
         row = job.model_dump(mode="json") | {"id": job.id}
+        if job.id in outreach:
+            row["outreach"] = outreach[job.id]
+        elif job.status is Status.SUBMITTED:
+            row["outreach"] = dict(blank)
         wanted = (Status.SUBMITTED if job.status is Status.SUBMITTED
                   else Status.SKIPPED if job.status is Status.SKIPPED else None)
         if wanted and job.app_dir:

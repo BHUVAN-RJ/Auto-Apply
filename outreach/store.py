@@ -99,6 +99,19 @@ def put_draft(job_id: str, draft: Draft) -> Outreach:
     return save(outreach)
 
 
+def put_invite(job_id: str, invite) -> "Outreach":
+    """One connection request, written or updated in place."""
+    outreach = get(job_id)
+    existing = next((index for index, row in enumerate(outreach.invites)
+                     if row.id == invite.id), None)
+    invite.updated_at = now()
+    if existing is None:
+        outreach.invites.append(invite)
+    else:
+        outreach.invites[existing] = invite
+    return save(outreach)
+
+
 def immutable_sent_record(app_dir: Path, contact: Contact, draft: Draft,
                           attachment: Optional[Path]) -> Path:
     payload = {
@@ -130,3 +143,44 @@ def cache_put(provider: str, key: str, value: dict) -> None:
         data = _read(cache_path())
         data[cache_key] = {"saved_at": time.time(), "value": value}
         _write(cache_path(), data)
+
+
+# Statuses a draft counts under. A failed send is not something to click on,
+# so it is not counted as waiting; it shows on the job's own card.
+LIVE_DRAFTS = ("draft", "scheduled", "sending", "sent")
+
+
+def summaries() -> dict[str, dict]:
+    """One line per job that has outreach state, keyed by job id.
+
+    Read in a single pass rather than per job. A submitted application is not
+    finished until its follow-up emails have gone, so the review page's list
+    asks for this with every refresh, for every row at once.
+    """
+    with _LOCK:
+        data = _read(state_path())
+    out: dict[str, dict] = {}
+    for job_id, raw in data.items():
+        if not isinstance(raw, dict):
+            continue
+        drafts = [row for row in raw.get("drafts", []) if isinstance(row, dict)]
+        kept = [row for row in drafts if row.get("status") in LIVE_DRAFTS]
+        out[str(job_id)] = {
+            "prepare_status": str(raw.get("prepare_status") or ""),
+            "total": len(kept),
+            "sent": len([row for row in kept if row.get("status") == "sent"]),
+            "unsent": len([row for row in kept
+                           if row.get("status") in ("draft", "sending")]),
+            # Approved and waiting for its hour: not the person's move any
+            # more, so the list says the time rather than "send".
+            "scheduled": len([row for row in kept
+                              if row.get("status") == "scheduled"]),
+            "next_send": min((str(row.get("send_at") or "") for row in kept
+                              if row.get("status") == "scheduled"), default=""),
+            "contacts": len([row for row in raw.get("contacts", [])
+                             if isinstance(row, dict)]),
+            "done": bool(raw.get("done_at")),
+            "note": str(raw.get("lookup_note") or ""),
+            "error": str(raw.get("error") or ""),
+        }
+    return out

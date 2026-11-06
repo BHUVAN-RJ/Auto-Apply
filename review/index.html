@@ -282,6 +282,12 @@
   nav .shelfrows .row { padding-right: 92px; }
   nav .shelfrows .row:last-child { border-bottom: 0; }
   nav .empty { padding: 1rem 16px; }
+  /* The catch-up press for applications sent before the follow-ups existed.
+     It spends the person's Apollo credits, so it says so and never fires
+     itself. */
+  nav .sweep { padding: .7rem 16px 1rem; display: grid; gap: .5rem; }
+  nav .sweep span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+  nav .sweep button { justify-self: start; }
 
   /* Detail: washed in the job's colour. Green means the floating button at
      the bottom right is what happens next. */
@@ -689,6 +695,24 @@ const VERB = {
   queued: "queued", tailoring: "tailoring", approved: "starting", filling: "filling",
 };
 const LIVE = new Set(["tailoring", "approved", "filling"]);
+// Submitting is not the end of the job. The follow-up emails are written by
+// the submission itself and then wait for a click, so an application with a
+// draft unsent is a phase of its own on the list - visible, green, the
+// person's move - rather than a row folded into a closed shelf. The phase is
+// derived from the outreach state rather than written onto `Job.status`,
+// because the status is the record that the application was sent and four
+// separate paths, the identity ladder and the banner all read it.
+const FOLLOW = (j) => {
+  const o = j.outreach;
+  if (j.status !== "submitted" || !o || o.done) return null;
+  if (o.unsent) return { tone: "you", verb: `send ${o.unsent}` };
+  if (o.scheduled) return { tone: "agent", verb: `${o.scheduled} at ${
+    new Date(o.next_send || "").getHours() || 9} am` };
+  if (o.prepare_status === "running") return { tone: "agent", verb: "finding people", live: true };
+  if (o.prepare_status === "failed")
+    return { tone: "stop", verb: "none found", why: o.error || o.note };
+  return null;                 // every draft sent, or none ever prepared
+};
 // "you" rows first, then the agent's, newest first inside each.
 const ORDER = ["awaiting_review", "filled", "filling", "approved", "tailoring", "queued"];
 // Newest first, everywhere. The shelves used to show the queue's own order,
@@ -850,6 +874,10 @@ document.addEventListener("click", (e) => {
 async function loadList() {
   if (view !== "jobs") return;
   jobs = await api("/jobs");
+  // How the follow-up backfill is doing, read with the rows rather than
+  // after them, so the count on the line and the rows under it agree.
+  let queue = {};
+  try { queue = await api("/review/followups/queue"); } catch { queue = {}; }
   const open = current && jobs.find((j) => j.id === current);
   // Not drawn yet (the URL named it), or its status moved: draw it.
   if (open && (!shownStatus || open.status !== shownStatus)) show(current);
@@ -860,10 +888,16 @@ async function loadList() {
   const inflight = jobs.filter((j) => ["you", "agent"].includes(BUCKET[j.status]))
     .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status)
       || (a.handoff ? 1 : 0) - (b.handoff ? 1 : 0) || NEWEST(a, b));
-  const applied = jobs.filter((j) => BUCKET[j.status] === "done").sort(NEWEST);
+  const followups = jobs.filter((j) => FOLLOW(j)).sort(NEWEST);
+  const toSend = followups.filter((j) => FOLLOW(j).tone === "you")
+    .reduce((n, j) => n + j.outreach.unsent, 0);
+  const followIds = new Set(followups.map((j) => j.id));
+  const applied = jobs.filter((j) => BUCKET[j.status] === "done" && !followIds.has(j.id))
+    .sort(NEWEST);
   const rejected = jobs.filter((j) => BUCKET[j.status] === "stop").sort(NEWEST);
   $("count").textContent = jobs.length
     ? `${inflight.length} in flight · ${waiting.length} need you`
+      + (toSend ? ` · ${toSend} to email` : "")
     : "";
   paintHold(jobs.filter((j) => j.status === "approved").length,
             jobs.some((j) => j.status === "filling"));
@@ -881,9 +915,10 @@ async function loadList() {
     return `${day} · ${time}`;
   };
 
-  const row = (j) => `
-      <button class="row" data-id="${j.id}" data-tone="${BUCKET[j.status]}"
-              data-live="${LIVE.has(j.status) ? 1 : 0}" aria-current="${j.id === current}">
+  const row = (j, follow) => `
+      <button class="row" data-id="${j.id}" data-tone="${follow ? follow.tone : BUCKET[j.status]}"
+              data-live="${(follow ? follow.live : LIVE.has(j.status)) ? 1 : 0}"
+              aria-current="${j.id === current}">
         <span class="role">${escape(j.title || j.url)}</span>
         <span class="co">${escape(j.company || j.source || "")}</span>
         ${j.handoff ? `<span class="why">waiting for your Opus paste</span>` : ""}
@@ -891,7 +926,9 @@ async function loadList() {
           ? `<span class="why">${escape(reasonLabel(j.reject_reason))}${
               j.reject_note ? " — " + escape(j.reject_note) : ""}</span>`
           : j.status === "failed" ? `<span class="why">failed</span>` : ""}
-        ${when(j) ? `<span class="when">${escape(when(j))}</span>`
+        ${follow && follow.why ? `<span class="why">${escape(follow.why)}</span>` : ""}
+        ${follow ? `<span class="verb">${escape(follow.verb)}</span>`
+          : when(j) ? `<span class="when">${escape(when(j))}</span>`
           : VERB[j.status] ? `<span class="verb">${VERB[j.status]}</span>` : ""}
       </button>`;
   const shelf = (name, tone, group) => `
@@ -906,6 +943,25 @@ async function loadList() {
   let html = `<div class="group">In flight <span class="n">${inflight.length}</span></div>`;
   html += inflight.length ? inflight.map(row).join("")
     : `<div class="empty hint">Nothing in flight.</div>`;
+  if (followups.length || (queue.left || 0) > 0) {
+    html += `<div class="group">Emails to send <span class="n">${toSend}</span></div>`;
+    html += followups.map((j) => row(j, FOLLOW(j))).join("");
+    if (!followups.length)
+      html += `<div class="empty hint">Nothing drafted yet.</div>`;
+    // The queue is not a button: every submitted application goes through
+    // this step on its own, one at a time. The line is there so the work is
+    // visible, and the switch is there because it spends allowance.
+    if ((queue.left || 0) > 0 || queue.job) html += `
+      <div class="sweep">
+        <span>${queue.on
+          ? `Checking ${queue.left} more application${queue.left === 1 ? "" : "s"} for people
+             to email${queue.job ? ", one at a time" : ""}.`
+          : `Paused with ${queue.left} application${queue.left === 1 ? "" : "s"} still to check.`}
+        </span>
+        <button class="act" id="queueSwitch" data-on="${queue.on ? 1 : 0}">${
+          queue.on ? "Pause the checking" : "Carry on checking"}</button>
+      </div>`;
+  }
   html += shelf("applied", "done", applied);
   html += shelf("rejected", "stop", rejected);
   $("list").innerHTML = html;
@@ -913,6 +969,16 @@ async function loadList() {
   for (const button of $("list").querySelectorAll(".row")) {
     button.onclick = () => show(button.dataset.id);
   }
+  const queueSwitch = $("list").querySelector("#queueSwitch");
+  if (queueSwitch) queueSwitch.onclick = async () => {
+    const on = queueSwitch.dataset.on !== "1";
+    queueSwitch.disabled = true;
+    try {
+      await api("/review/followups/queue",
+                { method: "POST", body: JSON.stringify({ on }) });
+      await loadList();
+    } catch (err) { queueSwitch.disabled = false; alert(err.message); }
+  };
   for (const button of $("list").querySelectorAll(".shelf")) {
     button.onclick = () => {
       const name = button.dataset.shelf;
@@ -1173,6 +1239,11 @@ async function show(id) {
   if ($("rememberGo")) wireRemember(id);
   wireOutreach(id, outreach);
   if (working) setTimeout(() => { if (current === id) show(id); }, working * 1000 + 200);
+  // The follow-up preparation is a background thread of its own, and the
+  // list's poll only redraws the pane when the job's status moves - which it
+  // does not here, the application having already been submitted.
+  if (outreach && (outreach.prepare_status === "running" || outreach.preparing))
+    setTimeout(() => { if (current === id) show(id); }, 4000);
 
   if ($("posting")) {
     fetch(`/review/${id}/file/posting.md`).then((r) => r.text())
@@ -1217,7 +1288,8 @@ function outreachSetup(state) {
       <b>${escape(contact.name)}</b> · ${escape(contact.role.replace("_", " "))}
       <span class="hint">${escape(contact.title || "")}</span><br>
       <span>${contact.email ? escape(contact.email) : "No email yet"}</span>
-      <span class="source">${escape(contact.source)} · ${escape(contact.verification)}</span>
+      <span class="source">${escape(contact.source)} · ${escape(contact.verification)}${
+        contact.email_status ? " · " + escape(contact.email_status) : ""}</span>
       ${contact.linkedin_url ? `<br><a href="${escape(contact.linkedin_url)}" target="_blank" rel="noreferrer">LinkedIn ↗</a>` : ""}
       ${outreachContactActions(contact)}
       </div>
@@ -1233,7 +1305,9 @@ function outreachSetup(state) {
       ${key}${gmail}
       <div class="wide actions">
         <button class="act primary" id="outreachDiscover" ${state.apollo_configured ? "" : "disabled"}>Find recruiter + manager</button>
-        <span class="hint">${escape(state.lookup_note || "Apollo search spends no email credit; enrichment is requested separately.")}</span>
+        ${(state.drafts || []).length
+        ? `<button class="act" id="outreachDone">Done with this one</button>` : ""}
+      <span class="hint">${escape(state.lookup_note || "Apollo search spends no email credit; enrichment is requested separately.")}</span>
       </div>
       <select id="outreachRole"><option value="recruiter">Recruiter</option><option value="hiring_manager">Hiring manager</option></select>
       <textarea id="outreachName" rows="1" placeholder="contact name"></textarea>
@@ -1244,6 +1318,108 @@ function outreachSetup(state) {
       ${picks}
     </div>
     <div class="outreach-contacts">${contacts || `<p class="hint">No contacts yet.</p>`}</div>`;
+}
+
+// What the automatic preparation is doing, and the way to start it by hand.
+// Every application sent before this existed has no drafts and cannot get
+// any by itself - the preparation hangs off the submission - so the press is
+// on the job's own card as well as in the list.
+// "9:00 am", from the hour the server is scheduling at.
+function sendHour(state) {
+  const hour = Number.isInteger(state.send_hour) ? state.send_hour : 9;
+  const at = new Date();
+  at.setHours(hour, 0, 0, 0);
+  return at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// "tomorrow at 9:00 am" for one scheduled email, in the reader's own zone.
+function sendWhen(value) {
+  const at = new Date(value || "");
+  if (isNaN(at)) return "its hour";
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((new Date(at).setHours(0, 0, 0, 0) - today) / 86400000);
+  const day = days === 0 ? "today" : days === 1 ? "tomorrow"
+    : at.toLocaleDateString([], { weekday: "long", day: "numeric", month: "short" });
+  return `${day} at ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function outreachPhase(state) {
+  if (state.done_at)
+    return `<div class="actions">
+      <span class="state go">done with the outreach</span>
+      <button class="act" id="outreachReopen">Reopen it</button>
+    </div>`;
+  if (state.prepare_status === "running" || state.preparing)
+    return `<div class="banner">Finding the people and writing the emails. Nothing is sent.</div>`;
+  const done = state.prepare_status === "ready" || (state.drafts || []).length > 0;
+  return `<div class="actions">
+      <button class="act${done ? "" : " primary"}" id="outreachPrepare">${
+        done ? "Prepare again" : "Prepare the follow-up emails"}</button>
+      <span class="hint">${escape(state.lookup_note
+        || "One recruiter and up to two hiring managers, one email each, your tailored"
+           + " resume attached. Your Claude subscription reads the web first and Apollo"
+           + " is only asked when that fails, so a credit is the last resort."
+           + " Nothing is sent: every email waits for your click.")}</span>
+    </div>`;
+}
+
+// The other half of reaching a company: the connection requests, with the
+// exact words LinkedIn will show beside each one. Written here, sent only by
+// the press below, and paced by their own tool's cap.
+function outreachInvites(state) {
+  const invites = state.invites || [];
+  if (!state.linkedin_thing && !invites.length) return "";
+  if (!invites.length)
+    return `<div class="actions">
+      <button class="act" id="outreachInvitePrepare">Write the LinkedIn notes</button>
+      <span class="hint">One note per person who has a profile, to your own
+        connection-note guide. Nothing reaches LinkedIn until you press send.</span>
+    </div>`;
+  const rows = invites.map((invite) => {
+    const contact = (state.contacts || []).find((row) => row.id === invite.contact_id) || {};
+    const said = invite.status === "sent" ? "sent"
+      : invite.status === "skipped" ? `skipped: ${invite.reason || "already invited"}`
+      : invite.status === "failed" ? `failed: ${invite.error || "LinkedIn refused it"}`
+      : invite.status === "sending" ? "sending" : "waiting for you";
+    return `<div class="outreach-invite">
+      <div><b>${escape(contact.name || invite.profile_url)}</b>
+        <span class="hint"> · ${escape(contact.title || "")}</span>
+        <span class="state ${invite.status === "sent" ? "go" : invite.status === "failed" ? "stop" : ""}">${escape(said)}</span></div>
+      <div class="note">${escape(invite.note)}</div>
+    </div>`;
+  }).join("");
+  return `<div class="outreach-invites"><label>LinkedIn notes</label>${rows}
+      <div class="actions">
+        <button class="act" id="outreachInvitePrepare">Write any missing notes</button>
+      </div>
+    </div>`;
+}
+
+// One press for the whole job, which is what was asked for: the emails go
+// from their own address through their Gmail tool, the invites through their
+// LinkedIn tool, both paced and capped by those tools.
+function outreachGo(state) {
+  const drafts = state.drafts || [];
+  const invites = state.invites || [];
+  const waitingMail = drafts.filter((row) => row.status === "draft" || row.status === "scheduled" || row.status === "in_gmail");
+  const unticked = waitingMail.filter((row) => {
+    const contact = (state.contacts || []).find((c) => c.id === row.contact_id) || {};
+    return contact.verification !== "verified" && !row.verified_by_user;
+  });
+  const waitingInvites = invites.filter((row) => row.status === "draft");
+  if (state.sending)
+    return `<div class="banner">Sending · ${escape(state.sending)}. Leave the two Chrome windows alone until it finishes.</div>`;
+  if (!waitingMail.length && !waitingInvites.length) return "";
+  const bits = [];
+  if (waitingMail.length) bits.push(`${waitingMail.length} email${waitingMail.length > 1 ? "s" : ""}`);
+  if (waitingInvites.length) bits.push(`${waitingInvites.length} LinkedIn note${waitingInvites.length > 1 ? "s" : ""}`);
+  return `<div class="actions">
+      <button class="act primary" id="outreachGo" ${unticked.length ? "disabled" : ""}>Approve and send ${bits.join(" and ")}</button>
+      <span class="hint">${unticked.length
+        ? `${unticked.length} guessed address${unticked.length > 1 ? "es" : ""} still needs your tick above.`
+        : (state.gmail_thing ? `Email leaves as ${escape(state.gmail_account || "your own Gmail account")}. ` : "")
+          + "Sending is paced, so this takes a few minutes."}</span>
+    </div>`;
 }
 
 function outreachHtml(id, state) {
@@ -1268,11 +1444,18 @@ function outreachHtml(id, state) {
       <label>Email</label>
       <textarea class="body" id="outreachBody" ${locked ? "disabled" : ""}>${escape(draft.body)}</textarea>
       <div class="actions">
-        <label><input type="checkbox" id="outreachAttach" ${draft.attach_resume ? "checked" : ""} ${locked ? "disabled" : ""}> Attach tailored resume</label>
+        <label><input type="checkbox" id="outreachAttach" ${draft.attach_resume ? "checked" : ""} ${locked ? "disabled" : ""}> Attach ${
+          escape(draft.attachment_name || "tailored resume")}</label>
         ${needsVerify ? `<label><input type="checkbox" id="outreachVerify" ${draft.verified_by_user ? "checked" : ""} ${locked ? "disabled" : ""}> I verified this address</label>` : ""}
-        ${locked ? `<span class="state ${draft.status === "sent" ? "go" : "stop"}">${escape(draft.status)}</span>`
+        ${draft.status === "scheduled" ? `
+             <span class="state go">goes ${escape(sendWhen(draft.send_at))}</span>
+             <button class="act" id="outreachUnschedule">Cancel and edit</button>
+             <button class="act" id="outreachSendNow">Send it now instead</button>`
+          : locked ? `<span class="state ${draft.status === "sent" ? "go" : "stop"}">${escape(draft.status)}</span>`
           : `<button class="act" id="outreachSave">Save</button>
-             <button class="act primary" id="outreachSend" ${state.mail_configured ? "" : "disabled"}>Approve and send</button>`}
+             <button class="act primary" id="outreachSend" ${state.mail_configured ? "" : "disabled"}>${
+               state.send_scheduled ? `Approve, send at ${sendHour(state)}` : "Approve and send"}</button>
+             ${state.mail_login ? `<span class="hint">from ${escape(state.mail_login)}</span>` : ""}`}
       </div>
       ${draft.error ? `<div class="banner stop">${escape(draft.error)}</div>` : ""}
       <div class="outreach-nav">
@@ -1287,8 +1470,15 @@ function outreachHtml(id, state) {
   return `<h3>Outreach</h3>
     <div class="card outreach">
       ${state.error ? `<div class="banner stop">${escape(state.error)}</div>` : ""}
+      ${outreachPhase(state)}
       ${!state.mail_configured ? `<div class="banner warn">Gmail SMTP is not configured. Drafting works; sending stays disabled.</div>` : ""}
+      ${state.mail_login && state.mail_from && state.mail_login !== state.mail_from
+        ? `<div class="banner warn">These go out as <b>${escape(state.mail_login)}</b>, not
+           ${escape(state.mail_from)}: Gmail rewrites the From address unless it is a verified
+           "Send mail as" alias on that account.</div>` : ""}
       ${carousel}
+      ${outreachInvites(state)}
+      ${outreachGo(state)}
       <details ${drafts.length ? "" : "open"}>
         <summary>${drafts.length ? "Contacts and new email" : "Find contacts"}</summary>
         ${outreachSetup(state)}
@@ -1337,6 +1527,28 @@ function wireOutreach(id, state) {
     }
     run("/gmail", { user, app_password });
   };
+  if ($("outreachPrepare")) $("outreachPrepare").onclick = () =>
+    run("/prepare", { force: (state.drafts || []).length > 0 });
+  if ($("outreachInvitePrepare")) $("outreachInvitePrepare").onclick = () =>
+    run("/linkedin/prepare");
+  // The one press that reaches anybody. It is confirmed first because it is
+  // the only button on this page that writes to strangers.
+  if ($("outreachGo")) $("outreachGo").onclick = () => {
+    const mails = (state.drafts || []).filter((row) => row.status !== "sent").length;
+    const invites = (state.invites || []).filter((row) => row.status === "draft").length;
+    if (!confirm(`Send ${mails} email${mails === 1 ? "" : "s"} and ${invites} connection`
+        + ` request${invites === 1 ? "" : "s"} now? This reaches real people and cannot be undone.`)) return;
+    run("/go", { confirmed: true });
+  };
+  // The end of the flow the person described: submitted, then checking,
+  // then done, and the job goes back under Applied.
+  if ($("outreachDone")) $("outreachDone").onclick = () => {
+    const waiting = (state.drafts || []).filter((row) => row.status === "draft").length;
+    if (waiting && !confirm(`${waiting} email${waiting === 1 ? "" : "s"} here`
+        + ` ${waiting === 1 ? "has" : "have"} not been sent. Finish with this job anyway?`)) return;
+    run("/done", { on: true });
+  };
+  if ($("outreachReopen")) $("outreachReopen").onclick = () => run("/done", { on: false });
   if ($("outreachDiscover")) $("outreachDiscover").onclick = () => run("/discover", { per_role: 3 });
   if ($("outreachAddContact")) $("outreachAddContact").onclick = () => run("/contact", {
     role: $("outreachRole").value,
@@ -1396,14 +1608,44 @@ function wireOutreach(id, state) {
   };
   if ($("outreachSend") && currentDraft) $("outreachSend").onclick = async () => {
     const contact = (state.contacts || []).find((row) => row.id === currentDraft.contact_id) || {};
-    if (!confirm(`Send this email to ${contact.name || "this contact"} at ${contact.email || "the selected address"}?`)) return;
+    // Two things named before a click that cannot be taken back: who it goes
+    // to, and the account it goes from - the one thing about a sent email the
+    // person cannot check afterwards without knowing where to look.
+    const sendNow = !state.send_scheduled;
+    if (!confirm(`${sendNow ? "Send" : "Approve"} this email to ${
+      contact.name || "this contact"} at ${contact.email || "the selected address"}?`
+      + `\n\n${sendNow ? "It goes out now" : `It goes out at ${sendHour(state)}`} from ${
+      state.mail_login || state.mail_from || "the configured account"}, and the copy will be in`
+      + ` that account's Sent folder.`)) return;
+    await approve(sendNow);
+  };
+  // One path for both buttons, because the only difference is the hour.
+  const approve = async (now) => {
     const body = draftBody();
     try {
       await api(`/review/${id}/outreach/draft/${currentDraft.id}`, {
         method: "PATCH", body: JSON.stringify(body),
       });
       await api(`/review/${id}/outreach/draft/${currentDraft.id}/send`, {
-        method: "POST", body: JSON.stringify({ confirmed: true, verified_by_user: body.verified_by_user }),
+        method: "POST", body: JSON.stringify({
+          confirmed: true, verified_by_user: body.verified_by_user, now,
+        }),
+      });
+      await show(id);
+    } catch (err) { alert(err.message); }
+  };
+  if ($("outreachUnschedule") && currentDraft) $("outreachUnschedule").onclick = async () => {
+    try {
+      await api(`/review/${id}/outreach/draft/${currentDraft.id}/unschedule`,
+                { method: "POST", body: "{}" });
+      await show(id);
+    } catch (err) { alert(err.message); }
+  };
+  if ($("outreachSendNow") && currentDraft) $("outreachSendNow").onclick = async () => {
+    if (!confirm(`Send this email now instead of waiting for ${sendHour(state)}?`)) return;
+    try {
+      await api(`/review/${id}/outreach/draft/${currentDraft.id}/send`, {
+        method: "POST", body: JSON.stringify({ confirmed: true, now: true }),
       });
       await show(id);
     } catch (err) { alert(err.message); }

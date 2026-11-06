@@ -69,7 +69,20 @@ def onboarded_mark() -> Path:
 # instead, which is about twenty times a normal job.
 DEFAULTS = {"use_profile": True, "auto_fill": True, "auto_learn": False, "learn_prompts": True,
             "onboarded": False, "scout_checks_per_day": 4, "hold_fills": True,
-            "opus_by_hand": True}
+            "opus_by_hand": True,
+            # Off by default: it spends the person's Claude Code allowance
+            # rather than an OpenRouter balance, and which of those they would
+            # rather spend is theirs to say.
+            "claude_code": False,
+            # outreach_backfill: every application already submitted is taken
+            # through the follow-up step - find the people, write the emails -
+            # one job at a time in the background, until none is left. The
+            # person's own instruction: "all fkn companies should after
+            # submission go to this state of checking". On, because an
+            # application with nobody written to is the thing this exists to
+            # fix; the switch is there because each job spends model
+            # allowance and may spend an Apollo credit.
+            "outreach_backfill": True}
 
 router = APIRouter()
 
@@ -83,6 +96,8 @@ class Settings(BaseModel):
     scout_checks_per_day: Optional[int] = None
     hold_fills: Optional[bool] = None
     opus_by_hand: Optional[bool] = None
+    claude_code: Optional[bool] = None
+    outreach_backfill: Optional[bool] = None
 
 
 def load() -> dict:
@@ -128,6 +143,12 @@ def opus_by_hand() -> bool:
     return bool(load().get("opus_by_hand", True))
 
 
+def claude_code() -> bool:
+    """Whether the premium path runs through the Claude Code subscription on
+    this machine (`tailor/claudecode.py`) instead of the API or a paste."""
+    return bool(load().get("claude_code", False))
+
+
 def hold_fills() -> bool:
     """Whether no fill may open a tab right now. Read at call time, so the
     switch on the page stops the next job without a restart."""
@@ -143,3 +164,7 @@ def get_settings() -> dict:
 def set_settings(update: Settings) -> dict:
     # Only the keys sent change; the page posts one switch at a time.
     return save(**update.model_dump(exclude_none=True))
+
+
+def outreach_backfill() -> bool:
+    return bool(load().get("outreach_backfill", True))

@@ -205,15 +205,20 @@ def test_review_flow_requires_verified_guess_and_sends_once(tmp_path, monkeypatc
     monkeypatch.setattr(mailing, "send_message", send_message)
     endpoint = f"/review/{job.id}/outreach/draft/{draft_id}/send"
     assert client.post(endpoint, json={"confirmed": True}).status_code == 409
+    # `now` because an approved email waits for nine in the morning since
+    # 2026-11-03 (`outreach/schedule.py`, and its own file of tests for the
+    # clock). The promise this test keeps is the other one, and it has not
+    # moved: the tick, the confirmation, exactly one delivery, the resume on
+    # it, the record beside the application, and no second send.
     result = client.post(endpoint, json={
-        "confirmed": True, "verified_by_user": True,
+        "confirmed": True, "verified_by_user": True, "now": True,
     })
     assert result.status_code == 200
     assert result.json()["drafts"][0]["status"] == "sent"
     assert len(sent) == 1 and list(sent[0].iter_attachments())
     assert len(list(folder.glob("outreach_*_sent.json"))) == 1
     assert client.post(endpoint, json={
-        "confirmed": True, "verified_by_user": True,
+        "confirmed": True, "verified_by_user": True, "now": True,
     }).status_code == 409
 
 
