@@ -69,14 +69,30 @@ folder, whose `posting.md` is the Twitch posting under a `**Source:**` line
 naming careers.ibm.com. That row's URL and its contents disagree
 permanently; no fix recovers which was meant.
 
-The migration proposed, and not done, in the order that matters: (1) add
-`key` to `Job`, defaulted to `identity.identity_key(url)`, leaving `Job.id`
-exactly as it is, and give `queue` a `by_key` lookup; (2) make
-`queue.get(id)` refuse an ambiguous short id rather than silently return
-the first match - **that is the data-loss bug, and it is the whole fix**;
-(3) route `/review/{id}/...` through the long key where the page can supply
-one; (4) leave folder names, thread files, logs and `#<id>` links alone for
-good, because a display name may repeat as long as nothing acts on it.
+The migration proposed, in the order that matters: (1) add `key` to `Job`,
+defaulted to `identity.identity_key(url)`, leaving `Job.id` exactly as it
+is, and give `queue` a `by_key` lookup; (2) make `queue.get(id)` refuse an
+ambiguous short id rather than silently return the first match - **that is
+the data-loss bug, and it is the whole fix**; (3) route `/review/{id}/...`
+through the long key where the page can supply one; (4) leave folder names,
+thread files, logs and `#<id>` links alone for good, because a display name
+may repeat as long as nothing acts on it.
+
+**Step (2) is done (2026-10-30), after the bug bit for real.** `e5b0` named
+two Zoox rows - a `skipped` Dayforce posting and a `queued` Lever one - and
+`POST /review/e5b0/submitted` answered **409 three times** while the person
+was trying to record an application they had actually sent: `get` handed
+back the decided row and the endpoint quite correctly refused it. So
+`queue.get` and `queue.update` now raise `queue.Ambiguous` rather than
+answering about whichever row came first, `queue.update_row(job, **fields)`
+is how one of two colliding rows is written, and `server/review.py`
+resolves through the posting's own URL when the page sends one
+(`_resolve_job`), falling back to a 409 that **names the candidates**
+instead of guessing. One consequence worth knowing: a fill can no longer be
+aimed at a colliding id at all - `/fill`, `/approve` and `/start-now`
+refuse it up front - so a colliding job waits for one of the two rows to be
+rejected. That is the honest behaviour and it is still a behaviour change.
+Steps (1) and (3) remain, which is why this entry stays.
 
 ---
 
@@ -142,3 +158,44 @@ the logs, because the logs show the injection succeeding and say nothing
 about what the banner decided afterwards. Separately: `browser/linkedin_apply.py`
 (the Easy Apply walk) has never run against the live flow either, so these
 two are likely to be looked at together.
+
+---
+
+## 3. A careers homepage reached through Jobright can still be queued
+
+**Raised** 2026-10-31, while building the auto-add that Jobright's redirect
+triggers. **Severity: low** — it costs a wasted folder and a tailoring run,
+and Undo on the banner takes it straight back out.
+
+A tab Jobright's Apply opens carries a `jr_id` tag, and carrying it is now
+the whole authorisation for queueing the page without a click. Two gates
+guard that: the screen's verdict must be `ok` or `caution`, and
+`looksLikeSignIn` in `capture/content.js` refuses an identity-provider host
+or a page with a password box. Neither catches a **careers homepage**:
+`careers.vituity.com/` has no password box, an ordinary host, and enough
+text to screen as a job. It was queued once already, on 2026-10-30, under
+the countdown that has since been removed — and the same landing would be
+queued again today.
+
+**Why `looksLikeSignIn` is the wrong place to fix it.** That function
+answers "is this a wall". A careers homepage is a different question — "is
+this a posting" — and the app already has code for it:
+`/screen`'s `not_a_job` verdict and `quality.looks_like_form` /
+`quality.too_thin`. The fix belongs there, so that the verdict gate already
+in place starts refusing these by itself.
+
+**To see it**
+
+```bash
+python3 -c "
+import json
+rows = json.load(open('data/queue.json'))
+for r in rows:
+    url = r.get('url') or ''
+    if url.count('/') <= 3 and 'career' in url:
+        print(r.get('status'), url)
+"
+```
+
+Deliberately **not** covered by a test: a test that pins a defect goes red
+on the day somebody fixes it, which taxes the fix.

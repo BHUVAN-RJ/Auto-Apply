@@ -172,3 +172,35 @@ def test_the_identity_service_cannot_act_on_a_job():
         assert "server.queue" not in source and "from server import queue" not in source, path
         for writer in ("store.set_status", "store.write", "queue.add(", "queue.update("):
             assert writer not in source, f"{path} calls {writer}"
+
+
+def test_the_table_driven_runner_cannot_press_submit():
+    """`browser/forms/table.json` names the Submit control so that a walk can
+    recognise the end of a form. Naming it is not being able to press it, and
+    three independent things keep it that way.
+
+    The table's `advance` excludes the submit wording, although on Workday
+    both controls carry the same `data-automation-id` and the text is the only
+    difference. `steps.Runner` has one press - `advance()` - and it reads the
+    control's own label through `guard.describes_submit` first, so an edited
+    table still cannot get there. And the runner may not reach the presser
+    that the review page's button uses, which the invariant above checks for
+    everything under `browser/`.
+    """
+    from browser.forms import steps, table
+
+    source = (ROOT / "browser" / "forms" / "steps.py").read_text()
+    # The submit expression is never read by the thing that presses.
+    assert 'page("submit")' not in source, "the runner resolves the submit control"
+    assert 'pages["submit"]' not in source
+    # Every press in the module is guarded by the label check.
+    presses = source.count("CLICK_FN")
+    assert presses, "no press found - has the runner been rewritten?"
+    assert source.count("guard.describes_submit") >= 3, (
+        "a press was added without the label check in front of it")
+    # And the data still carries the discrimination.
+    for name, rules in table.load().items():
+        advance, submit = rules.page("advance"), rules.page("submit")
+        if advance and submit:
+            assert advance != submit, name
+    assert not hasattr(steps.Runner, "submit")
