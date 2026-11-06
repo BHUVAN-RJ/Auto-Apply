@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "note": "Per-system form knowledge as data. Selectors are written against the markup in tests/dom/ and the recordings in data/dev_recordings/; a system is added only once its anchors have been seen on a real page. See table.py for the shape and steps.py for what each method does.",
+  "systems": {
+    "workday": {
+      "hosts": [
+        "myworkdayjobs.com",
+        "myworkdayjobs-impl.com",
+        "myworkdaysite.com",
+        "myworkday.com"
+      ],
+      "params": {
+        "settle": 0.25,
+        "render": 15.0,
+        "advance": 25.0,
+        "verify": 10.0,
+        "options": 2.0,
+        "max_continue_presses": 1
+      },
+      "pages": {
+        "container": ".//div[@data-automation-id='pageFooter']",
+        "review": ".//div[@data-automation-id='applyFlowReviewPage' or @data-automation-id='reviewJobApplicationPage']",
+        "progress": ".//*[@data-automation-id='progressBarActiveStep']",
+        "advance": ".//button[(@data-automation-id='pageFooterNextButton' or @data-automation-id='bottom-navigation-next-button') and not(contains(., 'Submit') or contains(., 'Send'))]",
+        "submit": ".//button[(@data-automation-id='pageFooterNextButton' or @data-automation-id='bottom-navigation-next-button') and (contains(., 'Submit') or contains(., 'Send'))]",
+        "signed_in": ".//*[@data-automation-id='utilityButtonAccountTasksMenu']"
+      },
+      "fields": {
+        "first_name": {
+          "paths": [
+            ".//div[contains(@data-automation-id, 'formField') and contains(@data-automation-id, 'legalName') and contains(@data-automation-id, 'firstName')]//input[@type='text']",
+            ".//input[@data-automation-id='legalNameSection_firstName']"
+          ]
+        },
+        "last_name": {
+          "paths": [
+            ".//div[contains(@data-automation-id, 'formField') and contains(@data-automation-id, 'legalName') and contains(@data-automation-id, 'lastName')]//input[@type='text']",
+            ".//input[@data-automation-id='legalNameSection_lastName']"
+          ]
+        },
+        "email": {
+          "paths": [
+            ".//div[@data-automation-id='formField-email']//input",
+            ".//input[@data-automation-id='email']"
+          ]
+        },
+        "phone_number": {
+          "paths": [
+            ".//div[@data-automation-id='formField-phone-number']//input",
+            ".//input[@data-automation-id='phone-number']"
+          ]
+        },
+        "address_line_1": {
+          "paths": [".//div[@data-automation-id='formField-addressLine1']//input"]
+        },
+        "city": {
+          "paths": [".//div[@data-automation-id='formField-city']//input"]
+        },
+        "postal_code": {
+          "paths": [".//div[@data-automation-id='formField-postalCode']//input"]
+        },
+        "school": {
+          "paths": [".//div[@data-automation-id='formField-schoolName']//input"]
+        },
+        "field_of_study": {
+          "paths": [".//div[@data-automation-id='formField-fieldOfStudy']//input"]
+        },
+        "grade_average": {
+          "paths": [".//div[@data-automation-id='formField-gradeAverage']//input"]
+        },
+        "job_title": {
+          "paths": [".//div[@data-automation-id='formField-jobTitle']//input"]
+        },
+        "company_name": {
+          "paths": [".//div[@data-automation-id='formField-companyName']//input"]
+        },
+        "resume": {
+          "paths": [
+            ".//div[(@data-automation-id='resumeUpload' or @data-automation-id='quickApplyUpload' or contains(@data-fkit-id, 'resume') or contains(@aria-labelledby, 'Resume')) and .//input[@type='file']]"
+          ],
+          "steps": [
+            {
+              "method": "click",
+              "path": "%FIELD%//button[@data-automation-id='delete-file']",
+              "optional": true,
+              "repeat": 4,
+              "settle": 0.5
+            },
+            {
+              "method": "upload",
+              "path": "%FIELD%//input[@type='file' and @data-automation-id='file-upload-input-ref']",
+              "document": "resume"
+            },
+            {
+              "method": "expect_name",
+              "path": "%FIELD%//*[@data-automation-id='file-upload-item-name' or @data-automation-id='file-upload-successful']",
+              "document": "resume",
+              "wait": "verify"
+            }
+          ]
+        }
+      },
+      "slots": {
+        "rows": "%FIELD%//*[@data-automation-id='file-upload-item']",
+        "clear": "%FIELD%//button[@data-automation-id='delete-file']"
+      },
+      "options": {
+        "listbox": ".//*[@data-automation-id='activeListContainer' and @role='listbox']",
+        "option": ".//*[@data-automation-id='menuItem' or @data-automation-id='promptOption' or @role='option']"
+      },
+      "checked": ".//*[local-name()='svg' and contains(@class, 'wd-icon-check')]"
+    }
+  }
+}

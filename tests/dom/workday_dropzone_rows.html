@@ -1,0 +1,51 @@
+<!doctype html><meta charset=utf-8><title>Workday - dropzone, two files</title>
+<!-- Workday's Resume/CV is a dropzone that takes more than one file and
+     keeps a row per file, each with its own bin. The ids and the nesting are
+     those of workday_two_resumes_live.html (a scrubbed real page); what is
+     added here is the one thing a saved page cannot have - the row actually
+     going when its bin is pressed. That is what `clear_slot` loops on, and a
+     static page cannot tell a loop that stops correctly from one that never
+     ran - and, the same way, a saved page never renders the row Workday
+     draws for the file just put on, which is what the read-back looks for. -->
+<body>
+<div data-fkit-id="resumeAttachments--attachments">
+  <div class="dropzone">
+    <div>Drop files here</div>
+    <button type="button" data-automation-id="select-files">Select files</button>
+    <input data-automation-id="file-upload-input-ref" type="file" multiple>
+  </div>
+  <div data-automation-id="file-upload-item">
+    <div data-automation-id="file-upload-item-name">older_resume.pdf</div>
+    <button data-automation-id="delete-file" aria-label="Delete older_resume.pdf">bin</button>
+  </div>
+  <div data-automation-id="file-upload-item">
+    <div data-automation-id="file-upload-item-name">tailored_resume.pdf</div>
+    <button data-automation-id="delete-file" aria-label="Delete tailored_resume.pdf">bin</button>
+  </div>
+</div>
+<script>
+  window.__presses = 0;
+  document.addEventListener("change", (event) => {
+    const input = event.target.closest('[data-automation-id="file-upload-input-ref"]');
+    if (!input || !input.files || !input.files.length) return;
+    const slot = input.closest('[data-fkit-id]');
+    const row = document.createElement("div");
+    row.setAttribute("data-automation-id", "file-upload-item");
+    const name = document.createElement("div");
+    name.setAttribute("data-automation-id", "file-upload-item-name");
+    name.textContent = input.files[0].name;
+    const bin = document.createElement("button");
+    bin.setAttribute("data-automation-id", "delete-file");
+    bin.setAttribute("aria-label", "Delete " + input.files[0].name);
+    bin.textContent = "bin";
+    row.append(name, bin);
+    slot.append(row);
+  });
+  document.addEventListener("click", (event) => {
+    const bin = event.target.closest('[data-automation-id="delete-file"]');
+    if (!bin) return;
+    window.__presses += 1;
+    bin.closest('[data-automation-id="file-upload-item"]').remove();
+  });
+</script>
+</body>

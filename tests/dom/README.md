@@ -35,3 +35,20 @@ bug these guard against survived a green suite:
   **twice**, each row with its own `delete-file` bin. The hand-drawn
   fixtures above were green through the whole of that bug, which is why
   these two are here at full size.
+- `workday_autofill_caption.html` - a panel whose own heading is Workday's
+  "Autofill with Resume" offer, with the real Resume/CV dropzone inside it.
+  `slotWords` climbs until an ancestor's text mentions a resume, so on this
+  shape it hands back the caption as the slot's name and the put chip read
+  the system's own parser hint on the one control that is not one. The
+  dropzone's markup is `workday_two_resumes_live.html`'s; the heading above
+  it is **constructed**, because no capture of that page is on disk. It is
+  always asserted together with `ashby_resume_taken.html`, whose parser
+  really does describe itself in the block its input sits in: a rescue that
+  cannot still refuse that one is a hole, not a fix.
+- `jobright_apply_row.html` - the shape of Jobright's own button row, with
+  the `min-width: 1200px` they hard-code on the main content, so that the
+  **Add to autopilot** button inserted beside their Apply can be measured
+  against their row's own box rather than assumed to fit. Their class names
+  are hashed and rotate, so only the part before the hash is kept - which is
+  what `content.js` matches on. Constructed from the rules in the declutter
+  section rather than captured.

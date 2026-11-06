@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -69,7 +70,7 @@ from browser.autofill import attached  # noqa: E402
 
 # The one day this was asked for. Past it the tool refuses to run rather
 # than quietly keeping on: "let's record only today" (2026-10-09).
-EXPIRES = date(2026, 10, 11)
+EXPIRES = date(2026, 11, 2)
 
 OUT = paths.DATA / "dev_recordings" / "workday"
 POLL = 1.0          # how often the event buffer is drained
@@ -231,8 +232,14 @@ SNAPSHOT_JS = r"""
       .filter((el) => el.type !== "hidden");
   // Shaped the way `workday.stage_of` reads a look, so the recording can be
   // handed straight to the real code rather than to a copy of it.
+  // The account button's text is the person's initials, which is the person.
+  // The metadata is read off the live page, before the clone the scrub
+  // happens on, so it is done here as well or not at all.
+  const MINE = "#accountSettingsButton,[data-automation-id='ariaLiveMessage'],"
+      + "[data-automation-id='selectedItem'],[data-automation-id='file-upload-item-name']";
   const buttons = [...document.querySelectorAll("button,[role=button],a")]
-      .map((el) => ({ text: text(el), auto: el.getAttribute("data-automation-id") || "",
+      .map((el) => ({ text: el.matches(MINE) ? "[redacted]" : text(el),
+                      auto: el.getAttribute("data-automation-id") || "",
                       disabled: !!el.disabled }))
       .filter((b) => b.text).slice(0, 40);
 
@@ -251,17 +258,44 @@ SNAPSHOT_JS = r"""
       // The signed-in account's own email, in the header of every page.
       + "#accountSettingsButton,[data-automation-id='ariaLiveMessage']"))
     el.textContent = "[redacted]";
-  // A filename is named after the person, and Workday puts it in three more
-  // places than the row it shows: the bin's aria-label ("Delete <file>.pdf"),
-  // the live region that announces the upload, and any title carrying it.
-  // Found by grepping the written pages for the maintainer's own name, which
-  // is the only test of a scrubber worth trusting (2026-10-11).
-  const FILENAME = /[^\s"'<>]+\.(pdf|docx?|rtf|txt|odt|pages)\b/gi;
-  for (const el of copy.querySelectorAll("[aria-label],[title],[alt],[placeholder]")) {
-    for (const name of ["aria-label", "title", "alt", "placeholder"]) {
-      const was = el.getAttribute(name);
-      if (was && FILENAME.test(was)) el.setAttribute(name, was.replace(FILENAME, "[redacted]"));
+  // The person is in more than the values. A filename is named after them
+  // and Workday repeats it in the bin's aria-label and the live region; the
+  // account header carries their email as an aria-label, which is not text
+  // and so survived being emptied; and an input's placeholder on an account
+  // page is often the value it wants back. Each of the four attributes is
+  // read for an email, a filename and a phone-shaped number (2026-10-26,
+  // found by grepping a login page for the maintainer's own address - the
+  // only test of a scrubber worth trusting, 2026-10-11).
+  //
+  // A fresh regex per use, deliberately: a `/g` regex reused across
+  // `.test()` calls keeps its `lastIndex`, so every other match was missed.
+  const CARRIES = [
+    () => /[^\s"'<>@]+@[^\s"'<>@]+\.[a-z]{2,}/gi,            // an address
+    () => /[^\s"'<>]+\.(pdf|docx?|rtf|txt|odt|pages)\b/gi,    // a document
+    () => /\+?\d[\d().\-\s]{7,}\d/g,                        // a number to ring
+  ];
+  const ATTRS = ["aria-label", "title", "alt", "placeholder", "value"];
+  // Anything naming the person outright: the header, the live region, and
+  // the pills and rows above. Their attributes go as well as their text.
+  const THEIRS = "[data-automation-id='selectedItem'],#accountSettingsButton,"
+      + "[data-automation-id='ariaLiveMessage'],[data-automation-id='file-upload-item-name']";
+  for (const el of copy.querySelectorAll("*")) {
+    const named = el.matches(THEIRS);
+    for (const name of ATTRS) {
+      let was = el.getAttribute(name);
+      if (!was) continue;
+      if (named) { el.setAttribute(name, "[redacted]"); continue; }
+      for (const make of CARRIES) was = was.replace(make(), "[redacted]");
+      el.setAttribute(name, was);
     }
+  }
+  // "Welcome, <name>" is the employer's word and the person's name in one
+  // string. The greeting is the shape; the name is not.
+  for (const el of copy.querySelectorAll("h1,h2,h3,h4,span,div,p")) {
+    if (el.children.length) continue;
+    const was = (el.textContent || "").trim();
+    const hello = was.match(/^(welcome|hi|hello|signed in as|logged in as)\b/i);
+    if (hello && was.length > hello[1].length + 1) el.textContent = hello[1] + " [redacted]";
   }
   for (const el of copy.querySelectorAll("script,style,svg,img,iframe")) el.remove();
 
@@ -274,6 +308,54 @@ SNAPSHOT_JS = r"""
   });
 })()
 """
+
+
+# What no pattern can find: a person's name. The scrubber above works on the
+# shape of a thing - an address, a filename, a number - and a name has none.
+# So the last pass is literal: whatever the profile on this machine says the
+# person is called is replaced wherever it still appears. Belt over braces,
+# and it is the pass that would have caught the five fixtures committed with
+# the maintainer's resume filename in them (2026-10-11).
+NEEDLES: list[str] = []
+
+
+def needles() -> list[str]:
+    """The person's own words, longest first so a full name goes before the
+    halves of it. Read once, from the profile the fill already uses."""
+    if NEEDLES:
+        return NEEDLES
+    found: set[str] = set()
+    form = paths.BASE / "form.json"
+    try:
+        answers = json.loads(form.read_text()) if form.exists() else {}
+    except (OSError, ValueError):
+        answers = {}
+    for key, value in (answers.get("answers") or answers).items():
+        if not isinstance(value, str) or len(value.strip()) < 3:
+            continue
+        if any(word in key.lower() for word in
+               ("name", "email", "phone", "address", "city", "linkedin", "github", "website")):
+            found.add(value.strip())
+    for whole in list(found):
+        # A full name is also its parts: Workday shows "First" and "Last" in
+        # separate places and only one of them may be left behind.
+        if " " in whole and "@" not in whole and len(whole) < 60:
+            found.update(part for part in whole.split() if len(part) > 2)
+    NEEDLES.extend(sorted(found, key=len, reverse=True))
+    return NEEDLES
+
+
+def scrub(html: str) -> tuple[str, list[str]]:
+    """The page with every needle taken out, and which ones were there. A
+    needle that is found is a hole in `SNAPSHOT_JS`, so it is said out loud
+    rather than quietly patched over."""
+    left = []
+    for needle in needles():
+        if needle.lower() in html.lower():
+            left.append(needle if "@" not in needle else "an address")
+            pattern = re.compile(re.escape(needle), re.I)
+            html = pattern.sub("[redacted]", html)
+    return html, left
 
 
 def shape(snap: dict) -> tuple:
@@ -298,14 +380,24 @@ class Session:
                     "at": int(time.time() * 1000), "recorder": "dev_workday_recorder"})
 
     def write(self, row: dict) -> None:
-        self.flow.write(json.dumps(row, ensure_ascii=False) + "\n")
+        """Every row through the needle pass, not only the saved pages. A
+        heading, a button's text and a page title all carry the person's name
+        on an account page, and the flow is the file that gets read."""
+        line, left = scrub(json.dumps(row, ensure_ascii=False))
+        if left:
+            print(f"  ! {', '.join(left)} was in the flow and has been taken out")
+        self.flow.write(line + "\n")
         self.flow.flush()
 
     def page(self, snap: dict) -> None:
         """A page we have not seen the shape of before."""
         number = len(self.pages) + 1
         name = f"page_{number:02d}.html"
-        (self.dir / name).write_text(snap.pop("html", ""), encoding="utf-8")
+        html, left = scrub(snap.pop("html", ""))
+        if left:
+            print(f"  ! page {number}: {', '.join(left)} was still in the page and "
+                  f"has been taken out")
+        (self.dir / name).write_text(html, encoding="utf-8")
         row = {"kind": "page", "number": number, "file": name,
                "at": int(time.time() * 1000), "stage": workday.stage_of(snap),
                "url": snap.get("url"), "title": snap.get("title"),
@@ -322,6 +414,35 @@ class Session:
         self.flow.close()
 
 
+def arm_only_on_workday() -> str:
+    """`Page.addScriptToEvaluateOnNewDocument` fires on **every** document the
+    tab goes on to show, and `recordable` was asked once, before the tab
+    existed. So a tab that left Workday for a university's single sign-on,
+    a Duo prompt and a Google account chooser had the listener installed on
+    each of them and was snapshotted there too - seven pages of somebody
+    else's sign-in saved on 2026-10-13, one of them carrying the
+    maintainer's own address, found on 2026-10-29 by asking the recordings
+    what host each page was on.
+
+    The listener now refuses to arm unless the document it is on is one this
+    tool may watch, which is the check at the source. `follow` asks the same
+    question of the live URL every poll, which is the check at the drain.
+    Two halves, because the first cannot see a same-document route change
+    and the second cannot stop a script that is already running.
+    """
+    # The host is matched as a host, not as a substring of the whole URL: a
+    # path carrying `myworkdayjobs.com` is not a Workday tenant. Only the
+    # auth entries, which name a path (`myworkday.com/wday/authgwy`), and
+    # `--match` are read loosely.
+    hosts = json.dumps([h.lower().lstrip(".") for h in workday.HOSTS if h])
+    loose = json.dumps([h.lower() for h in list(WORKDAY_AUTH) + list(EXTRA_HOSTS) if h])
+    return ("(() => { const host = location.host.toLowerCase();"
+            " const whole = (host + location.pathname).toLowerCase();"
+            f" const ok = {hosts}.some((h) => host === h || host.endsWith('.' + h))"
+            f"   || {loose}.some((h) => whole.includes(h));"
+            " if (!ok) return;")
+
+
 async def follow(cdp_url: str, target_id: str, url: str, root: Path) -> None:
     """Watch one tab until it goes away."""
     session = Session(target_id, url, root)
@@ -331,11 +452,28 @@ async def follow(cdp_url: str, target_id: str, url: str, root: Path) -> None:
             # On this document and on every one after it: a Workday step is
             # not a navigation, but a sign-in round trip is.
             await page.send("Page.enable")
-            await page.send("Page.addScriptToEvaluateOnNewDocument",
-                           {"source": f"try{{{RECORDER_JS}}}catch(e){{}}"})
-            await page.evaluate(RECORDER_JS)
+            armed = f"{arm_only_on_workday()}try{{{RECORDER_JS}}}catch(e){{}} }})()"
+            await page.send("Page.addScriptToEvaluateOnNewDocument", {"source": armed})
+            await page.evaluate(armed)
             since = 0.0
+            away = False
             while True:
+                here = str(await page.evaluate("location.href") or "")
+                if here and not recordable(here):
+                    # Somebody else's sign-on. Nothing is drained and nothing
+                    # is snapshotted until the tab is back on the employer's
+                    # own pages; that it happened is the only fact kept.
+                    if not away:
+                        away = True
+                        session.write({"kind": "away", "at": int(time.time() * 1000),
+                                       "host": (here.split("/") + ["", "", ""])[2]})
+                        print("  away    (not a Workday page; not recording)")
+                    await asyncio.sleep(POLL)
+                    continue
+                if away:
+                    away = False
+                    session.last = None       # the page it comes back on is news
+                    print("  back    on Workday")
                 raw = await page.evaluate(DRAIN_JS)
                 for row in json.loads(raw or "[]"):
                     session.moves += 1
@@ -368,12 +506,33 @@ async def follow(cdp_url: str, target_id: str, url: str, root: Path) -> None:
 EXTRA_HOSTS: list[str] = []
 
 
+# Workday's own account pages. `signin.IDENTITY_HOSTS` lumps these in with
+# Google, Microsoft and Okta, which is right for the live app - a tab that
+# has left for somebody's single sign-on is on a detour and the credential
+# there is nothing to do with the employer. It was wrong for the recorder:
+# **the Workday account is part of the application**, the step the walk stops
+# at more than any other, and a page that is never recorded is a page the
+# replay cannot show. Third-party sign-on stays excluded; Workday's own does
+# not. Nothing is read either way that a password could hide in - a password
+# input is `<secret>` with no length, and its value is not even measured.
+WORKDAY_AUTH = ("id.workday.com", "authn.workday.com", "myworkday.com/wday/authgwy")
+
+
+def workday_own_account(url: str) -> bool:
+    low = (url or "").lower()
+    return any(h in low for h in WORKDAY_AUTH)
+
+
 def recordable(url: str) -> bool:
-    """A Workday page, and never an identity provider: the sign-in itself is
-    the person's, and the flow shows that it happened without watching it."""
-    if not url or signin.identity_host(url):
+    """A Workday page, including Workday's own account and sign-in pages, and
+    never somebody else's single sign-on."""
+    if not url:
         return False
     low = url.lower()
+    if workday_own_account(url):
+        return True
+    if signin.identity_host(url):
+        return False
     return workday.is_workday(url) or any(h and h in low for h in EXTRA_HOSTS)
 
 

@@ -1,0 +1,35 @@
+<!doctype html><meta charset=utf-8><title>Workday - a panel captioned "Autofill with Resume"</title>
+<!-- The trap, not the fix. Workday's own offer is captioned "Autofill with
+     Resume", and on a tenant that puts it at the head of the panel holding
+     the real Resume/CV dropzone, `slotWords` climbs past the dropzone (which
+     names itself nothing) to that heading - the first ancestor whose text
+     mentions a resume at all - and hands the caption back as the slot's
+     name. The put chip then reads the system's own parser hint on the one
+     control that is not one, filters it out, and answers "the only upload
+     here fills the form in for you" on the page where the resume is wanted.
+
+     What tells the two apart is the control's own identity and the block
+     beside it: this one carries Workday's `file-upload-input-ref` and says
+     "Drop files here", while Ashby's real parser (ashby_application.html,
+     copied off the live Deepgram form) describes itself in the block the
+     input sits in - "Autofill from resume. Upload your resume here to
+     autofill key application fields." Both pages are asserted together,
+     because a rescue that cannot still refuse Ashby's parser is not a fix.
+
+     The dropzone's own markup is that of workday_two_resumes_live.html, a
+     scrubbed real page. The panel heading above it is constructed: no
+     capture of that page is on disk, and this fixture says so rather than
+     pretending to be one. -->
+<body>
+<section data-automation-id="applicationPanel">
+  <h3>Autofill with Resume</h3>
+  <p>Upload a resume and we will fill in what we can.</p>
+  <div class="panel">
+    <div class="dropzone">
+      <div>Drop files here</div>
+      <button type="button" data-automation-id="select-files">Select files</button>
+      <input data-automation-id="file-upload-input-ref" type="file" multiple>
+    </div>
+  </div>
+</section>
+</body>

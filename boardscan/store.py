@@ -71,7 +71,19 @@ _FIELDS = ("id", "system", "slug", "board_id", "company", "title", "url", "locat
 # else the day we first saw it - an undated role is news on the day it
 # arrived, and sorting it among the ancient ones would bury it. The listing
 # orders by the same expression, so the filter and the order agree.
-DAY = "COALESCE(NULLIF(posted,''), substr(found_at,1,10))"
+# The day a role belongs to, in the reader's own local day - which is what
+# `window_dates` compares it against (it uses `date.today()`, deliberately:
+# "what came out today" is a question about the day the person is living in).
+#
+# `found_at` is a UTC instant, so slicing its first ten characters gave the
+# UTC day, and the two clocks disagree for the whole evening west of
+# Greenwich: after 17:00 Pacific, UTC is already tomorrow, so every role the
+# crawl found was filed under tomorrow and the `today` button read zero.
+# Found 2026-10-31 at 00:35 UTC / 17:35 local, by the one test that happened
+# to assert it. `date(..., 'localtime')` resolves the instant instead of
+# slicing the string; `posted` is a plain date from the board and is left
+# exactly as it is.
+DAY = "COALESCE(NULLIF(posted,''), date(found_at,'localtime'))"
 
 # The filters the page opens with, and what a plain "how many are there to
 # read?" means: nothing decided, nothing already in autopilot, nowhere
@@ -295,8 +307,11 @@ def counts() -> dict:
             "SELECT verdict, COUNT(*) AS n FROM roles GROUP BY verdict")}
         seen = conn.execute("SELECT COUNT(*) FROM roles WHERE seen_verdict != ''").fetchone()[0]
         abroad = conn.execute("SELECT COUNT(*) FROM roles WHERE flags LIKE '%place/foreign%'").fetchone()[0]
-        today = conn.execute("SELECT COUNT(*) FROM roles WHERE found_at >= ?",
-                             (utcnow()[:10],)).fetchone()[0]
+        # The same local day as `DAY`, and for the same reason: this number
+        # sits beside the day buttons and must not disagree with them.
+        today = conn.execute(
+            "SELECT COUNT(*) FROM roles WHERE date(found_at,'localtime') = date('now','localtime')"
+        ).fetchone()[0]
     return {"roles": total, "by_state": by_state, "by_verdict": by_verdict,
             "already_known": seen, "abroad": abroad, "found_today": today,
             # What makes a pile of four thousand workable: "10 today, 15

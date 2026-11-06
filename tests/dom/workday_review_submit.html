@@ -1,0 +1,18 @@
+<!doctype html><meta charset=utf-8><title>Workday - review, with Submit</title>
+<!-- The last page of a Workday application. The button carries the same
+     data-automation-id as every "Save and Continue" before it
+     (pageFooterNextButton, as in workday_two_resumes_live.html and
+     workday_work_experience.html, both scrubbed real pages) and the only
+     difference is its text. This fixture exists to pin that: the table's
+     advance expression must not match here, and its submit expression must.
+     Hand-drawn, because no recorded page reached a review screen. -->
+<body>
+<div data-automation-id="applyFlowReviewPage">
+  <h2>Review</h2>
+  <h3>Resume/CV</h3>
+  <div><div class="name">tailored_resume.pdf</div><div>90.48 KB</div></div>
+</div>
+<div data-automation-id="pageFooter">
+  <button data-automation-id="pageFooterNextButton">Submit</button>
+</div>
+</body>

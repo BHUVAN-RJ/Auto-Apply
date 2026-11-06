@@ -552,3 +552,31 @@ def test_the_stats_say_when_it_last_ran(client):
     registry.record_run("crawl", {"companies": 1979, "seconds": 137.9, "new": 4266})
     body = client.get("/boards/stats").json()["schedule"]
     assert body["crawl"]["companies"] == 1979 and body["crawl_due"] is False
+
+
+def test_the_day_a_role_belongs_to_is_the_readers_own_day(monkeypatch):
+    """The window and the role have to be read off one clock.
+
+    `window_dates` uses `date.today()` - the reader's local day, which is
+    the documented decision - while `found_at` is a UTC instant. Slicing
+    the instant's first ten characters gave the UTC day, so for the whole
+    evening west of Greenwich the two disagreed: after 17:00 Pacific, UTC
+    is already tomorrow and every role the crawl had just found was filed
+    under tomorrow, leaving `today` reading zero. Found live on
+    2026-10-31 at 00:35 UTC against 17:35 local.
+    """
+    import datetime as dt
+
+    store.add_new([role(posted="")])
+    # The instant is UTC and late enough that its UTC date is tomorrow
+    # wherever the clock is set behind Greenwich.
+    with store.connect() as conn:
+        conn.execute("UPDATE roles SET found_at = ?",
+                     (dt.datetime.now(dt.timezone.utc).isoformat(),))
+        conn.commit()
+        day, local = conn.execute(
+            f"SELECT {store.DAY}, date('now','localtime') FROM roles").fetchone()
+
+    assert day == local, "a role found now belongs to the day it is now, where the reader is"
+    assert len(store.listing(window="today")) == 1
+    assert store.counts()["found_today"] == 1

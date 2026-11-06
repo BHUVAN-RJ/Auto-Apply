@@ -285,6 +285,14 @@ async def run(page: Session, target_id: str = "") -> AutofillResult:
     """The flow on an attached page: find, check, click, wait. Split from
     `press` so it can run against a fake page in tests."""
     result = AutofillResult(target_id=target_id)
+    # Jobright's extension fills the tab the person is looking at, so the
+    # fill's own tab has to be that tab. It used to be by luck - Chrome puts
+    # a newly created tab in front - and luck stopped being enough once a
+    # job's tab could be opened behind the list on purpose (2026-10-29).
+    try:
+        await page.send("Page.bringToFront")
+    except Exception as error:  # noqa: BLE001 - the press is still worth trying
+        log.debug("could not bring the form to the front: %s", error)
     await wait_for_load(page)
     # The extension needs a moment after the page to work out which job this
     # is; pressing into that gap gets its "another job" control.
