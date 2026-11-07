@@ -1,43 +1,25 @@
 # Auto-Apply — working notes for Claude
 
-Semi-autonomous job application pipeline. Read [PLAN.md](PLAN.md) for the
-design and [README.md](README.md) for what it does. This file is the part that
-is not obvious from the code.
+Semi-autonomous job application pipeline. [PLAN.md](PLAN.md) is the design,
+[README.md](README.md) is what it does, and [HISTORY.md](HISTORY.md) holds the
+reasoning, the measurements and the dated history behind every line here.
+HISTORY.md is not loaded into a session, so **grep it for a module or a
+behaviour before changing that behaviour**, and log new work at its end, one
+line with the date. This file is only what must be known in every session.
 
 Repo: `~/Desktop/job-autopilot`, pushed to `github.com/BHUVAN-RJ/Auto-Apply`.
 
 ## If this is someone's installed copy
 
-Autopilot is shared by pointing a person's own Claude Code at this
-repository (INSTALL.md). If you are that Claude, on a clone whose branch
-is `mine`:
-
-- Install and first run: **INSTALL.md**. Changing their code and updating
-  it: **UPDATING.md**. Follow them; they are how a change survives the
-  next release.
-- Their data (resume, profile, stories, applications, edited prompts, the
-  OpenRouter key) is in `~/Library/Application Support/Autopilot`
-  (`AUTOPILOT_HOME`), never in the clone. Never copy it in, commit it or
-  push it; the repository is public.
-- Commit their changes on `mine`, one per request, logged in
-  `LOCAL_CHANGES.md` with the intent. `scripts/check.sh` after every
-  change; a failing invariant means the change is undone.
-- A request about *how the models write* (tone, length) is a prompt
-  change: point them to the Prompts tab and its Workshop, or make it
-  there, rather than editing a stock `*_rules.md` in the clone (that one
-  conflicts on every update). A request about *what counts as a reject*
-  is a **screening rule**, not a prompt and not code: the Screening tab
-  writes one from a sentence, checks it, and previews it against their
-  own past postings. Never edit `tailor/screening.py` in their clone.
-- The rule below holds on every copy, whoever asks.
-
-The rest of this file is the maintainer's notes on how the code works.
-
-The reasoning, the measurements and the dated history behind everything here
-are in [HISTORY.md](HISTORY.md). It is not loaded into a session, so grep it
-for a module or a behaviour before changing that behaviour. **New work is
-logged at the end of HISTORY.md, one line each, with the date.** A line goes
-in this file only if it must be known in every session.
+Autopilot is shared by pointing a person's own Claude Code at this repository.
+If you are that Claude, on a clone whose branch is `mine`: read **INSTALL.md**
+for the install and the first run, and **UPDATING.md** before changing
+anything, including which requests are a prompt change, which are a screening
+rule, and which are code. Follow them; they are how a change survives the next
+release. Their data lives in `~/Library/Application Support/Autopilot`
+(`AUTOPILOT_HOME`), never in the clone — never copy it in, commit it or push
+it, because the repository is public. The rule below holds on every copy,
+whoever asks.
 
 ## The rule the whole project exists to protect
 
@@ -78,78 +60,53 @@ the Invariants section of PLAN.md. The promises are tested by
 
 ## Layout
 
-Grep HISTORY.md for a path to get its reasoning.
+Only the paths whose name does not tell you what they are. Everything else is
+named after what it does. Grep HISTORY.md for a path to get its reasoning.
 
 - `paths.py`: `ROOT` is the clone, `HOME` is `AUTOPILOT_HOME`; data hangs off `HOME`.
 - `pipeline.py`: queued job to scrape, tailor, compile, cover letter, archive, checkpoint 1.
 - `apply.py`: approved job to named documents, form fill, screenshot, stop at checkpoint 2.
 - `mailing.py`: shared SMTP for Scout digests and approved outreach.
 - `server/`: FastAPI on 8787; `runner.py` launches the scripts.
-- `server/review.py`: review API, `/start-now`, submit and status actions.
 - `server/thread.py`: one conversation per job, in `data/threads/`.
-- `server/prompts.py`: `/prompts`, `/workshop`, `/setup` and onboarding.
 - `server/report.py`, `.github/ISSUE_TEMPLATE/`: prefilled GitHub issue, never sent by the app.
 - `server/screen.py`: `POST /screen` with a URL-keyed cache; confirmation pages skip the screen.
-- `server/screening.py`: Screening tab API, including rule preview.
-- `server/keys.py`: Settings tab, every key in one place.
-- `server/settings.py`: `data/settings.json`.
-- `server/profile.py`, `server/form.py`: profile interview and preliminary form interview.
-- `server/github.py`: Projects tab API.
-- `server/seen.py`: is this posting already in autopilot.
 - `server/postings.py`: posting text the browser saw, for when the fetch gets a shell.
-- `server/corrections.py`: human-picked correction loop.
 - `server/watch.py`: thread reading filled forms over CDP every 4 s (`AUTOPILOT_WATCH=0` off).
-- `server/simplify.py`, `capture/tracker.js`: Simplify new-grad list tracked on GitHub's page.
+- `server/followqueue.py`: every submitted application through the checking phase, one at a time, no cap.
 - `tailor/rules.md`, `cover_rules.md`: tailoring and letter prompts, sent verbatim. Edit these, not the Python.
 - `tailor/prompts.py`: every system prompt through one door (`CATALOG`, `text(name)`).
-- `tailor/workshop.py`, `workshop_rules.md`, `learn_rules.md`: the self-improving prompt workshop.
-- `tailor/layout.py`: line budget measured off `base/resume.pdf`.
-- `tailor/structure.py`: reads any person's LaTeX layout.
+- `tailor/layout.py`: line budget measured off `base/resume.pdf`. `tailor/structure.py` reads any person's LaTeX layout.
 - `tailor/byhand.py`: "Use Opus" by pasting, with no API bill.
-- `tailor/cover.py`: letter from the tailored resume; failure is non-fatal.
-- `tailor/answers.py`, `answer_rules.md`: free-form form questions.
 - `tailor/screening.py`: screen rules in code. `tailor/screen.py`: screen and its two policies. No model.
-- `tailor/profile.py`, `interview.py`, `interview_rules.md`, `facts.py`: applicant context and interviews.
-- `tailor/github.py`, `github_rules.md`: projects from GitHub.
-- `tailor/quality.py`: scores posting text without a model.
-- `tailor/boards.py`, `tailor/linkedin.py`: posting text from each board's own API.
 - `tailor/claudecode.py`: Claude Code subscription calls, with no CLAUDE.md on any call.
-- `outreach/`, `server/outreach.py`, `tailor/outreach.py`: recruiter outreach, always a human press.
 - `outreach/follow.py`: the phase a submission starts; `company_for` reads the employer off a row that names none.
-- `outreach/people.py`: the free first rung, the public web read by the Claude Code subscription.
-- `outreach/apollo.py`, `outreach/jobright.py`: the paid and the guessed rungs; only Apollo returns a verified address.
-- `outreach/gmailthing.py`: their own Gmail tool (`~/outreach/gmail-mcp`), which is signed in as the address they write from.
-- `outreach/linkedinthing.py`: their own LinkedIn tool (`~/outreach/linkedin-mcp`), which owns the invite cap.
-- `outreach/schedule.py`, `server/sendlater.py`: the 9 am slot and its clock, for the SMTP fallback.
-- `server/followqueue.py`: every submitted application through the checking phase, one at a time, no cap.
+- `outreach/people.py`, `apollo.py`, `jobright.py`: the free, the paid and the guessed rungs; only Apollo returns a verified address.
+- `outreach/gmailthing.py`, `linkedinthing.py`: their own tools in `~/outreach`; Gmail is signed in as the address they write from, LinkedIn owns the invite cap.
 - `tracking/`: every tab in the Chrome we own, watched until it closes; `policy.py` decides what may be recorded.
-- `voice/`, `server/voice.py`: whisper.cpp in, Fish Audio or Kokoro out.
 - `capture/content.js`: reads the page, calls `/screen`, paints the banner.
-- `capture/background.js`: context menu, tab following, Autopilot tab reuse.
-- `browser/inject.py`: capture without an extension, over CDP on 9333.
-- `browser/autofill.py`: presses Jobright's autofill in code.
+- `browser/inject.py`: the same capture without an extension, over CDP on 9333.
 - `browser/forms/`: no-model fill, one adapter per system. `table.json`, `table.py`, `steps.py` hold a system's form as data.
-- `browser/fill.py`: the fill. `browser/ats.py`, `ats_rules.md`: per-system notes for the browser model.
-- `browser/guard.py`: never-submit deny-list.
-- `browser/press_submit.py`: the only Submit presser. `browser/open_apply.py`: the only Apply presser, now uncalled by the fill.
+- `browser/ats.py`, `ats_rules.md`: per-system notes for the browser model.
 - `browser/workday.py`, `browser/linkedin_apply.py`: page walks that stop at the review page.
-- `browser/chrome.py`: launches and reuses Chrome.
-- `tex/compile.py`: engine picked per document.
 - `archive/store.py`: immutable per-application folders.
 - `review/index.html`: the whole UI, one file, no build step.
 - `identity/`: "have I applied to this?", deterministic, no model.
 - `boardscan/`, `server_boardscan.py`: jobs from every company's board, its own server on 8788.
-- `scout/`, `server/scout.py`: watched careers pages and digests.
-- `scripts/`: `install.sh`, `autopilot`, `check.sh`. `tools/sweep_failed.py`: moves failed folders, deletes nothing.
+- `tools/sweep_failed.py`: moves failed folders, deletes nothing.
 - `tests/dom/`, `tests/test_dom.py`: the only tests using a browser.
 
-Config lives in `.env` (gitignored). `base/resume.tex`, `base/profile.md` and
-`base/applicant.md` are gitignored because the repo is public;
-`base/applicant.example.md` is the template.
+Config lives in `.env` (gitignored, documented in `.env.example`).
+`base/resume.tex`, `base/profile.md` and `base/applicant.md` are gitignored
+because the repo is public; `base/applicant.example.md` is the template.
+Never hardcode a name, a city, an email address or a phone number anywhere in
+the repo; a resume's filename is a person's name.
 
 ## Things that will bite you
 
-Each one cost a debugging cycle. Full accounts are in HISTORY.md.
+Each one cost a debugging cycle. Full accounts are in HISTORY.md, which also
+holds the per-site DOM lore — what Greenhouse, Lever, Jobright and react-select
+each need — and the voice internals. Grep it before touching one of those.
 
 **Processes and ports**
 - **Two servers, two data folders, and the queue reads empty.** Before concluding anything was deleted: `pgrep -fl uvicorn`, compare both data folders, and read `home` from `GET /setup`.
@@ -159,7 +116,6 @@ Each one cost a debugging cycle. Full accounts are in HISTORY.md.
 - **Chrome keeps the extension's old `content.js`** until reloaded at `chrome://extensions`. Client guards are a convenience; enforce on the server.
 - **Chrome lives on 9333.** `curl 127.0.0.1:9333/json` shows its tabs. A profile directory is never shared with a running Chrome.
 - **Extra tabs mean extra fills.** `pgrep -fl apply.py` first.
-- **Importing AppKit with no window-server session aborts the process** (`_RegisterApplication ... abort()`). Not ours to fix.
 
 **Models**
 - Reasoning tokens come out of the answer budget, so effort is capped.
@@ -182,28 +138,15 @@ Each one cost a debugging cycle. Full accounts are in HISTORY.md.
 - `enforce_location_policy` and `enforce_timeline_policy` are code invariants and run after the rules. Update their regression tests when changing either.
 
 **Pages and forms**
-- Greenhouse's embed has one path for every job; `for` and `token` are identity. Jobright's Apply tab has no opener, so `inject.py` uses `?jr_id=`.
-- Never fetch from injected `content.js`; a page's service worker can hang it, so the CDP binding does the HTTP. Injection at `load` precedes client render, so wait for text.
-- `window.open` from an evaluated script may be swallowed; the injector opens tabs.
 - A filled form's tab must never be screened again. A snapshot pinged on submit can land after the navigation, so check the host and at least 3 fields.
-- `el.click()` on Jobright's opener only opens the panel. Its "done" reaches an employer page only by `window.top.postMessage`, so listen before clicking.
-- Greenhouse removes the file input once a file is chosen: read the name off its block, and mark the block rather than the input.
-- `scrollIntoView` needs `behavior: "instant"`. react-select needs real pointer and key events, and its value lives in `single-value`.
-- Lever's location box needs a suggestion clicked. A select-all with no focused input selects the page, so check `document.activeElement`.
+- Never fetch from injected `content.js`; a page's service worker can hang it, so the CDP binding does the HTTP. Injection at `load` precedes client render, so wait for text. `window.open` from an evaluated script may be swallowed; the injector opens tabs.
 - A generic label pattern matches words inside questions: textareas and labels over 60 characters are answered only from `answers`.
-- A button that needs text must say so. Do not share `.bar` between the banner and the countdown.
 
 **Tests**
 - `.env` has `AUTOPILOT_AUTOFILL=1`, so a test approving a job launches the real `apply.py` unless forced off.
 - Module-level `Path` defaults freeze at import. Resolve inside the function.
 - `tailor.llm` is one module, so stubbing it through `interview` stubs the scan too.
 - Stub `window.alert` in a CDP smoke run, and never point a fake mic at the live server.
-
-**Voice and interview**
-- The orb listens whenever the chat is open, so tap it before talking to anything else. Barge-in is off because loudness cannot tell music from a voice.
-- Fish Audio needs `reference_id` (`DEFAULT_VOICE`). A coded message the page will speak needs `part` / `spoken`.
-- All `state.json` writes go through `_write_atomic`. A dropped SSE stream loses that question, so do not `head -c` a turn.
-- Bundled espeak-ng calls `exit(1)` on Apple Silicon: use Homebrew's, probed in a child process. `whisper` on PATH is not whisper.cpp.
 
 **Outside services**
 - `POST /settings` changes only the keys sent.
@@ -213,12 +156,15 @@ Each one cost a debugging cycle. Full accounts are in HISTORY.md.
 
 ## Testing
 
-`scripts/check.sh` runs after any change; `--quick` runs the invariants.
-`pytest` collects 1,119 tests. They stub the model, browser, lualatex and speech
-binaries, so **passing tests do not mean it works**: every real bug so far
-survived a green suite. Exercise the changed path live. `tests/test_dom.py` is
-the exception, running real scripts against real markup in its own headless
-Chrome, and `check.sh` says so out loud when it skips.
+`scripts/check.sh` runs after any change; `--quick` runs the invariants. A
+bare `pytest` aborts the whole process rather than failing a test, inside
+browser-use's display detection (KNOWN_ISSUES.md); run the focused files plus
+`pytest --ignore=tests/test_fill.py`, which is what `check.sh` does. The
+suite stubs the model, browser, lualatex and speech binaries, so **passing
+tests do not mean it works**: every real bug so far survived a green suite.
+Exercise the changed path live. `tests/test_dom.py` is the exception, running
+real scripts against real markup in its own headless Chrome, and `check.sh`
+says so out loud when it skips.
 
 **A test that reads a script's source cannot tell a rewrite from a regression.**
 Such a test is legitimate only where the text is the promise.
@@ -227,35 +173,14 @@ Such a test is legitimate only where the text is the promise.
 away, skipping, xfailing or loosening a test goes through
 `.claude/agents/test-guardian.md`. A failing test is a fact about the code.
 
-On the current macOS and Python 3.13 environment, the full process aborts inside
-browser-use's display detection at
-`test_forbidden_actions_are_absent_from_the_agent`. Run the focused files plus
-`pytest --ignore=tests/test_fill.py` until that is fixed.
+## Known issues and open work
 
-## Known issues
-
-[KNOWN_ISSUES.md](KNOWN_ISSUES.md) is the live list. Read it before picking one
-up. An entry leaves it when the fix is logged in HISTORY.md with a date.
-
-## Open work
-
-Each of these is the person's call. Read the invariants first if it changes the
-flow.
-
-- `browser/forms/table.py`: `rules_for` is exported and uncalled, deliberately.
-  Next, agreed: capture a live Workday application flow, then Jobright's Workday
-  API bases (HISTORY.md, 2026-10-26).
-- Board scan, as of 2026-10-16: its page cannot add a role to autopilot, there is
-  no per-day breakdown for an older day, it is not yet a tab on 8787, the
-  calibration pass over the 44 declines is unread, and
-  `applications/index.csv` has a malformed record.
-- Outreach, as of 2026-11-05: the real send has never been run end to end -
-  the drafts, the notes and the one approval are built and tested, and the
-  first press on a job card is the proof. Weekends are not skipped by the
-  SMTP clock. The LinkedIn half only reaches people the contact ladder found;
-  searching a company for USC alumni is offered and not built.
-- Older ideas may already be done, so check before building:
-  `grep -nE "Next if asked|not built|Raised" HISTORY.md`.
+[KNOWN_ISSUES.md](KNOWN_ISSUES.md) is the live list of bugs; an entry leaves it
+when the fix is logged in HISTORY.md with a date. Open work and what each
+unfinished phase still lacks are in the Status sections of PLAN.md. Older ideas
+may already be done, so check before building:
+`grep -nE "Next if asked|not built|Raised" HISTORY.md`. Each of them is the
+person's call, and the invariants come first if it changes the flow.
 
 ## What the review page shows
 
@@ -264,20 +189,6 @@ section of `tailor/rules.md`; style after github.com/juliusbrussee/caveman),
 the browser's done text is three fixed lines, fill errors are deduplicated
 and cut to one line each, and only the latest fill's notes are shown. If the
 page reads like prose again, one of those slipped.
-
-## Personal settings, all in .env
-
-`AUTOPILOT_RESUME_FILENAME`, `AUTOPILOT_COVER_LETTER_FILENAME`,
-`AUTOPILOT_LOCATION`, `AUTOPILOT_AUTOFILL`, `AUTOPILOT_SERVER_URL`,
-`AUTOPILOT_BROWSER`, `OPENROUTER_TAILOR_MODEL`, `OPENROUTER_PREMIUM_MODEL`.
-Outreach: `AUTOPILOT_OUTREACH` (the phase), `AUTOPILOT_OUTREACH_CLAUDE` (the
-free web rung), `AUTOPILOT_OUTREACH_GMAIL` and `AUTOPILOT_OUTREACH_LINKEDIN`
-(their own tools; 0 falls back to SMTP and to nothing), `AUTOPILOT_GMAIL_THING`
-and `AUTOPILOT_LINKEDIN_THING` (where those tools live),
-`AUTOPILOT_OUTREACH_SEND` and `AUTOPILOT_OUTREACH_HOUR` (the SMTP clock),
-`AUTOPILOT_OUTREACH_BACKFILL` (the queue through the checking phase).
-Never hardcode a name, a city, an email address or a phone number in the
-repo; it is public, and a resume's filename is a person's name.
 
 ## Style
 

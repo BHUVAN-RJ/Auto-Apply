@@ -199,3 +199,30 @@ for r in rows:
 
 Deliberately **not** covered by a test: a test that pins a defect goes red
 on the day somebody fixes it, which taxes the fix.
+
+---
+
+## 4. The full test run aborts inside browser-use's display detection
+
+On the current macOS and Python 3.13 environment, `pytest` over the whole
+suite does not fail a test — the process dies — at
+`test_forbidden_actions_are_absent_from_the_agent` in `tests/test_fill.py`.
+Importing browser-use probes for a display, that probe reaches AppKit, and
+registering an application with no window-server session calls `abort()`
+(`_RegisterApplication ... abort()`). Nothing of ours is on the stack, so
+there is no exception to catch at the call site.
+
+**To see it**
+
+```bash
+pytest            # aborts partway, no failure report
+pytest --ignore=tests/test_fill.py   # runs clean
+```
+
+**What a fix has to deal with**
+
+The import has to happen in a child process, or behind the same kind of
+probe `voice/` already uses for espeak-ng, so that an abort kills something
+expendable rather than the test run. Until then, run the focused files plus
+`pytest --ignore=tests/test_fill.py`. `scripts/check.sh` already passes that
+flag, for its own reason: the app no longer installs browser-use at all.
