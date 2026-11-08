@@ -2247,3 +2247,21 @@ Oldest first. Add new entries at the end of this file, one line each, with the d
   That is the same field the person's own "done with the outreach" sets, the
   card already offers "Reopen it", and no job status moves: the follow-up is
   not a stage of the application, which the new tests assert.
+
+- **2026-11-07 — launchd is not your terminal, and exit 78 says nothing.**
+  The agent installed cleanly and never ran: 355 spawns, every one of them
+  `78: EX_CONFIG`, and not a line in any log, because it never got far
+  enough to open one. An agent gets none of the access macOS has granted the
+  app you type in, and both of the paths launchd itself opens before our
+  code runs - the working directory and the stdout file - were inside
+  `~/Desktop`, which TCC protects. So the plist has no `WorkingDirectory`
+  any more (the script cds inside the process that is allowed to) and its
+  log is `~/Library/Logs/Autopilot/server.log`. `install` now warns when the
+  clone sits in Desktop, Documents or Downloads, and `status` prints the
+  spawn count and the last exit code with a line saying what 78 means,
+  because a supervisor that fails silently is worse than none.
+
+  Whether a clone on the Desktop can be supervised at all is still open:
+  removing the two paths launchd opens may be enough, or zsh's own read of
+  the script may be refused too, in which case the clone has to live
+  somewhere like `~/code`. One install attempt settles it.
