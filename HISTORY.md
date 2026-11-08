@@ -2191,3 +2191,59 @@ Oldest first. Add new entries at the end of this file, one line each, with the d
   SMTP path stays for anyone whose login is the address they write from. The
   full press on a real job card has not been run end to end; that run is the
   proof.
+
+- **2026-11-07 — CLAUDE.md holds only what a session cannot find for itself.**
+  It had reached 295 lines, a quarter of it a Layout list whose entries
+  mostly repeated what the path already said, six of them repeating the
+  invariants section, plus the branch-and-commit ritual UPDATING.md states
+  properly and seventeen environment variable names of which `.env.example`
+  documented three. The names moved to `.env.example` with their defaults
+  and reasons, the installed-copy section became a pointer, Layout kept only
+  the paths whose name does not tell you, Open work became a pointer to
+  PLAN.md's Status sections, and the per-site DOM lore and voice internals
+  went - every one of them was already here in full, and they only matter
+  once you are in that file. 19,386 chars to 13,434. The invariants, the
+  testing philosophy and the one-click thesis are untouched. The warning
+  that prompted it was about something else entirely: Claude Code counts
+  every instruction file loaded, and at 205.6k the share from this repo was
+  under a tenth, the rest being plugin and skill CLAUDE.md files outside it.
+
+- **2026-11-07 — the server is supervised, and the launcher adopts it.**
+  `scripts/service.sh` writes a launchd agent that runs
+  `scripts/autopilot serve` at login and starts it again within seconds of
+  it dying, so the page is there without anyone pressing anything. The agent
+  covers the server only: Chrome holds the person's logins and their open
+  forms, and a supervisor that reopened it would fight the rule that the
+  browser stays on the finished form. The plist is generated from the
+  clone's own path at install time, the way `make_app.sh` writes it into
+  Autopilot.app, so nothing machine-specific is committed to a public
+  repository, and it runs through `zsh -l` because launchd's own PATH has no
+  lualatex, git or lsof in it.
+
+  The hazard was the launcher, not the agent. A supervised server keeps no
+  pid file of ours, which the launcher read as "no server": it would pick
+  the next free port and start a second one, and two servers mean two data
+  folders and a queue that reads empty. So `ours()` identifies our own
+  server by /health *and* /setup - the board scan on 8788 answers neither -
+  `pick_port` adopts whatever is already answering, `start` leaves it alone,
+  `status` names it as supervised, `stop` says when a supervisor has
+  restarted what it just killed, and `serve` exits 0 when the port is
+  already held, which with `KeepAlive.SuccessfulExit=false` keeps launchd
+  from looping. `tests/test_service.py` runs the real script against a
+  stand-in that answers those two endpoints. An agent is not a daemon: it
+  stops at logout and sleeps when the Mac sleeps.
+
+- **2026-11-07 — nobody to write to ends the outreach instead of failing it.**
+  Asked for in the maintainer's words: if there is nobody found for the email
+  in Apollo and everything, count them as complete. `_finish` treated zero
+  drafts as a failure however politely it happened, so a company with no
+  reachable recruiter sat in "emails to send" for ever, nagging for a send
+  that could not happen. It now tells the two cases apart: `_find_people`
+  collects into `blocked` the reasons a retry could fix - no Apollo key, a
+  search that threw, a row with no employer, no name to sign with - and
+  those still fail with the reason on the card. An empty `blocked` and no
+  drafts means the ladder ran free rung to paid and there is simply nobody
+  there, so `done_at` is set and the application goes back under Applied.
+  That is the same field the person's own "done with the outreach" sets, the
+  card already offers "Reopen it", and no job status moves: the follow-up is
+  not a stage of the application, which the new tests assert.

@@ -297,8 +297,13 @@ def _with_email(job_id: str, contact: Contact, notes: list[str]) -> Optional[Con
 
 
 def _find_people(job_id: str, company: str, title: str,
-                 notes: list[str]) -> list[Contact]:
+                 notes: list[str], blocked: list[str]) -> list[Contact]:
     """The people to write to. The subscription looks first, Apollo second.
+
+    `blocked` collects the reasons a retry could fix - a missing key, a
+    search that threw, a row with no employer on it. An empty `blocked` and
+    nobody found means the ladder ran to the end and there is simply nobody
+    to write to, which `_finish` treats as an ending rather than a failure.
 
     `AUTOPILOT_OUTREACH_CLAUDE=0` goes straight to Apollo, as it did before.
     Apollo's *search* costs nothing either - the credit is spent on the
@@ -319,6 +324,7 @@ def _find_people(job_id: str, company: str, title: str,
             notes.append("Claude found nobody on the web for this company.")
         except Exception as exc:              # noqa: BLE001 - Apollo is still to come
             notes.append(f"the web search for people failed ({exc})")
+            blocked.append("the web search for people failed")
     existing = store.get(job_id).contacts
     if not apollo.configured():
         # Said whoever is on file, because it is the reason every address
@@ -327,14 +333,17 @@ def _find_people(job_id: str, company: str, title: str,
             "Apollo is not connected, so no address here is verified. Add the "
             "Apollo key in Settings and press Prepare again for a verified one.",
         )
+        blocked.append("Apollo is not connected")
         return existing
     if not company.strip():
         notes.append("the job has no company name, so Apollo had nothing to search for")
+        blocked.append("the job has no company name")
         return existing
     try:
         found = apollo.discover(company, PER_ROLE)
     except apollo.ApolloError as exc:
         notes.append(f"Apollo search failed: {exc}")
+        blocked.append(f"Apollo search failed: {exc}")
         return existing
     if found:
         store.add_contacts(job_id, found)
@@ -352,12 +361,13 @@ def prepare(job_id: str) -> Outreach:
     happened.
     """
     notes: list[str] = []
+    blocked: list[str] = []
     try:
         job, app_dir = _job_and_dir(job_id)
         company = company_for(job)
         if company and company != (job.company or "").strip():
             notes.append(f'the row names no employer, so "{company}" was read off the posting URL.')
-        contacts = choose(_find_people(job_id, company, job.title, notes))
+        contacts = choose(_find_people(job_id, company, job.title, notes, blocked))
         written = 0
         attachment = attachment_for(app_dir)
         if attachment is None:
@@ -381,6 +391,7 @@ def prepare(job_id: str) -> Outreach:
                 continue
             if not signature:
                 notes.append("your own name is missing from Form details and the cover letter")
+                blocked.append("your own name is missing")
                 break
             try:
                 store.put_draft(job_id, _write(
@@ -389,7 +400,8 @@ def prepare(job_id: str) -> Outreach:
                 written += 1
             except Exception as exc:          # noqa: BLE001 - one readable line per person
                 notes.append(f"{with_email.name}: the email could not be written ({exc})")
-        return _finish(job_id, written, len(contacts), notes, status="ready")
+        return _finish(job_id, written, len(contacts), notes, status="ready",
+                       blocked=blocked)
     except Exception as exc:                  # noqa: BLE001 - nothing may reach the caller
         log.warning("outreach preparation failed for %s: %s", job_id, exc)
         notes.append(str(exc))
@@ -436,25 +448,43 @@ def _job_and_dir(job_id: str):
 
 
 def _finish(job_id: str, written: int, people: int, notes: list[str],
-            status: str) -> Outreach:
+            status: str, blocked: Optional[list[str]] = None) -> Outreach:
     outreach = store.get(job_id)
     total = len([row for row in outreach.drafts if row.status in store.LIVE_DRAFTS])
+    ended = False
     if status == "ready" and total == 0:
-        # Nothing to click on is a failure however politely it happened, and
-        # the reason belongs in `error` where the card shows it.
-        status = "failed"
-    line = _summary(written, total, people)
+        if blocked:
+            # Something a retry could fix stopped it - a missing key, a search
+            # that threw. That is a failure, and the reason belongs in `error`
+            # where the card shows it.
+            status = "failed"
+        else:
+            # The ladder ran to the end, free rung to paid, and there is
+            # nobody at this company to write to. Asked for by the maintainer
+            # (2026-11-07): count it done rather than leaving it failed, so
+            # the application goes back under Applied instead of sitting in
+            # "emails to send" for ever, nagging for a send that cannot
+            # happen. Not a status change on the job: `done_at` is the same
+            # field the person's own "done with the outreach" sets, and the
+            # card's "Reopen it" undoes this in one press.
+            ended = True
+    line = _summary(written, total, people, ended)
     outreach.lookup_note = " ".join([line] + notes).strip()
     outreach.error = "; ".join(notes) if status == "failed" else ""
     outreach.prepare_status = status
     outreach.prepared_at = now()
+    if ended and not outreach.done_at:
+        outreach.done_at = now()
     if not outreach.active_draft and outreach.drafts:
         outreach.active_draft = outreach.drafts[0].id
     return store.save(outreach)
 
 
-def _summary(written: int, total: int, people: int) -> str:
+def _summary(written: int, total: int, people: int, ended: bool = False) -> str:
     """What was prepared, counted honestly. Fewer than three is said, not padded."""
+    if total == 0 and ended:
+        return ("Nobody at this company could be reached - the web and Apollo both "
+                "came back empty - so the outreach is counted as done.")
     if total == 0:
         return "No follow-up emails are ready yet."
     short = "" if total >= MAX_CONTACTS else f" Only {total} of {MAX_CONTACTS} people were found."

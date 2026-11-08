@@ -7,6 +7,8 @@
 #                              it holds the person's logins and open forms)
 #   scripts/autopilot status   what is running, on which port
 #   scripts/autopilot restart  stop, then start (after an update or an edit)
+#   scripts/autopilot serve    the server in the foreground, for a supervisor
+#                              to own (scripts/service.sh); never for a person
 #
 # Autopilot.app runs this. Everything the person owns lives in
 # $AUTOPILOT_HOME (default ~/Library/Application Support/Autopilot); the
@@ -35,10 +37,22 @@ mkdir -p "$RUN" "$LOGS"
 
 alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 healthy() { curl -fsS -m 2 "http://127.0.0.1:$1/health" >/dev/null 2>&1; }
+# The Autopilot server, and not merely something that answers /health: only
+# ours also serves /setup. The board scan on 8788 answers neither.
+ours() {
+  [ -n "${1:-}" ] || return 1
+  healthy "$1" && curl -fsS -m 2 "http://127.0.0.1:$1/setup" >/dev/null 2>&1
+}
 
 # 8787 unless something else holds it (Caveman's proxy has); the port is
 # kept, so the injector and the page agree with the server.
 pick_port() {
+  # A server already answering is the server, whoever started it. The
+  # supervised copy keeps no pid file of ours, so without this a second one
+  # starts on the next free port and the two of them get a data folder each -
+  # the first entry in CLAUDE.md's list of what bites you.
+  local recorded; recorded="$(cat "$RUN/port" 2>/dev/null || true)"
+  for p in "$recorded" 8787; do ours "$p" && { echo "$p"; return; }; done
   if [ -f "$RUN/port" ] && alive "$RUN/server.pid"; then cat "$RUN/port"; return; fi
   for p in 8787 8788 8789 8790 8791 8792 8793 8794 8795 8796; do
     if ! lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "$p"; return; fi
@@ -51,11 +65,35 @@ stop() {
     if alive "$RUN/$name.pid"; then kill "$(cat "$RUN/$name.pid")" 2>/dev/null; echo "stopped $name"; fi
     rm -f "$RUN/$name.pid"
   done
+  # A supervised server is not ours to kill: the supervisor starts it again
+  # within seconds, which is the whole point of it.
+  local port; port="$(cat "$RUN/port" 2>/dev/null || echo 8787)"
+  sleep 1
+  if ours "$port"; then
+    echo "a supervised server is still serving on $port; scripts/service.sh stop" >&2
+  fi
+}
+
+serve() {
+  [ -x "$PY" ] || { echo "no .venv: run scripts/install.sh first" >&2; exit 1; }
+  local port; port="$(pick_port)"
+  if ours "$port"; then
+    echo "a server is already serving on $port; nothing to supervise" >&2
+    exit 0
+  fi
+  echo "$port" > "$RUN/port"
+  export AUTOPILOT_SERVER_URL="http://127.0.0.1:$port"
+  cd "$REPO" || exit 1
+  # exec, so the supervisor watches uvicorn itself and not a shell that has
+  # already exited. No pid file: the supervisor owns the process.
+  exec "$PY" -m uvicorn server.app:app --host 127.0.0.1 --port "$port"
 }
 
 status() {
   local port; port="$(cat "$RUN/port" 2>/dev/null || echo "?")"
-  alive "$RUN/server.pid" && echo "server  running on $port" || echo "server  stopped"
+  if alive "$RUN/server.pid"; then echo "server  running on $port"
+  elif ours "$port"; then echo "server  running on $port (supervised, no pid file of ours)"
+  else echo "server  stopped"; fi
   alive "$RUN/inject.pid" && echo "inject  running" || echo "inject  stopped"
   curl -fsS -m 2 http://127.0.0.1:9333/json/version >/dev/null 2>&1 && echo "chrome  running (9333)" || echo "chrome  stopped"
   echo "data    $AUTOPILOT_HOME"
@@ -71,7 +109,9 @@ start() {
   export AUTOPILOT_SERVER_URL="http://127.0.0.1:$port"
   cd "$REPO" || exit 1
 
-  if ! alive "$RUN/server.pid" || ! healthy "$port"; then
+  if ours "$port" && ! alive "$RUN/server.pid"; then
+    echo "server already serving on $port (supervised); left alone"
+  elif ! alive "$RUN/server.pid" || ! healthy "$port"; then
     nohup "$PY" -m uvicorn server.app:app --host 127.0.0.1 --port "$port" \
       >> "$LOGS/server.log" 2>&1 < /dev/null &
     echo $! > "$RUN/server.pid"
@@ -97,8 +137,9 @@ start() {
 case "${1:-start}" in
   start) start ;;
   server) start server ;;
+  serve) serve ;;
   stop) stop ;;
   restart) stop; sleep 1; start ;;
   status) status ;;
-  *) echo "usage: $0 [start|server|stop|restart|status]" >&2; exit 2 ;;
+  *) echo "usage: $0 [start|server|serve|stop|restart|status]" >&2; exit 2 ;;
 esac

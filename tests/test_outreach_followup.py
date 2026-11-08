@@ -719,3 +719,67 @@ def test_a_company_the_row_does_name_is_never_second_guessed():
     job = Job(url="https://avature.sandisk.com/Careers/JobDetail/x/1",
               title="Engineer", company="Western Digital", status=Status.SUBMITTED)
     assert follow.company_for(job) == "Western Digital"
+
+
+# --- nobody to write to is an ending, not a failure (2026-11-07) -----------
+
+def test_an_exhausted_ladder_counts_the_outreach_as_done(tmp_path, monkeypatch):
+    """The web found nobody, and Apollo is connected and has nobody either.
+
+    There is no third rung, so the job must not sit in "emails to send"
+    waiting for a send that cannot happen: `done_at` puts it back under
+    Applied, which is what the person's own "done with the outreach" does,
+    and the card offers "Reopen it".
+    """
+    job, _ = application(tmp_path)
+    empty = Apollo()
+    empty.people = []
+    wire(monkeypatch, empty)
+    free_web(monkeypatch, found=[])
+
+    follow.start(job.id)
+    follow.wait(job.id)
+
+    state = outreach_store.get(job.id)
+    assert empty.searched == 1                   # the paid rung was reached
+    assert state.done_at, state.lookup_note
+    assert state.prepare_status == "ready"
+    assert state.error == ""
+    assert "counted as done" in state.lookup_note
+    # Still not a stage of the application: the job's own status never moved.
+    assert queue.get(job.id).status == Status.SUBMITTED
+
+
+def test_a_missing_apollo_key_is_not_an_ending(tmp_path, monkeypatch):
+    """A retry could fix this one, so it may not be counted as done: the card
+    has to keep saying the key is missing until somebody adds it."""
+    job, _ = application(tmp_path)
+    wire(monkeypatch)                            # no Apollo key at all
+    free_web(monkeypatch, found=[])
+
+    follow.start(job.id)
+    follow.wait(job.id)
+
+    state = outreach_store.get(job.id)
+    assert state.done_at is None
+    assert state.prepare_status == "failed"
+    assert "Apollo is not connected" in state.error
+
+
+def test_an_apollo_search_that_threw_is_not_an_ending(tmp_path, monkeypatch):
+    job, _ = application(tmp_path)
+    crowd = Apollo()
+    wire(monkeypatch, crowd)
+    free_web(monkeypatch, found=[])
+
+    def angry(company, per_role=3, client=None):
+        raise apollo.ApolloError("502 from Apollo")
+
+    monkeypatch.setattr(apollo, "discover", angry)
+
+    follow.start(job.id)
+    follow.wait(job.id)
+
+    state = outreach_store.get(job.id)
+    assert state.done_at is None
+    assert state.prepare_status == "failed"
