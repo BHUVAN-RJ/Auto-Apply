@@ -2351,3 +2351,24 @@ Oldest first. Add new entries at the end of this file, one line each, with the d
   `LINKEDIN_MCP_PORT`/`LINKEDIN_MCP_PROFILE` pin the old dedicated browsers
   back if sharing turns out to cost more than it saves.
 
+- **2026-11-10 - every fill on this machine failed at the last line, and no
+  test that runs could see it.** `browser/fill.py`'s no-model ending,
+  `_finish_without_agent`, wrote its report with `form_url` - a name that
+  exists in `run()` and not in that function. Python only complains when the
+  line runs, so the fill pressed Jobright's autofill, replaced the resume,
+  attached the cover letter, answered the open question, and *then* raised
+  `NameError: name 'form_url' is not defined`. The tab was perfect and the
+  job was marked failed. `.env` here has `AUTOPILOT_AGENT=0`, so that branch
+  is the only one this laptop takes: the 139 failed rows in the queue were
+  almost all this, not a form that would not fill.
+
+  The fix is the page the form is on, passed in as an argument. What let it
+  live is the interesting part: `scripts/check.sh` skips `tests/test_fill.py`
+  whole, because it imports browser-use and the app no longer installs it, so
+  the one file that covers the fill never runs. `fill.py` imports browser-use
+  inside the function that needs it, so the ending can be tested without it -
+  `tests/test_fill_no_agent.py` now does, and it runs with the suite.
+
+  Known and not fixed: a rerun is supposed to clear `error` on the queue row
+  and did not, so the Reddit row read `filled` with the old NameError still
+  printed beside it.

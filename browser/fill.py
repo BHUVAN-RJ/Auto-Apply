@@ -849,8 +849,8 @@ async def fill_async(
     if not agent_on:
         # Code only: Jobright's autofill, then the documents. No model
         # touches the form; whatever is left is the human's, on the tab.
-        result = await _finish_without_agent(cdp_url, url, target_id, filled, pressed, screenshot_to,
-                                             bool(cover_letter_pdf))
+        result = await _finish_without_agent(cdp_url, form_url, target_id, filled, pressed,
+                                             screenshot_to, bool(cover_letter_pdf))
         _sweep_blank(tabs_before)
         return result
 
@@ -1001,13 +1001,22 @@ async def _detach(browser) -> None:
         pass
 
 
-async def _finish_without_agent(cdp_url: str, url: str, target_id: str, filled: forms.Report,
+async def _finish_without_agent(cdp_url: str, form_url: str, target_id: str, filled: forms.Report,
                                 pressed: autofill.AutofillResult, screenshot_to: Path,
                                 wanted_cover_letter: bool) -> FillResult:
     """The fill with the model switched off: a screenshot, the report for
     the correction loop, the banner, and a result that is `ok` only when
     the tailored resume is on the form. Touches nothing itself; the
-    documents and the answers went on in `run_documents`."""
+    documents and the answers went on in `run_documents`.
+
+    `form_url` is the page the form is on, which is what the report is keyed
+    by. It used to be read off the caller's scope by accident - the name
+    exists there - and the fill therefore ended in `NameError: name
+    'form_url' is not defined` every single time the agent was switched off
+    (`AUTOPILOT_AGENT=0`), after the documents were already on the form. The
+    tab was fine and the job was marked failed, which is what the 139 failed
+    rows on this machine were (2026-11-10).
+    """
     shot = await _screenshot_cdp(cdp_url, target_id, screenshot_to) if target_id else None
     await _write_report(filled, screenshot_to.parent / "form_fill.json", cdp_url, form_url, target_id)
     errors = list(filled.errors)
