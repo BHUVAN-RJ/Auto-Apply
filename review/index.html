@@ -705,13 +705,27 @@ const LIVE = new Set(["tailoring", "approved", "filling"]);
 const FOLLOW = (j) => {
   const o = j.outreach;
   if (j.status !== "submitted" || !o || o.done) return null;
-  if (o.unsent) return { tone: "you", verb: `send ${o.unsent}` };
+  // Emails and connection notes are one press, so they are one row. A job
+  // where nobody had an address but somebody had a profile is still the
+  // person's move (2026-11-10).
+  if (o.unsent || o.invites_unsent) {
+    const bits = [];
+    if (o.unsent) bits.push(`${o.unsent} email${o.unsent > 1 ? "s" : ""}`);
+    if (o.invites_unsent)
+      bits.push(`${o.invites_unsent} note${o.invites_unsent > 1 ? "s" : ""}`);
+    return { tone: "you", verb: `send ${bits.join(" + ")}` };
+  }
   if (o.scheduled) return { tone: "agent", verb: `${o.scheduled} at ${
     new Date(o.next_send || "").getHours() || 9} am` };
   if (o.prepare_status === "running") return { tone: "agent", verb: "finding people", live: true };
-  if (o.prepare_status === "failed")
-    return { tone: "stop", verb: "none found", why: o.error || o.note };
-  return null;                 // every draft sent, or none ever prepared
+  // A job with nothing to send is not on the "emails to send" list, even
+  // when the search ended badly (2026-11-10). The group is a list of
+  // presses waiting for the person, and a row reading "none found" is not
+  // one: there is no address, so there is nothing to click, and 289 of
+  // those rows buried the handful that did have an email on them. The
+  // application goes back under Applied and the reason still shows on its
+  // own card, where Prepare can be pressed again.
+  return null;                 // every draft sent, nobody found, or never prepared
 };
 // "you" rows first, then the agent's, newest first inside each.
 const ORDER = ["awaiting_review", "filled", "filling", "approved", "tailoring", "queued"];
@@ -890,14 +904,14 @@ async function loadList() {
       || (a.handoff ? 1 : 0) - (b.handoff ? 1 : 0) || NEWEST(a, b));
   const followups = jobs.filter((j) => FOLLOW(j)).sort(NEWEST);
   const toSend = followups.filter((j) => FOLLOW(j).tone === "you")
-    .reduce((n, j) => n + j.outreach.unsent, 0);
+    .reduce((n, j) => n + j.outreach.unsent + (j.outreach.invites_unsent || 0), 0);
   const followIds = new Set(followups.map((j) => j.id));
   const applied = jobs.filter((j) => BUCKET[j.status] === "done" && !followIds.has(j.id))
     .sort(NEWEST);
   const rejected = jobs.filter((j) => BUCKET[j.status] === "stop").sort(NEWEST);
   $("count").textContent = jobs.length
     ? `${inflight.length} in flight · ${waiting.length} need you`
-      + (toSend ? ` · ${toSend} to email` : "")
+      + (toSend ? ` · ${toSend} to send` : "")
     : "";
   paintHold(jobs.filter((j) => j.status === "approved").length,
             jobs.some((j) => j.status === "filling"));

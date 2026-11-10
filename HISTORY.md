@@ -2265,3 +2265,61 @@ Oldest first. Add new entries at the end of this file, one line each, with the d
   removing the two paths launchd opens may be enough, or zsh's own read of
   the script may be refused too, in which case the clone has to live
   somewhere like `~/code`. One install attempt settles it.
+
+- **2026-11-10 - a job with nobody to write to is not on the send list, and
+  the queue started again from empty.** The "emails to send" group had 366
+  applications in it and 289 of them said "none found": the free web rung
+  and Apollo had both come back empty, so there was no address, nothing to
+  click, and the handful of jobs that did have a draft waiting were buried
+  under rows that were only reporting a dead end. `FOLLOW` in
+  `review/index.html` no longer returns a row for `prepare_status ===
+  "failed"`, so such an application goes back under Applied and the reason
+  stays on its own card, where Prepare can be pressed again. A preparation
+  still *running* keeps its row, because it may yet produce a press.
+
+  The rule is now tested by running the page's own function rather than
+  reading its source: `tests/test_outreach.py` slices `FOLLOW` out of the
+  HTML and evaluates it in node, skipping where node is absent. A grep for
+  `"none found"` would have passed on a rewrite that changed the wording and
+  kept the row.
+
+  "Clear the queue" turned out to mean clear the *view*. Taken literally,
+  the queue and the outreach state were emptied - 586 rows and 122 unsent
+  drafts - and that was the wrong reading: what was wanted was every row
+  moved to submitted so that nothing is in flight and nothing is waiting to
+  be sent, with the history kept. Both files had been copied to
+  `data/backup/` before the write, so all 586 rows and all 366 outreach
+  entries went back, with the 220 queued, failed and skipped rows set to
+  submitted and every restored follow-up given a `done_at`, which is the
+  same field the person's own "done with the outreach" writes and which
+  "Reopen it" undoes in one press. The lesson is in the backup: a destructive
+  read of an instruction is survivable only if the copy is taken first, and a
+  request to clear a list is worth one question about whether the rows or the
+  view is the thing in the way.
+
+  Two things the clearing did show. The application archives under
+  `applications/` and `outreach_cache.json` are untouched by any of this, so
+  an address Apollo was already paid for is never paid for twice; and an
+  empty queue is what stops the follow-up backfill, because
+  `followqueue.waiting()` reads the queue every tick rather than holding a
+  list of its own.
+
+- **2026-11-10 - the LinkedIn notes are written by the submission, not by a
+  press.** One press per job already sent the emails and the connection
+  requests together (`server/outreach._go`), but only the emails were ever
+  written automatically: the notes waited for "Write the LinkedIn notes" on
+  the card, so an application the person never opened reached nobody on
+  LinkedIn and the combined press had nothing to send. `follow.write_invites`
+  now writes them during the same preparation, for the people `choose`
+  picked, and `server/outreach.prepare_invites` calls that same function
+  instead of keeping its own copy - a press and a submission cannot write the
+  note two different ways.
+
+  The notes are written for a chosen person whether or not an address was
+  found, because a profile is the route that is left when no address was.
+  That changes what "nobody could be reached" means, so `_finish` no longer
+  counts a job as done while a note is waiting, `store.summaries` reports
+  `invites_unsent`, and the list's row says "send 3 emails + 1 note". A job
+  whose only route to a company is LinkedIn would otherwise have been marked
+  done with two notes nobody could see.
+

@@ -41,8 +41,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import apollo, jobright, people, store
-from .models import Contact, Draft, Outreach, now
+from . import apollo, jobright, linkedinthing, people, store
+from .models import Contact, Draft, Invite, Outreach, now
 
 log = logging.getLogger("autopilot.outreach")
 
@@ -400,12 +400,63 @@ def prepare(job_id: str) -> Outreach:
                 written += 1
             except Exception as exc:          # noqa: BLE001 - one readable line per person
                 notes.append(f"{with_email.name}: the email could not be written ({exc})")
+        write_invites(job_id, job, app_dir, notes, contacts)
         return _finish(job_id, written, len(contacts), notes, status="ready",
                        blocked=blocked)
     except Exception as exc:                  # noqa: BLE001 - nothing may reach the caller
         log.warning("outreach preparation failed for %s: %s", job_id, exc)
         notes.append(str(exc))
         return _finish(job_id, 0, 0, notes, status="failed")
+
+
+def write_invites(job_id: str, job, app_dir: Path, notes: list[str],
+                  contacts: Optional[list[Contact]] = None) -> int:
+    """One LinkedIn connection note per person who has a profile. Sends nothing.
+
+    The other half of reaching a company, and now written by the same
+    automatic preparation as the emails (2026-11-10). Before this it waited
+    for "Write the LinkedIn notes" on the card, so an application the person
+    never opened reached nobody on LinkedIn at all and the one press that
+    sends both had nothing to send.
+
+    Written for the people the emails were written for - `choose`'s pick,
+    passed in - and for them whether or not an address was found, because a
+    profile is the route that is left when no address was. The press still
+    gates the sending, their own tool still owns the 14-per-24-hours cap, and
+    a person who already has a note is left alone so a second preparation
+    writes nothing twice.
+    """
+    from tailor import outreach as writer
+
+    if not linkedinthing.enabled():
+        return 0
+    if contacts is None:
+        contacts = store.get(job_id).contacts
+    with_profile = [row for row in contacts if row.linkedin_url]
+    if not with_profile:
+        return 0
+    signature = candidate_name(app_dir)
+    if not signature:
+        notes.append("your own name is missing, so no LinkedIn note was written")
+        return 0
+    guide = linkedinthing.guide()
+    company = company_for(job)
+    written = 0
+    for contact in with_profile:
+        if any(row.profile_url == contact.linkedin_url
+               for row in store.get(job_id).invites):
+            continue
+        try:
+            text, model = writer.note(
+                contact, job.title or "", company, signature, guide,
+            )
+        except Exception as exc:          # noqa: BLE001 - one person is not the batch
+            notes.append(f"{contact.name}: the LinkedIn note could not be written ({exc})")
+            continue
+        store.put_invite(job_id, Invite.create(
+            contact.id, contact.linkedin_url, text, model=model))
+        written += 1
+    return written
 
 
 def _write(context, contact: Contact, job, app_dir: Path, signature: str,
@@ -451,8 +502,11 @@ def _finish(job_id: str, written: int, people: int, notes: list[str],
             status: str, blocked: Optional[list[str]] = None) -> Outreach:
     outreach = store.get(job_id)
     total = len([row for row in outreach.drafts if row.status in store.LIVE_DRAFTS])
+    # A connection note waiting for the press is something to send, so a job
+    # that found no address but did find a profile is not finished with.
+    invites = len([row for row in outreach.invites if row.status == "draft"])
     ended = False
-    if status == "ready" and total == 0:
+    if status == "ready" and total == 0 and invites == 0:
         if blocked:
             # Something a retry could fix stopped it - a missing key, a search
             # that threw. That is a failure, and the reason belongs in `error`
@@ -468,7 +522,7 @@ def _finish(job_id: str, written: int, people: int, notes: list[str],
             # field the person's own "done with the outreach" sets, and the
             # card's "Reopen it" undoes this in one press.
             ended = True
-    line = _summary(written, total, people, ended)
+    line = _summary(written, total, people, ended, invites)
     outreach.lookup_note = " ".join([line] + notes).strip()
     outreach.error = "; ".join(notes) if status == "failed" else ""
     outreach.prepare_status = status
@@ -480,16 +534,21 @@ def _finish(job_id: str, written: int, people: int, notes: list[str],
     return store.save(outreach)
 
 
-def _summary(written: int, total: int, people: int, ended: bool = False) -> str:
+def _summary(written: int, total: int, people: int, ended: bool = False,
+             invites: int = 0) -> str:
     """What was prepared, counted honestly. Fewer than three is said, not padded."""
+    notes = (f" {invites} LinkedIn note(s) ready too." if invites else "")
     if total == 0 and ended:
         return ("Nobody at this company could be reached - the web and Apollo both "
                 "came back empty - so the outreach is counted as done.")
     if total == 0:
-        return "No follow-up emails are ready yet."
+        return ("No address was found, so there is no email - but "
+                f"{invites} LinkedIn note(s) are ready to send." if invites
+                else "No follow-up emails are ready yet.")
     short = "" if total >= MAX_CONTACTS else f" Only {total} of {MAX_CONTACTS} people were found."
     fresh = f"Wrote {written} new." if written else "Nothing new to write."
-    return f"{total} follow-up email(s) ready to send, resume attached. {fresh}{short}"
+    return (f"{total} follow-up email(s) ready to send, resume attached. "
+            f"{fresh}{short}{notes}")
 
 
 # --- the trigger ----------------------------------------------------------

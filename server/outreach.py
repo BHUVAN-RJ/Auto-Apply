@@ -20,7 +20,7 @@ import mailing
 import paths
 from outreach import (apollo, follow, gmailthing, jobright, linkedinthing,
                       schedule as sendtime, store)
-from outreach.models import Contact, Draft, Invite, now
+from outreach.models import Contact, Draft, now
 from server import queue
 from tailor import outreach as writer
 from tailor.answers import Context
@@ -662,25 +662,11 @@ def prepare_invites(job_id: str) -> dict:
     job, app_dir = _job_and_dir(job_id)
     if not linkedinthing.enabled():
         raise HTTPException(409, "the LinkedIn tool is not available")
-    outreach = store.get(job_id)
-    guide = linkedinthing.guide()
-    written, skipped = 0, []
-    for contact in outreach.contacts:
-        if not contact.linkedin_url:
-            continue
-        if any(row.profile_url == contact.linkedin_url for row in outreach.invites):
-            continue
-        try:
-            text, model = writer.note(
-                contact, job.title or "", follow.company_for(job),
-                _candidate_name(app_dir), guide,
-            )
-        except Exception as exc:  # noqa: BLE001 - one person failing is not the batch
-            skipped.append(f"{contact.name}: {exc}")
-            continue
-        store.put_invite(job_id, Invite.create(
-            contact.id, contact.linkedin_url, text, model=model))
-        written += 1
+    # The same writer the automatic preparation uses, so a press and a
+    # submission cannot write the note two different ways. The press asks for
+    # everybody on file; the automatic path asks for the people it chose.
+    skipped: list[str] = []
+    written = follow.write_invites(job_id, job, app_dir, skipped)
     state = store.get(job_id)
     if skipped:
         state.lookup_note = (state.lookup_note + " " + " ".join(skipped)).strip()

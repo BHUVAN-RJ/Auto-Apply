@@ -783,3 +783,91 @@ def test_an_apollo_search_that_threw_is_not_an_ending(tmp_path, monkeypatch):
     state = outreach_store.get(job.id)
     assert state.done_at is None
     assert state.prepare_status == "failed"
+
+
+# --- the LinkedIn notes are written by the same preparation (2026-11-10) ----
+
+def _linkedin_on(monkeypatch, notes=None):
+    """Switch the bridge on with the network and the model taken out."""
+    from outreach import linkedinthing
+
+    monkeypatch.setenv(linkedinthing.ENV, "1")
+    monkeypatch.setattr(linkedinthing, "available", lambda: True)
+    monkeypatch.setattr(linkedinthing, "guide", lambda: "Their own note guide.")
+    written = notes if notes is not None else []
+    monkeypatch.setattr(
+        writer, "note",
+        lambda contact, title, company, candidate, guide, **kwargs: (
+            written.append(contact.name)
+            or (f"Hi {contact.name}, USC MS CS student applying at {company}.",
+                "test-model")),
+    )
+    return written
+
+
+def test_a_submission_writes_the_connection_notes_as_well_as_the_emails(
+        tmp_path, monkeypatch):
+    """One press sends both, so one preparation has to write both.
+
+    Before this the notes waited for "Write the LinkedIn notes" on the card,
+    so an application the person never opened reached nobody on LinkedIn and
+    the combined press had nothing to send.
+    """
+    job, _ = application(tmp_path)
+    wire(monkeypatch, Apollo())
+    asked = _linkedin_on(monkeypatch)
+
+    follow.start(job.id)
+    follow.wait(job.id)
+
+    state = outreach_store.get(job.id)
+    assert len(state.drafts) == 2
+    assert sorted(asked) == ["Morgan", "Rita"]
+    assert {row.status for row in state.invites} == {"draft"}
+    assert [row.profile_url for row in state.invites] == [
+        "https://example.com/in/rita", "https://example.com/in/morgan"]
+    assert all(row.note for row in state.invites)
+    # Writing is not sending: the bridge was never asked to invite anybody.
+    assert state.prepare_status == "ready"
+
+
+def test_a_second_preparation_does_not_write_a_second_note(tmp_path, monkeypatch):
+    job, _ = application(tmp_path)
+    wire(monkeypatch, Apollo())
+    asked = _linkedin_on(monkeypatch)
+
+    follow.start(job.id)
+    follow.wait(job.id)
+    follow.start(job.id, force=True)
+    follow.wait(job.id)
+
+    state = outreach_store.get(job.id)
+    assert len(state.invites) == 2
+    assert len(asked) == 2
+
+
+def test_a_profile_with_no_address_still_leaves_something_to_send(
+        tmp_path, monkeypatch):
+    """No email anywhere, but a LinkedIn profile: not an ending.
+
+    The ladder running out is only an ending when there is nothing left to
+    do. A connection note waiting for the press is something to do, so this
+    job keeps its place on the send list instead of being counted as done.
+    """
+    job, _ = application(tmp_path)
+    nobody = Apollo()
+    nobody.enrich = lambda contact, client=None: (_ for _ in ()).throw(
+        apollo.ApolloError("no address for this person"))
+    wire(monkeypatch, nobody)
+    free_web(monkeypatch, found=[])
+    _linkedin_on(monkeypatch)
+
+    follow.start(job.id)
+    follow.wait(job.id)
+
+    state = outreach_store.get(job.id)
+    assert state.drafts == []
+    assert len(state.invites) == 2
+    assert state.done_at is None, state.lookup_note
+    assert "LinkedIn note" in state.lookup_note
+    assert outreach_store.summaries()[job.id]["invites_unsent"] == 2

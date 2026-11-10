@@ -265,3 +265,57 @@ def test_selected_contacts_write_one_carousel_and_never_send(tmp_path, monkeypat
     assert client.post(f"/review/{job.id}/outreach/drafts", json={
         "contact_ids": [],
     }).status_code == 400
+
+
+# --- which rows the "emails to send" group holds ---------------------------
+
+def _follow(outreach: dict, status: str = "submitted"):
+    """Run the page's own FOLLOW on one row, in node, and return its answer.
+
+    The grouping rule lives in `review/index.html` and nowhere else, so the
+    only honest test of it runs the function itself rather than reading the
+    source and hoping. Node is the person's own dependency (their LinkedIn
+    tool is a node script); without it the test says so instead of passing.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed, so the page's own function cannot be run")
+    page = (Path(__file__).resolve().parent.parent / "review" / "index.html").read_text()
+    start = page.index("const FOLLOW = (j) =>")
+    end = page.index("\n};", start) + len("\n};")
+    source = page[start:end]
+    script = (source + "\nconsole.log(JSON.stringify(FOLLOW("
+              + json.dumps({"status": status, "outreach": outreach}) + ") || null));")
+    answer = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                            check=True)
+    return json.loads(answer.stdout.strip())
+
+
+def test_a_job_with_nobody_to_write_to_leaves_the_emails_to_send_group():
+    """The person's instruction (2026-11-10): if there is nothing to send for
+    a job, it is not on the send list at all."""
+    assert _follow({"prepare_status": "failed", "unsent": 0, "scheduled": 0,
+                    "error": "Nobody at this company could be reached"}) is None
+    # Ready and empty was already off the list; it stays off.
+    assert _follow({"prepare_status": "ready", "unsent": 0, "scheduled": 0}) is None
+
+
+def test_a_job_with_an_email_waiting_is_still_on_the_group():
+    row = _follow({"prepare_status": "ready", "unsent": 2, "scheduled": 0})
+    assert row["tone"] == "you" and row["verb"] == "send 2 emails"
+    # The search itself is still shown while it is running: it may yet
+    # produce something to press.
+    assert _follow({"prepare_status": "running", "unsent": 0,
+                    "scheduled": 0})["verb"] == "finding people"
+
+
+def test_a_connection_note_waiting_counts_as_something_to_send():
+    """Nobody had an address, somebody had a profile: still the person's move."""
+    row = _follow({"prepare_status": "ready", "unsent": 0, "scheduled": 0,
+                   "invites_unsent": 2})
+    assert row["tone"] == "you" and row["verb"] == "send 2 notes"
+    both = _follow({"prepare_status": "ready", "unsent": 3, "scheduled": 0,
+                    "invites_unsent": 1})
+    assert both["verb"] == "send 3 emails + 1 note"

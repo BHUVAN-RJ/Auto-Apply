@@ -177,6 +177,12 @@ def summaries() -> dict[str, dict]:
                               if row.get("status") == "scheduled"]),
             "next_send": min((str(row.get("send_at") or "") for row in kept
                               if row.get("status") == "scheduled"), default=""),
+            # A connection note waiting for the press counts as something to
+            # send, the same as an email does, or a job whose only route to
+            # the company is LinkedIn shows nothing to do (2026-11-10).
+            "invites_unsent": len([row for row in raw.get("invites", [])
+                                   if isinstance(row, dict)
+                                   and row.get("status") == "draft"]),
             "contacts": len([row for row in raw.get("contacts", [])
                              if isinstance(row, dict)]),
             "done": bool(raw.get("done_at")),
