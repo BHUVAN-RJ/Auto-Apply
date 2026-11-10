@@ -236,3 +236,27 @@ def test_the_build_is_read_without_raising_outside_a_checkout(tmp_path, monkeypa
 
     monkeypatch.setattr(store.paths, "ROOT", tmp_path)
     assert store.build() == {"commit": "", "branch": "", "dirty": False}
+
+
+# --- one browser holds more than the job forms now (2026-11-10) ------------
+
+def test_the_persons_own_linkedin_is_not_read_but_a_job_posting_is():
+    """The LinkedIn tool works in the same Chrome as the fill does.
+
+    So their messages, their network and the profiles they read through that
+    tool are off limits, while a posting under /jobs is the thing this
+    tracker exists for - `browser/linkedin_apply.py` walks exactly that path.
+    """
+    for url in ("https://www.linkedin.com/messaging/thread/2-abc/",
+                "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+                "https://www.linkedin.com/in/someone-else/",
+                "https://www.linkedin.com/feed/"):
+        assert policy.off_limits(url), url
+        assert not policy.readable(url), url
+    posting = "https://www.linkedin.com/jobs/view/4123456789/"
+    assert not policy.off_limits(posting)
+    assert policy.readable(posting)
+
+
+def test_the_mail_in_that_same_browser_is_still_off_limits():
+    assert policy.off_limits("https://mail.google.com/mail/u/0/#inbox")

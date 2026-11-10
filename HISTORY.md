@@ -2323,3 +2323,31 @@ Oldest first. Add new entries at the end of this file, one line each, with the d
   whose only route to a company is LinkedIn would otherwise have been marked
   done with two notes nobody could see.
 
+- **2026-11-10 - one Chrome, not one per tool.** job-autopilot ran Chrome on
+  9333 against its own profile, the LinkedIn tool ran its own on 9334, and the
+  Gmail tool ran a third on 9335: three copies of the same program, three
+  profiles, three sets of windows, for one person on one laptop. All three
+  only ever attach over CDP, and attaching to a browser somebody else started
+  is the same call as attaching to your own, so both tools in `~/outreach` now
+  point at 9333 and at this profile. Whichever process needs it first launches
+  it - with the same flags, `--remote-allow-origins=*` among them, because the
+  launcher decides them for everybody - and the rest attach.
+
+  Three things had to be true for that to be safe rather than merely shorter.
+  A shared browser is nobody's to close: `browser.close()` is a disconnect on
+  a CDP connection, but the cost of being wrong while a form is half filled in
+  the next tab is the person's application, so the handle those tools hand out
+  cannot close anything. The LinkedIn tool's blank tab is now
+  `about:blank#linkedin-mcp`, because `chrome.close_blank_tabs` closes exactly
+  `about:blank` tabs that appeared during a fill and would otherwise take it.
+  And the browser that holds the job forms now also holds a signed-in
+  LinkedIn, so `tracking/policy.py` treats linkedin.com as off limits except
+  under `/jobs`, which is the path `browser/linkedin_apply.py` walks: their
+  messages and the profiles that tool reads are theirs, a posting is ours.
+
+  The cookies do not move - a Chrome profile's are encrypted against that
+  profile - so the shared browser needs one sign-in each for Gmail and
+  LinkedIn, by hand, once. `GMAIL_MCP_PORT`/`GMAIL_MCP_PROFILE` and
+  `LINKEDIN_MCP_PORT`/`LINKEDIN_MCP_PROFILE` pin the old dedicated browsers
+  back if sharing turns out to cost more than it saves.
+

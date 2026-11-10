@@ -55,6 +55,15 @@ OFF_LIMITS = (
     "mychart.com", "mychart.org",
 )
 
+# Hosts where only one part of the site is ours to read. One Chrome now
+# holds the job forms, the person's mail and their LinkedIn session at once
+# (2026-11-10), and the LinkedIn tool works in that same window: their
+# messages, their network and the profiles they read are theirs, while a
+# LinkedIn job posting is exactly what this tracker is for. So LinkedIn is
+# off limits except under /jobs, which is the path `browser/linkedin_apply.py`
+# walks.
+MOSTLY_OFF = {"linkedin.com": ("/jobs",)}
+
 # Not a page at all, or ours. The review page is the app talking to itself.
 NOT_A_PAGE = ("about:", "chrome:", "chrome-extension:", "devtools:", "edge:",
               "view-source:", "data:", "blob:")
@@ -68,7 +77,13 @@ def off_limits(url: str) -> bool:
     host = host_of(url)
     if not host:
         return False
-    return any(host == h or host.endswith("." + h) for h in OFF_LIMITS)
+    if any(host == h or host.endswith("." + h) for h in OFF_LIMITS):
+        return True
+    for named, allowed in MOSTLY_OFF.items():
+        if host == named or host.endswith("." + named):
+            path = urlsplit(url or "").path or "/"
+            return not any(path.startswith(prefix) for prefix in allowed)
+    return False
 
 
 def our_own(url: str, server_origin: str = "") -> bool:

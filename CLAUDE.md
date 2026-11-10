@@ -114,7 +114,7 @@ each need — and the voice internals. Grep it before touching one of those.
 - **Something else can hold 8787**, such as `caveman-proxy`. `lsof -nP -iTCP:8787 -sTCP:LISTEN` names it. `AUTOPILOT_SERVER_URL` moves the server and the injector together; a mismatch splits state.
 - **The injector runs the code it was started with.** Restart `browser.inject` after editing it or `browser/autofill.py`. If banners vanish, `pgrep -fl browser.inject`.
 - **Chrome keeps the extension's old `content.js`** until reloaded at `chrome://extensions`. Client guards are a convenience; enforce on the server.
-- **Chrome lives on 9333.** `curl 127.0.0.1:9333/json` shows its tabs. A profile directory is never shared with a running Chrome.
+- **Chrome lives on 9333, and it is the only one.** `curl 127.0.0.1:9333/json` shows its tabs. A profile directory is never shared with a running Chrome, but a *running* Chrome is: the Gmail and LinkedIn tools in `~/outreach` attach to this one over CDP rather than starting their own (2026-11-10), so each needs a one-time sign-in in it, nothing may close a tab it did not open, and the tracker holds LinkedIn off limits except under `/jobs`.
 - **Extra tabs mean extra fills.** `pgrep -fl apply.py` first.
 
 **Models**
